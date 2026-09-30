@@ -1,0 +1,87 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ["linux/**", "core/**", "server/**", "windows/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Qt runtime for the same QML app the Linux build uses.
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Assemble package
+        shell: pwsh
+        env:
+          HOURGLASS_SERVER: ${{ secrets.HOURGLASS_SERVER }}
+          HOURGLASS_TOKEN: ${{ secrets.HOURGLASS_TOKEN }}
+        run: |
+          $d = "dist\Hourglass"
+          New-Item -ItemType Directory -Force "$d\node", "$d\qt", "$d\linux\app\fonts" | Out-Null
+          Copy-Item (Get-Command node).Source "$d\node\node.exe"
+          Push-Location server; npm ci --omit=dev --no-audit --no-fund; Pop-Location
+          Copy-Item core "$d\core" -Recurse
+          Copy-Item server "$d\server" -Recurse
+          Remove-Item "$d\core\test", "$d\server\test" -Recurse -Force
+          Copy-Item linux\sidecar "$d\linux\sidecar" -Recurse
+          Copy-Item linux\app\* "$d\linux\app" -Recurse
+          Copy-Item windows\* $d
+          # Full Nerd Font: the app's icons are Nerd Font glyphs.
+          Invoke-WebRequest https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip -OutFile jbm.zip
+          Expand-Archive jbm.zip jbm
+          Copy-Item jbm\JetBrainsMonoNerdFont-Regular.ttf, jbm\JetBrainsMonoNerdFont-Bold.ttf "$d\linux\app\fonts"
+          Copy-Item "$env:QT_ROOT_DIR\bin\qml.exe" "$d\qt"
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --qmldir linux\app --release --no-translations --no-system-d3d-compiler "$d\qt\qml.exe"
+          if ($env:HOURGLASS_SERVER) {
+            @{ server = $env:HOURGLASS_SERVER; token = $env:HOURGLASS_TOKEN } | ConvertTo-Json | Set-Content "$d\config.json"
+          }
+
+      # Start the service with a throwaway profile (no sync) and render the app
+      # offscreen, so a broken package fails here rather than on your PC.
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $d = "dist\Hourglass"
+          $env:HOURGLASS_CONFIG = "$env:RUNNER_TEMP\hg-conf"
+          $env:HOURGLASS_DATA = "$env:RUNNER_TEMP\hg-data"
+          $env:HOURGLASS_PORT = "8941"
+          $env:HOURGLASS_SILENT = "1"
+          $p = Start-Process -PassThru -NoNewWindow "$d\node\node.exe" "$d\linux\sidecar\hourglassd.js"
+          for ($i = 0; $i -lt 50; $i++) { try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8941/health | Out-Null; break } catch { Start-Sleep -Milliseconds 300 } }
+          $t = (Get-Content "$env:HOURGLASS_CONFIG\token" -Raw).Trim()
+          $h = @{ Authorization = "Bearer $t" }
+          Invoke-RestMethod -Method Post -Headers $h -ContentType 'application/json' -Uri http://127.0.0.1:8941/api/actions/add_course `
+            -Body '{"name":"Typography (1)","code":"GD 471","location":"B729","teacher":"Ms. Amera","schedule":[{"day":"Thu","start":"08:30","end":"09:30"},{"day":"Thu","start":"09:30","end":"13:30","kind":"tutorial"}]}' | Out-Null
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_QUICK_CONTROLS_STYLE = "Basic"
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          foreach ($page in 0, 1) {
+            & "$d\qt\qml.exe" -I "$d\linux\app" "$d\linux\app\Main.qml" -- --port 8941 --token $t --page $page --screenshot "shot-$page.png" --size 1300x820
+            if (-not (Test-Path "shot-$page.png")) { throw "page $page did not render" }
+          }
+          Stop-Process -Id $p.Id
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hourglass-windows
+          path: dist
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-screenshots
+          path: shot-*.png

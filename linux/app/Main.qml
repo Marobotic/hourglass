@@ -47,6 +47,11 @@ ApplicationWindow {
         }
     }
     readonly property bool narrow: width < 980
+
+    // Windows has no JetBrains Mono Nerd Font installed; the package ships it
+    // next to the app (fonts/), which also provides the icon glyphs.
+    FontLoader { source: Qt.platform.os === "windows" ? Qt.resolvedUrl("fonts/JetBrainsMonoNerdFont-Regular.ttf") : "" }
+    FontLoader { source: Qt.platform.os === "windows" ? Qt.resolvedUrl("fonts/JetBrainsMonoNerdFont-Bold.ttf") : "" }
     readonly property var pages: [
         { name: "Now", icon: "now", key: "1" },
         { name: "Week", icon: "week", key: "2" },

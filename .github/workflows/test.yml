@@ -14,4 +14,4 @@ jobs:
         with:
           node-version: 24
       - run: cd server && npm ci
-      - run: node --test core/test/ server/test/
+      - run: node --test 'core/test/*.test.js' 'server/test/*.test.js'

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// Hourglass Linux sidecar. Holds the local replica, serves the app and local
-// AIs on 127.0.0.1, rings alarms and timers, and syncs with the server.
-//   config: ~/.config/hourglass/config.json  { "server": "https://...", "token": "..." }
-//   data:   ~/.local/share/hourglass/
+// Hourglass desktop sidecar (Linux and Windows). Holds the local replica,
+// serves the app and local AIs on 127.0.0.1, rings alarms and timers, and
+// syncs with the server.
+//   config: ~/.config/hourglass/config.json   (Windows: %APPDATA%\Hourglass)
+//   data:   ~/.local/share/hourglass/         (Windows: %LOCALAPPDATA%\Hourglass)
+//   config.json: { "server": "https://...", "token": "..." }
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -15,11 +17,12 @@ import { TABLE_NAMES, dueBetween, isSpent, localParts, parseDate } from "../../c
 import { createHandler } from "../../server/app.js";
 
 const HOME = homedir();
-const CONF_DIR = process.env.HOURGLASS_CONFIG || join(HOME, ".config/hourglass");
-const DATA_DIR = process.env.HOURGLASS_DATA || join(HOME, ".local/share/hourglass");
+const WIN = process.platform === "win32";
+const CONF_DIR = process.env.HOURGLASS_CONFIG || (WIN ? join(process.env.APPDATA || HOME, "Hourglass") : join(HOME, ".config/hourglass"));
+const DATA_DIR = process.env.HOURGLASS_DATA || (WIN ? join(process.env.LOCALAPPDATA || HOME, "Hourglass") : join(HOME, ".local/share/hourglass"));
 const PORT = Number(process.env.HOURGLASS_PORT || 8931);
 const THEME = join(HOME, ".local/state/omarchy/current/theme/colors.toml");
-const SOUND = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga";
+const SOUND = WIN ? "C:\\Windows\\Media\\Alarm01.wav" : "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga";
 const SILENT = process.env.HOURGLASS_SILENT === "1"; // tests: no notification, no sound
 mkdirSync(CONF_DIR, { recursive: true });
 
@@ -104,9 +107,20 @@ setInterval(() => scheduleSync(0), 30000);
 const ringing = new Map(); // id -> { kind, id, label, at, sound }
 let lastCheck = Date.now();
 
+// Single-quoted PowerShell string literal.
+const psq = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+
 function notify(item) {
   if (SILENT) return;
   const title = item.kind === "timer" ? "Timer done" : "Alarm";
+  if (WIN) {
+    // A tray balloon shows as a regular Windows notification on 10 and 11.
+    const ps = `Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; ` +
+      `$n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true; ` +
+      `$n.ShowBalloonTip(15000, ${psq(title)}, ${psq(item.label)}, 'Info'); Start-Sleep -Seconds 16; $n.Dispose()`;
+    spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-Command", ps], { stdio: "ignore", windowsHide: true }).on("error", () => {});
+    return;
+  }
   const n = spawn("notify-send", ["-a", "Hourglass", "-u", "critical", "-i", "alarm-symbolic", "-h", "string:x-canonical-private-synchronous:hourglass-" + item.id, title, item.label], { stdio: "ignore" });
   n.on("error", () => {});
 }
@@ -118,7 +132,9 @@ function playLoop(item) {
   const until = Date.now() + 60000;
   const once = () => {
     if (stopped || Date.now() > until) return ring_stop(item.id);
-    child = spawn("pw-play", [SOUND], { stdio: "ignore" });
+    child = WIN
+      ? spawn("powershell.exe", ["-NoProfile", "-Command", `(New-Object Media.SoundPlayer ${psq(SOUND)}).PlaySync()`], { stdio: "ignore", windowsHide: true })
+      : spawn("pw-play", [SOUND], { stdio: "ignore" });
     child.on("error", () => {});
     child.on("exit", () => setTimeout(once, 400));
   };
