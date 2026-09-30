@@ -15,7 +15,7 @@ Rectangle {
         text: chip.text.toUpperCase()
         color: chip.solid ? (chip.tint.hslLightness > 0.62 ? "#121212" : "#ffffff") : chip.tint
         font.family: Theme.mono
-        font.pixelSize: 10
+        font.pixelSize: 12
         font.weight: Font.DemiBold
         font.letterSpacing: 0.8
     }

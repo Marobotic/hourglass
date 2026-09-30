@@ -9,7 +9,7 @@ RowLayout {
         text: parent.text.toUpperCase()
         color: Theme.muted
         font.family: Theme.mono
-        font.pixelSize: 11
+        font.pixelSize: 13
         font.weight: Font.DemiBold
         font.letterSpacing: 1.4
     }
@@ -18,7 +18,7 @@ RowLayout {
         text: parent.detail
         color: Theme.faint
         font.family: Theme.mono
-        font.pixelSize: 11
+        font.pixelSize: 13
     }
     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 }

@@ -180,6 +180,7 @@ struct Occ: Identifiable, Hashable {
     let location: String?
     let color: String
     let code: String?
+    let teacher: String?
     let date: String
     let start_time: String
     let end_time: String
@@ -230,7 +231,7 @@ enum Recurrence {
                 let s = Dates.epoch(d, ev.start_time)
                 out.append(Occ(event_id: ev.id, course_id: ev.course_id, title: ev.title.isEmpty ? (c?.name ?? "Untitled") : ev.title,
                                kind: ev.kind, location: (ev.location?.isEmpty == false ? ev.location : c?.location), color: c?.color ?? "#4A8B8B",
-                               code: c?.code, date: d, start_time: ev.start_time, end_time: ev.end_time, start_ms: s, end_ms: s + Int64(em - sm) * 60_000))
+                               code: c?.code, teacher: c?.teacher, date: d, start_time: ev.start_time, end_time: ev.end_time, start_ms: s, end_ms: s + Int64(em - sm) * 60_000))
             }
         }
         return out.sorted { ($0.start_ms, $0.title) < ($1.start_ms, $1.title) }

@@ -10,7 +10,7 @@ TextField {
     selectionColor: Theme.alpha(Theme.accent, 0.45)
     selectedTextColor: Theme.fg
     font.family: Theme.mono
-    font.pixelSize: 13
+    font.pixelSize: 14
     leftPadding: 11
     rightPadding: 11
     background: Rectangle {

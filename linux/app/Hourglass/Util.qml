@@ -24,7 +24,13 @@ QtObject {
     function isDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); }
     function isTime(s) { return /^\d{1,2}:\d{2}$/.test(s) && +s.split(":")[0] < 24 && +s.split(":")[1] < 60; }
 
-    function clock(ms) { const d = new Date(ms); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+    // Offset of the Hourglass time zone from UTC, sent by the sidecar. Wall-clock
+    // helpers use it instead of the system zone.
+    property int offsetMin: -new Date().getTimezoneOffset()
+    function wall(ms) { return new Date(ms + offsetMin * 60000); } // read with getUTC*
+    function clock(ms) { const d = wall(ms); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()); }
+    function dayOf(ms) { return fmt(Date.UTC(wall(ms).getUTCFullYear(), wall(ms).getUTCMonth(), wall(ms).getUTCDate())); }
+    function minutesOf(ms) { const d = wall(ms); return d.getUTCHours() * 60 + d.getUTCMinutes(); }
 
     function countdown(sec) {
         sec = Math.max(0, Math.round(sec));

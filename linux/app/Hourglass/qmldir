@@ -16,7 +16,8 @@ Picker 1.0 Picker.qml
 Modal 1.0 Modal.qml
 NowPage 1.0 NowPage.qml
 WeekPage 1.0 WeekPage.qml
-CoursesPage 1.0 CoursesPage.qml
+NotesPage 1.0 NotesPage.qml
+FolderRow 1.0 FolderRow.qml
 TimePage 1.0 TimePage.qml
 NoteEditor 1.0 NoteEditor.qml
 EventDialog 1.0 EventDialog.qml

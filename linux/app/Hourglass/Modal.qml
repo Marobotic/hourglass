@@ -34,7 +34,7 @@ Popup {
                 Text { Layout.fillWidth: true; text: m.title; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.DemiBold }
                 Btn { icon: "close"; kind: "subtle"; compact: true; onClicked: m.close() }
             }
-            Text { visible: m.subtitle !== ""; text: m.subtitle; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+            Text { visible: m.subtitle !== ""; text: m.subtitle; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
         }
         ColumnLayout {
             id: bodyCol

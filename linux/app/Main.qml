@@ -32,6 +32,7 @@ ApplicationWindow {
             if (app.devOpen === "course") app.editCourse(null);
             if (app.devOpen === "event") app.editEvent(null);
             if (app.devOpen === "session") app.openSession(f);
+            if (app.devOpen.startsWith("note:")) Api.get("/api/notes/" + app.devOpen.slice(5), n => app.editingNote = n);
             console.log("dev-open", app.devOpen);
         }
     }
@@ -49,7 +50,7 @@ ApplicationWindow {
     readonly property var pages: [
         { name: "Now", icon: "now", key: "1" },
         { name: "Week", icon: "week", key: "2" },
-        { name: "Courses", icon: "courses", key: "3" },
+        { name: "Notes", icon: "note", key: "3" },
         { name: "Time", icon: "time", key: "4" }
     ]
 
@@ -77,6 +78,7 @@ ApplicationWindow {
         Api.get("/api/app", d => {
             if (!d) return;
             Theme.apply(d.theme);
+            if (d.tz_offset_min !== undefined) Util.offsetMin = d.tz_offset_min;
             app.appState = d;
         });
     }
@@ -178,8 +180,8 @@ ApplicationWindow {
                                     name: modelData.icon; size: 15
                                     color: parent.parent.current ? Theme.fg : Theme.muted
                                 }
-                                Text { visible: !app.narrow; Layout.fillWidth: true; text: modelData.name; color: parent.parent.current ? Theme.fg : Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
-                                Text { visible: !app.narrow; text: modelData.key; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+                                Text { visible: !app.narrow; Layout.fillWidth: true; text: modelData.name; color: parent.parent.current ? Theme.fg : Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
+                                Text { visible: !app.narrow; text: modelData.key; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
                             }
                             MouseArea { id: navMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.go(index) }
                         }
@@ -200,8 +202,8 @@ ApplicationWindow {
                         ColumnLayout {
                             anchors { fill: parent; margins: 10 }
                             spacing: 2
-                            Text { text: "● LIVE"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 1 }
-                            Text { Layout.fillWidth: true; text: parent.parent.a ? parent.parent.a.title : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
+                            Text { text: "● LIVE"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1 }
+                            Text { Layout.fillWidth: true; text: parent.parent.a ? parent.parent.a.title : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                         }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.go(0) }
                     }
@@ -220,7 +222,7 @@ ApplicationWindow {
                             text: parent.st === "synced" ? "Synced" : parent.st === "offline" ? "Offline, saved here" : "On this computer"
                             color: Theme.muted
                             font.family: Theme.mono
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                         }
                     }
                 }
@@ -237,7 +239,7 @@ ApplicationWindow {
                     visible: app.editingNote === null
                     NowPage { app: app }
                     WeekPage { app: app }
-                    CoursesPage { app: app }
+                    NotesPage { app: app }
                     TimePage { app: app }
                 }
 
@@ -257,7 +259,7 @@ ApplicationWindow {
                         anchors.centerIn: parent
                         spacing: 14
                         Logo { Layout.alignment: Qt.AlignHCenter; cell: 6 }
-                        Text { Layout.alignment: Qt.AlignHCenter; text: "Starting Hourglass…"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
+                        Text { Layout.alignment: Qt.AlignHCenter; text: "Starting Hourglass…"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
                     }
                 }
             }
@@ -297,9 +299,9 @@ ApplicationWindow {
                     cell: 7
                     SequentialAnimation on rotation { running: ringOverlay.visible; loops: Animation.Infinite; NumberAnimation { from: -8; to: 8; duration: 180 } NumberAnimation { from: 8; to: -8; duration: 180 } }
                 }
-                Text { Layout.alignment: Qt.AlignHCenter; text: ringOverlay.item && ringOverlay.item.kind === "timer" ? "TIME'S UP" : "ALARM"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 2 }
+                Text { Layout.alignment: Qt.AlignHCenter; text: ringOverlay.item && ringOverlay.item.kind === "timer" ? "TIME'S UP" : "ALARM"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 2 }
                 Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: ringOverlay.item ? ringOverlay.item.label : ""; color: Theme.fg; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 22; font.weight: Font.DemiBold }
-                Text { Layout.alignment: Qt.AlignHCenter; text: Util.clock(app.clock); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
+                Text { Layout.alignment: Qt.AlignHCenter; text: Util.clock(app.clock); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
                 RowLayout {
                     Layout.topMargin: 8
                     Layout.fillWidth: true
@@ -326,7 +328,7 @@ ApplicationWindow {
         visible: opacity > 0
         z: 200
         Behavior on opacity { NumberAnimation { duration: 150 } }
-        Text { id: toastText; anchors.centerIn: parent; width: Math.min(implicitWidth, app.width - 80); text: toast.message; color: Theme.fg; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 13 }
+        Text { id: toastText; anchors.centerIn: parent; width: Math.min(implicitWidth, app.width - 80); text: toast.message; color: Theme.fg; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 14 }
         Timer { id: toastTimer; interval: 3500; onTriggered: toast.opacity = 0 }
     }
 }

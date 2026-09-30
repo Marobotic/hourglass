@@ -98,7 +98,7 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 10
-                                    Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                                    Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                                     Rectangle {
                                         Layout.fillWidth: true
                                         height: 4; radius: 2; color: Theme.surface2
@@ -140,12 +140,12 @@ Item {
                             Layout.fillWidth: true
                             spacing: 10
                             Field { id: leadField; Layout.preferredWidth: 70; text: "15"; validator: IntValidator { bottom: 0; top: 600 } }
-                            Text { text: "min before every session of"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                            Text { text: "min before every session of"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
                             Picker { id: coursePick; Layout.fillWidth: true; options: page.app.courseOptions(false); value: page.app.courses.length ? page.app.courses[0].id : null }
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { Layout.fillWidth: true; text: page.mode === "time" ? (page.newDays.length ? "Repeats on the highlighted days." : "No days selected: rings once, at the next matching time.") : "Rings on this computer and your phone once synced."; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+                            Text { Layout.fillWidth: true; text: page.mode === "time" ? (page.newDays.length ? "Repeats on the highlighted days." : "No days selected: rings once, at the next matching time.") : "Rings on this computer and your phone once synced."; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
                             Btn {
                                 kind: "primary"; icon: "bell"; text: "Add alarm"
                                 enabled: page.mode === "time" ? Util.isTime(timeField.text) : (coursePick.value !== null && leadField.acceptableInput)
@@ -153,11 +153,8 @@ Item {
                                     if (page.mode === "time") {
                                         const args = { time: timeField.text, days: page.newDays, label: alarmLabel.text };
                                         if (!page.newDays.length) {
-                                            const now = new Date(page.app.clock);
-                                            const [h, m] = timeField.text.split(":").map(Number);
-                                            const t = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
-                                            if (t <= now) t.setDate(t.getDate() + 1);
-                                            args.date = Util.fmt(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()));
+                                            const today = Util.dayOf(page.app.clock);
+                                            args.date = Util.minutes(timeField.text) > Util.minutesOf(page.app.clock) ? today : Util.addDays(today, 1);
                                         }
                                         Api.action("set_alarm", args);
                                         timeField.text = ""; alarmLabel.text = "";
@@ -188,11 +185,11 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 3
-                                Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
+                                Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15 }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: page.alarmSubtitle(modelData) + (modelData.next_at ? "  ·  next " + Util.short(Util.fmt(Date.UTC(new Date(modelData.next_at).getFullYear(), new Date(modelData.next_at).getMonth(), new Date(modelData.next_at).getDate()))) + " " + Util.clock(modelData.next_at) : "")
-                                    color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 11
+                                    text: page.alarmSubtitle(modelData) + (modelData.next_at ? "  ·  next " + Util.short(Util.dayOf(modelData.next_at)) + " " + Util.clock(modelData.next_at) : "")
+                                    color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13
                                 }
                             }
                             // enable toggle

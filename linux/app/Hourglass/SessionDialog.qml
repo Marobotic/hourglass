@@ -30,6 +30,16 @@ Modal {
         Chip { visible: !!(dlg.occ && dlg.occ.course_code); text: dlg.occ && dlg.occ.course_code ? dlg.occ.course_code : ""; tint: Theme.muted }
     }
 
+    Repeater {
+        model: dlg.occ && dlg.occ.teacher ? dlg.occ.teacher.split(",").map(t => t.trim()).filter(t => t) : []
+        RowLayout {
+            required property string modelData
+            spacing: 10
+            Icon { name: "person"; size: 13; color: Theme.muted }
+            Text { text: modelData; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14 }
+        }
+    }
+
     ColumnLayout {
         visible: !!(dlg.occ && dlg.occ.course_id)
         Layout.fillWidth: true
@@ -39,7 +49,7 @@ Modal {
             model: dlg.notes
             NoteCard { required property var modelData; Layout.fillWidth: true; note: modelData; onClicked: { dlg.close(); dlg.app.openNote(modelData); } }
         }
-        Text { visible: !dlg.notes.length; text: "None yet."; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12 }
+        Text { visible: !dlg.notes.length; text: "None yet."; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
         Btn {
             kind: "primary"; icon: "note"
             text: dlg.notes.length ? "Add another note" : "Start a note for this session"

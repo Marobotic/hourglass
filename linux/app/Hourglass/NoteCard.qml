@@ -16,14 +16,14 @@ Card {
         RowLayout {
             spacing: 8
             Layout.fillWidth: true
-            Icon { name: nc.note.pinned ? "pin" : "note"; color: nc.note.pinned ? Theme.gold : Theme.muted; size: 12 }
+            Icon { name: nc.note.pinned ? "pin" : "note"; color: nc.note.pinned ? Theme.gold : Theme.muted; size: 13 }
             Text {
                 Layout.fillWidth: true
                 text: nc.note.title || "Untitled"
                 color: Theme.fg
                 elide: Text.ElideRight
                 font.family: Theme.mono
-                font.pixelSize: 14
+                font.pixelSize: 15
                 font.weight: Font.DemiBold
             }
             Text {
@@ -31,7 +31,7 @@ Card {
                 text: nc.note.course_name || ""
                 color: nc.tint
                 font.family: Theme.mono
-                font.pixelSize: 11
+                font.pixelSize: 13
             }
         }
         Text {
@@ -43,7 +43,7 @@ Card {
             maximumLineCount: 2
             elide: Text.ElideRight
             font.family: Theme.sans
-            font.pixelSize: 13
+            font.pixelSize: 14
             lineHeight: 1.15
         }
     }

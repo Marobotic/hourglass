@@ -51,6 +51,7 @@ export function expand(events, courses, from, to, tz) {
         location: ev.location || course?.location || null,
         color: course?.color ?? "#4A8B8B",
         course_code: course?.code ?? null,
+        teacher: course?.teacher ?? null,
         date,
         start_time: ev.start_time,
         end_time: ev.end_time,

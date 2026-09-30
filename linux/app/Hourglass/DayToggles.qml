@@ -25,7 +25,7 @@ RowLayout {
                 text: "MTWTFSS"[index]
                 color: parent.on ? Theme.accentInk : Theme.muted
                 font.family: Theme.mono
-                font.pixelSize: 11
+                font.pixelSize: 13
                 font.weight: Font.DemiBold
             }
             MouseArea {

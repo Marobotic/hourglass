@@ -5,11 +5,11 @@ import QtQuick.Layouts
 Item {
     id: page
     property var app
-    readonly property string today: app.nowData ? app.nowData.now.date : Util.fmt(Date.now())
+    readonly property string today: app.nowData ? app.nowData.now.date : Util.dayOf(Date.now())
     property string ws: ""
     property var occ: []
     readonly property int gutter: 52
-    readonly property int hourH: 58
+    readonly property int hourH: 66
     readonly property int startHour: {
         let m = 8;
         for (const o of occ) m = Math.min(m, Math.floor(Util.minutes(o.start_time) / 60));
@@ -54,7 +54,7 @@ Item {
             spacing: 8
             ColumnLayout {
                 spacing: 2
-                Text { text: page.ws ? Util.monthName(page.ws) + " " + new Date(Util.parse(page.ws)).getUTCFullYear() : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                Text { text: page.ws ? Util.monthName(page.ws) + " " + new Date(Util.parse(page.ws)).getUTCFullYear() : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
                 Text { text: page.ws ? Util.dayNum(page.ws) + " – " + Util.short(Util.addDays(page.ws, 6)).slice(4) : ""; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
             }
             Item { Layout.fillWidth: true }
@@ -82,7 +82,7 @@ Item {
                     ColumnLayout {
                         anchors.centerIn: parent
                         spacing: 0
-                        Text { Layout.alignment: Qt.AlignHCenter; text: Util.weekdays[index].toUpperCase(); color: parent.parent.isToday ? Theme.accent : Theme.muted; font.family: Theme.mono; font.pixelSize: 11; font.letterSpacing: 1.2; font.weight: Font.DemiBold }
+                        Text { Layout.alignment: Qt.AlignHCenter; text: Util.weekdays[index].toUpperCase(); color: parent.parent.isToday ? Theme.accent : Theme.muted; font.family: Theme.mono; font.pixelSize: 13; font.letterSpacing: 1.2; font.weight: Font.DemiBold }
                         Rectangle {
                             Layout.alignment: Qt.AlignHCenter
                             width: 30; height: 26; radius: 5
@@ -116,7 +116,7 @@ Item {
                         required property int index
                         y: grid.headroom + index * page.hourH
                         width: grid.width
-                        Text { x: 0; y: -7; width: page.gutter - 12; horizontalAlignment: Text.AlignRight; text: Util.pad(page.startHour + index) + ":00"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+                        Text { x: 0; y: -7; width: page.gutter - 12; horizontalAlignment: Text.AlignRight; text: Util.pad(page.startHour + index) + ":00"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
                         Rectangle { x: page.gutter; width: grid.width - page.gutter; height: 1; color: Theme.border; opacity: 0.7 }
                     }
                 }
@@ -150,34 +150,57 @@ Item {
                         Repeater {
                             model: col.date ? page.layoutDay(col.date) : []
                             Rectangle {
+                                id: block
                                 required property var modelData
                                 readonly property var o: modelData.o
                                 readonly property bool past: page.app.clock > o.end_ms
+                                readonly property string room: (o.location || "").split(" · ")[0]
+                                readonly property string lead: (o.teacher || "").split(",")[0].replace(/^(Ms|Mr|Dr|Prof)\.\s*/, "")
                                 x: 3 + modelData.lane * (col.width - 6) / modelData.lanes
                                 width: (col.width - 6) / modelData.lanes - 3
                                 y: (modelData.s - page.startHour * 60) / 60 * page.hourH + 1
-                                height: Math.max(24, (modelData.e - modelData.s) / 60 * page.hourH - 3)
+                                height: Math.max(26, (modelData.e - modelData.s) / 60 * page.hourH - 3)
                                 radius: 5
-                                color: blockMouse.containsMouse ? Theme.alpha(o.color, 0.32) : Theme.alpha(o.color, 0.2)
-                                border.color: Theme.alpha(o.color, 0.55)
-                                opacity: past ? 0.55 : 1
+                                // opaque tint: text stays full contrast on any wallpaper-free background
+                                color: Theme.mix(Theme.surface, Qt.color(o.color), blockMouse.containsMouse ? 0.3 : 0.2)
+                                border.color: Theme.alpha(o.color, 0.7)
+                                opacity: past ? 0.72 : 1
                                 clip: true
-                                Rectangle { width: 3; height: parent.height; color: parent.o.color; radius: 2 }
+                                Rectangle { width: 4; height: parent.height; color: block.o.color; radius: 2 }
                                 ColumnLayout {
-                                    anchors { fill: parent; leftMargin: 9; rightMargin: 5; topMargin: 5 }
-                                    spacing: 1
-                                    Text { Layout.fillWidth: true; text: parent.parent.o.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                    Text { Layout.fillWidth: true; visible: parent.parent.height > 38; text: parent.parent.o.start_time + "–" + parent.parent.o.end_time; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 10 }
-                                    Text { Layout.fillWidth: true; visible: parent.parent.height > 56 && !!parent.parent.o.location; text: parent.parent.o.location || ""; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 10 }
+                                    anchors { fill: parent; leftMargin: 10; rightMargin: 6; topMargin: 5 }
+                                    spacing: 2
+                                    Text {
+                                        Layout.fillWidth: true; text: block.o.title; color: Theme.fg
+                                        wrapMode: Text.Wrap; maximumLineCount: block.height > 120 ? 2 : 1; elide: Text.ElideRight
+                                        font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.Bold
+                                    }
+                                    // room first: it is the part you need at a glance
+                                    Text {
+                                        Layout.fillWidth: true; visible: block.height > 40
+                                        text: (block.room ? "<b>" + block.room + "</b>  " : "") + block.o.start_time + "–" + block.o.end_time
+                                        textFormat: Text.StyledText
+                                        color: Theme.fg; opacity: 0.9; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true; visible: block.height > 64
+                                        text: Util.kindLabel(block.o.kind) + (block.o.course_code ? " · " + block.o.course_code : "")
+                                        color: Theme.fg; opacity: 0.7; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true; visible: block.height > 88 && block.lead !== ""
+                                        text: block.lead
+                                        color: Theme.fg; opacity: 0.7; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13
+                                    }
                                     Item { Layout.fillHeight: true }
                                 }
-                                MouseArea { id: blockMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.app.openSession(parent.o) }
+                                MouseArea { id: blockMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.app.openSession(block.o) }
                             }
                         }
 
                         // now line
                         Rectangle {
-                            readonly property real mins: { const d = new Date(page.app.clock); return d.getHours() * 60 + d.getMinutes(); }
+                            readonly property real mins: Util.minutesOf(page.app.clock)
                             visible: col.isToday && mins >= page.startHour * 60 && mins <= page.endHour * 60
                             y: (mins - page.startHour * 60) / 60 * page.hourH
                             width: col.width
@@ -193,7 +216,7 @@ Item {
 
         Text {
             text: "Double-click an empty slot to add an event there."
-            color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11
+            color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13
         }
     }
 }

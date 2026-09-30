@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
-import { TABLE_NAMES, dueBetween, isSpent } from "../../core/index.js";
+import { TABLE_NAMES, dueBetween, isSpent, localParts, parseDate } from "../../core/index.js";
 import { createHandler } from "../../server/app.js";
 
 const HOME = homedir();
@@ -158,6 +158,14 @@ setInterval(() => {
   lastCheck = now;
 }, 1000);
 
+// Minutes the user's zone is ahead of UTC right now; the QML clock uses it so
+// the app shows Hourglass time even when the system zone differs.
+function tzOffsetMin() {
+  const now = Date.now();
+  const p = localParts(now, service.tz);
+  return Math.round((parseDate(p.date) + p.minutes * 60000 + p.seconds * 1000 - now) / 60000);
+}
+
 // --- HTTP ------------------------------------------------------------------------
 
 const json = (res, status, body) => {
@@ -172,6 +180,7 @@ async function extra(req, res, url, path) {
       sync: { ...sync, server: config().server ?? null },
       ringing: [...ringing.values()].map(({ stop, ...r }) => r),
       settings: service.settings(),
+      tz_offset_min: tzOffsetMin(),
     }), true;
   }
   if (path === "/api/ring/stop" && req.method === "POST") {

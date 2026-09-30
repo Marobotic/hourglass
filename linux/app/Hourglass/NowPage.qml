@@ -35,7 +35,7 @@ Item {
                     Layout.fillWidth: true
                     ColumnLayout {
                         spacing: 2
-                        Text { text: page.d ? Util.long(page.d.now.date) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                        Text { text: page.d ? Util.long(page.d.now.date) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
                         Text { text: Util.clock(page.app.clock); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 38; font.weight: Font.Bold }
                     }
                     Item { Layout.fillWidth: true }
@@ -70,11 +70,11 @@ Item {
                             Text {
                                 text: !hero.f ? "" : hero.live ? "LIVE NOW" : hero.f.state === "ended" ? "JUST ENDED" : "UP NEXT"
                                 color: hero.live ? Theme.accent : Theme.muted
-                                font.family: Theme.mono; font.pixelSize: 11; font.weight: Font.Bold; font.letterSpacing: 1.6
+                                font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 1.6
                             }
                             Chip { text: hero.f ? Util.kindLabel(hero.f.kind) : ""; tint: hero.f ? hero.f.color : Theme.muted }
                             Item { Layout.fillWidth: true }
-                            Text { text: hero.f ? hero.f.start_time + " – " + hero.f.end_time : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                            Text { text: hero.f ? hero.f.start_time + " – " + hero.f.end_time : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
                         }
 
                         Text {
@@ -90,10 +90,16 @@ Item {
                             RowLayout {
                                 visible: !!(hero.f && hero.f.location)
                                 spacing: 6
-                                Icon { name: "place"; size: 12; color: Theme.muted }
-                                Text { text: hero.f && hero.f.location ? hero.f.location : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                                Icon { name: "place"; size: 13; color: Theme.muted }
+                                Text { text: hero.f && hero.f.location ? hero.f.location : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
                             }
-                            Text { visible: !!(hero.f && hero.f.course_code); text: hero.f && hero.f.course_code ? hero.f.course_code : ""; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
+                            Text { visible: !!(hero.f && hero.f.course_code); text: hero.f && hero.f.course_code ? hero.f.course_code : ""; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 14 }
+                        }
+                        RowLayout {
+                            visible: !!(hero.f && hero.f.teacher)
+                            spacing: 6
+                            Icon { name: "person"; size: 13; color: Theme.muted }
+                            Text { Layout.fillWidth: true; text: hero.f && hero.f.teacher ? hero.f.teacher : ""; color: Theme.muted; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 14 }
                         }
 
                         // progress
@@ -115,7 +121,7 @@ Item {
                             Text {
                                 text: !hero.f ? "" : hero.live ? Util.left(hero.leftMin) : hero.f.state === "ended" ? "Ended " + hero.f.end_time + ". Good time to tidy your notes." : "Starts " + Util.relative(hero.inMin)
                                 color: Theme.muted
-                                font.family: Theme.mono; font.pixelSize: 12
+                                font.family: Theme.mono; font.pixelSize: 13
                             }
                         }
 
@@ -154,7 +160,7 @@ Item {
                             text: parent.parent.nx
                                 ? "Next: " + parent.parent.nx.title + ", " + Util.short(parent.parent.nx.date) + " at " + parent.parent.nx.start_time + " (" + Util.relative(Math.ceil((parent.parent.nx.start_ms - page.app.clock) / 60000)) + ")"
                                 : page.app.courses.length ? "Nothing scheduled in the next 7 days." : "Add your courses and their weekly times. During each lecture, its notes open right here."
-                            color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
+                            color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14
                         }
                         RowLayout {
                             Layout.topMargin: 4
@@ -179,7 +185,7 @@ Item {
                     Text {
                         visible: page.notes && !page.notes.session.length
                         text: "No notes yet for this session. Press n to start one."
-                        color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
+                        color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13
                     }
                 }
                 ColumnLayout {
@@ -219,7 +225,7 @@ Item {
                 Text {
                     visible: page.d && !page.d.today.length
                     text: "Nothing scheduled today."
-                    color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
+                    color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13
                 }
                 Repeater {
                     model: page.d ? page.d.today : []
@@ -237,17 +243,17 @@ Item {
                             spacing: 12
                             ColumnLayout {
                                 spacing: 0
-                                Text { text: modelData.start_time; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.DemiBold }
-                                Text { text: modelData.end_time; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+                                Text { text: modelData.start_time; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                Text { text: modelData.end_time; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
                             }
                             Rectangle { width: 3; Layout.fillHeight: true; Layout.topMargin: 9; Layout.bottomMargin: 9; radius: 2; color: modelData.color }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 1
-                                Text { Layout.fillWidth: true; text: modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
-                                Text { Layout.fillWidth: true; text: Util.kindLabel(modelData.kind) + (modelData.location ? " · " + modelData.location : ""); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 11 }
+                                Text { Layout.fillWidth: true; text: modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
+                                Text { Layout.fillWidth: true; text: Util.kindLabel(modelData.kind) + (modelData.location ? " · " + modelData.location : ""); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
                             }
-                            Text { visible: parent.parent.live; text: "●"; color: Theme.accent; font.pixelSize: 10 }
+                            Text { visible: parent.parent.live; text: "●"; color: Theme.accent; font.pixelSize: 12 }
                         }
                         MouseArea { id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.app.openSession(modelData) }
                     }
@@ -268,7 +274,7 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 0
                                 Text { text: Util.countdown(parent.parent.parent.remain); color: modelData.state === "paused" ? Theme.muted : Theme.fg; font.family: Theme.mono; font.pixelSize: 20; font.weight: Font.Bold }
-                                Text { Layout.fillWidth: true; text: modelData.label; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 11 }
+                                Text { Layout.fillWidth: true; text: modelData.label; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
                             }
                             Btn { compact: true; kind: "subtle"; icon: modelData.state === "running" ? "pause" : "play"; onClicked: Api.action("update_timer", { timer_id: modelData.id, action: modelData.state === "running" ? "pause" : "resume" }) }
                             Btn { compact: true; kind: "subtle"; icon: "close"; onClicked: Api.action("update_timer", { timer_id: modelData.id, action: "stop" }) }
@@ -288,7 +294,7 @@ Item {
                 Text {
                     visible: page.d && !page.d.alarms.length
                     text: "No alarms set."
-                    color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
+                    color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13
                 }
                 Repeater {
                     model: page.d ? page.d.alarms : []
@@ -296,10 +302,10 @@ Item {
                         required property var modelData
                         Layout.fillWidth: true
                         spacing: 10
-                        Icon { name: "bell"; size: 12; color: Theme.gold }
-                        Text { text: Util.clock(modelData.next_at); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text { Layout.fillWidth: true; text: modelData.label; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
-                        Text { text: Util.short(Util.fmt(Date.UTC(new Date(modelData.next_at).getFullYear(), new Date(modelData.next_at).getMonth(), new Date(modelData.next_at).getDate()))).slice(0, 3); color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+                        Icon { name: "bell"; size: 13; color: Theme.gold }
+                        Text { text: Util.clock(modelData.next_at); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.DemiBold }
+                        Text { Layout.fillWidth: true; text: modelData.label; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
+                        Text { text: Util.short(Util.dayOf(modelData.next_at)).slice(0, 3); color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
                     }
                 }
             }

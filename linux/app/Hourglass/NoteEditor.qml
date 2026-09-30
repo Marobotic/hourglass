@@ -35,6 +35,11 @@ Rectangle {
         status = "Saving…";
         Api.put("/api/notes/" + loadedId, { title: titleField.text, body: body.text }, () => ed.status = "Saved");
     }
+    readonly property bool dated: !!(note && note.session_date)
+    function move(patch) {
+        flush();
+        Api.put("/api/notes/" + loadedId, patch, n => { if (n) { ed.app.editingNote = n; ed.status = "Saved"; } });
+    }
     function edited() { if (loadedId) { status = "Edited"; saveTimer.restart(); } }
     Timer { id: saveTimer; interval: 600; onTriggered: ed.save() }
 
@@ -46,14 +51,8 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 8
             Btn { icon: "back"; text: "Back"; kind: "subtle"; onClicked: { ed.flush(); ed.app.editingNote = null; } }
-            Rectangle { visible: !!ed.course; width: 10; height: 10; radius: 2; color: ed.course ? ed.course.color : "transparent"; Layout.leftMargin: 8 }
-            Text { visible: !!ed.course; text: ed.course ? ed.course.name : ""; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13 }
-            Text {
-                text: ed.note && ed.note.session_date ? "·  session " + Util.short(ed.note.session_date) : ed.course ? "·  course note" : "Inbox"
-                color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
-            }
             Item { Layout.fillWidth: true }
-            Text { text: ed.status; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+            Text { text: ed.status; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
             Btn {
                 icon: "pin"; compact: true; kind: "subtle"
                 active: !!(ed.note && ed.note.pinned)
@@ -68,6 +67,34 @@ Rectangle {
                     Api.action("delete_note", { note_id: ed.loadedId }, () => ed.app.editingNote = null);
                 })
             }
+        }
+
+        // Which course and which day this note belongs to; changes save at once.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            Picker {
+                Layout.preferredWidth: 260
+                options: ed.app ? ed.app.courseOptions(true) : []
+                value: ed.note ? ed.note.course_id || null : null
+                onPicked: v => ed.move({ course_id: v })
+            }
+            Btn { compact: true; icon: "left"; enabled: ed.dated; onClicked: ed.move({ session_date: Util.addDays(ed.note.session_date, -1) }) }
+            Field {
+                id: dateF
+                Layout.preferredWidth: 130
+                placeholderText: "No date"
+                text: ed.note && ed.note.session_date ? ed.note.session_date : ""
+                invalid: text !== "" && !Util.isDate(text)
+                onEditingFinished: if (text === "" || Util.isDate(text)) ed.move({ session_date: text || null })
+            }
+            Btn { compact: true; icon: "right"; enabled: ed.dated; onClicked: ed.move({ session_date: Util.addDays(ed.note.session_date, 1) }) }
+            Text {
+                Layout.fillWidth: true
+                text: ed.dated ? Util.long(ed.note.session_date) : "Not tied to a day"
+                color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14
+            }
+            Btn { compact: true; kind: "subtle"; text: ed.dated ? "Clear date" : "Today"; onClicked: ed.move({ session_date: ed.dated ? null : Util.dayOf(Date.now()) }) }
         }
 
         TextField {

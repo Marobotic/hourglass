@@ -16,7 +16,7 @@ Modal {
         open();
     }
 
-    Text { Layout.fillWidth: true; text: cd.message; color: Theme.muted; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 13 }
+    Text { Layout.fillWidth: true; text: cd.message; color: Theme.muted; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 14 }
 
     footer: [
         Item { Layout.fillWidth: true },

@@ -39,7 +39,7 @@ Modal {
         }), r => { if (r) dlg.close(); });
     }
 
-    component Label: Text { color: Theme.muted; font.family: Theme.mono; font.pixelSize: 11; font.letterSpacing: 0.8 }
+    component Label: Text { color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13; font.letterSpacing: 0.8 }
 
     GridLayout {
         Layout.fillWidth: true

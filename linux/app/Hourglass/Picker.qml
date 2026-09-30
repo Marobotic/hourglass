@@ -27,9 +27,9 @@ Rectangle {
             color: pk.current ? Theme.fg : Theme.faint
             elide: Text.ElideRight
             font.family: Theme.mono
-            font.pixelSize: 13
+            font.pixelSize: 14
         }
-        Icon { name: "down"; size: 10; color: Theme.muted }
+        Icon { name: "down"; size: 11; color: Theme.muted }
     }
     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: pop.open() }
 
@@ -55,7 +55,7 @@ Rectangle {
                     anchors { fill: parent; leftMargin: 9; rightMargin: 9 }
                     spacing: 8
                     Rectangle { visible: !!modelData.color; width: 10; height: 10; radius: 2; color: modelData.color || "transparent" }
-                    Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
+                    Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                 }
                 MouseArea {
                     id: hover
