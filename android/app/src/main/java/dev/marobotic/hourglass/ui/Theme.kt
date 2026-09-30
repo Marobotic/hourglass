@@ -107,9 +107,9 @@ private val Square = androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
 // --- building blocks ---
 
 @Composable
-fun T(text: String, size: Int = 14, color: Color = HColors.fg, bold: Boolean = false, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE, spacing: Double = 0.0) =
+fun T(text: String, size: Int = 14, color: Color = HColors.fg, bold: Boolean = false, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE, spacing: Double = 0.0, align: androidx.compose.ui.text.style.TextAlign? = null) =
     Text(text, modifier, color = color, fontFamily = Mono, fontSize = (if (size <= 12) size + 1 else size).sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-        maxLines = maxLines, letterSpacing = spacing.sp, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        maxLines = maxLines, letterSpacing = spacing.sp, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, textAlign = align)
 
 @Composable
 fun HCard(modifier: Modifier = Modifier, stripe: Color? = null, onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
@@ -176,9 +176,11 @@ fun PixelLogo(cell: Dp = 3.dp, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun Field(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier, singleLine: Boolean = true, placeholder: String? = null, isError: Boolean = false) {
+fun Field(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier, singleLine: Boolean = true, placeholder: String? = null, isError: Boolean = false, password: Boolean = false) {
     OutlinedTextField(
         value, onChange, modifier, label = { T(label, 12, HColors.muted) }, singleLine = singleLine, isError = isError,
+        visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        keyboardOptions = if (password) androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password) else androidx.compose.foundation.text.KeyboardOptions.Default,
         placeholder = placeholder?.let { { T(it, 14, HColors.faint) } },
         textStyle = TextStyle(fontFamily = Mono, fontSize = 15.sp, color = HColors.fg),
         shape = RectangleShape,

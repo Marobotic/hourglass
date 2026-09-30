@@ -37,7 +37,8 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 // (same semantics as core/node/service.js) and the sync loop.
 // autoConfigure: point a fresh install at the build-time server. Tests pass false
 // so demo data never reaches the real account.
-const val SCHEMA = "3" // bump when a table or column is added
+const val SCHEMA = "4"
+val BUILTIN_RINGTONES = listOf("classic", "klaxon", "siren", "digital", "rising", "bell") // bump when a table or column is added
 
 class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val store = Store(File(ctx.filesDir, "hourglass.json"))
@@ -49,14 +50,25 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val sync: StateFlow<SyncState> = _sync
     private var pending: Job? = null
     private var syncEnabled = true
-    private val token: String? by lazy { store.meta("token_sealed")?.let { Vault.open(it) } }
+    // The Omarchy Music session once signed in; before that the build's
+    // legacy key. Both sealed with the Keystore.
+    private val token: String? get() = store.meta("session_sealed")?.let { Vault.open(it) }
+        ?: store.meta("token_sealed")?.takeIf { store.meta("signed_out") == null }?.let { Vault.open(it) }
+    val signedIn get() = store.meta("session_sealed") != null
+    // Real installs open on the sign-in page until an account is signed in.
+    val needsSignIn get() = syncEnabled && !signedIn
+    val account: String? get() = store.meta("account")
 
     // --- device preferences (not synced) ---
     val h24 get() = store.meta("time_format") == "24h"
     val firstDay get() = store.meta("week_start")?.toIntOrNull() ?: 6
     val sound get() = store.meta("sound") != "false"
     val vibrate get() = store.meta("vibrate") != "false"
-    val ringtone get() = store.meta("ringtone") ?: "classic"
+    // Synced: a built-in name or a ringtones row id.
+    val ringtone: String get() {
+        val v = store.get("prefs", "ringtone")?.str("value")
+        return if (v in BUILTIN_RINGTONES || (v != null && store.get("ringtones", v) != null)) v!! else "classic"
+    }
     // Read from the synced lecture alarms, so every device shows the same value.
     val reminderMin: Int get() {
         val lectures = events().filter { it.optString("kind") == "lecture" }.map { it.id }.toSet()
@@ -222,6 +234,72 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     fun finishTimer(id: String) = store.upsert("timers", mapOf("state" to "done"), id)
     fun stopTimer(id: String) = store.remove("timers", id)
 
+    // --- ringtones (synced; audio downloaded to files/sounds) ---
+
+    fun ringtones() = store.all("ringtones").sortedByDescending { it.optLong("updated_at") }
+    fun setRingtone(id: String) = store.upsert("prefs", mapOf("value" to id), "ringtone")
+    fun removeRingtone(id: String) {
+        if (ringtone == id) setRingtone("classic")
+        store.remove("ringtones", id)
+    }
+    fun soundFile(id: String) = File(ctx.filesDir, "sounds/$id.wav")
+
+    private fun fetchSounds(server: String, token: String) {
+        val dir = File(ctx.filesDir, "sounds").apply { mkdirs() }
+        val want = ringtones().map { it.id }.toSet()
+        for (id in want) {
+            val f = soundFile(id)
+            if (f.exists()) continue
+            runCatching {
+                val c = URL("$server/api/ringtones/$id/audio").openConnection() as HttpURLConnection
+                c.setRequestProperty("Authorization", "Bearer $token")
+                c.connectTimeout = 8000
+                c.readTimeout = 60000
+                if (c.responseCode == 200) {
+                    val tmp = File(dir, "$id.part")
+                    c.inputStream.use { i -> tmp.outputStream().use { i.copyTo(it) } }
+                    tmp.renameTo(f)
+                }
+            }
+        }
+        dir.listFiles()?.filter { it.nameWithoutExtension !in want }?.forEach { it.delete() }
+    }
+
+    // Upload an audio file; the server cuts the loudest 30 s and it syncs back.
+    fun uploadRingtone(bytes: ByteArray, name: String, done: (String?) -> Unit) = scope.launch {
+        val err = runCatching {
+            val t = token ?: error("Sign in first")
+            http("POST", "${BuildConfig.SERVER}/api/ringtones/upload?select=1&name=${java.net.URLEncoder.encode(name, "UTF-8")}", t, null, bytes)
+            syncOnce()
+        }.exceptionOrNull()?.message
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+
+    // --- account (Omarchy Music) ---
+
+    fun signIn(email: String, password: String, done: (String?) -> Unit) = scope.launch {
+        val err = runCatching {
+            val res = JSONObject(http("POST", "${BuildConfig.SERVER}/auth/login", null, JSONObject().put("email", email).put("password", password).toString()))
+            val who = res.optString("email").lowercase()
+            val was = account
+            if (was != null && was != who) store.clearAll()
+            store.setMeta("session_sealed", Vault.seal(res.getString("session")))
+            store.setMeta("token_sealed", null)
+            store.setMeta("signed_out", null)
+            store.setMeta("account", who)
+            syncOnce()
+        }.exceptionOrNull()?.message
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+
+    fun signOut() = scope.launch {
+        token?.takeIf { signedIn }?.let { t -> runCatching { http("POST", "${BuildConfig.SERVER}/auth/logout", t, "{}") } }
+        store.setMeta("session_sealed", null)
+        store.setMeta("token_sealed", null)
+        store.setMeta("signed_out", "1")
+        _sync.value = SyncState("signed_out")
+    }
+
     // --- sync ---
 
     fun startLoop() = scope.launch {
@@ -236,7 +314,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     @Synchronized
     private fun syncOnce() {
         val server = BuildConfig.SERVER.takeIf { syncEnabled && it.isNotEmpty() } ?: run { _sync.value = SyncState("local"); return }
-        val token = token ?: run { _sync.value = SyncState("offline", "no sign-in token"); return }
+        val token = token ?: run { _sync.value = SyncState("signed_out"); return }
         try {
             val dirty = store.dirty()
             if (dirty.values.any { it.isNotEmpty() }) {
@@ -253,27 +331,32 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             val changes = res.getJSONObject("changes")
             for (t in Store.TABLES) changes.optJSONArray(t)?.let { a -> for (i in 0 until a.length()) store.applyRemote(t, a.getJSONObject(i)) }
             store.setMeta("cursor", res.getLong("rev"))
+            if (account == null) store.setMeta("account", JSONObject(http("GET", "$server/api/account", token, null)).optString("email").lowercase())
+            fetchSounds(server, token)
             _sync.value = SyncState("synced", null, System.currentTimeMillis())
             Scheduler.reschedule(ctx, this)
         } catch (e: Exception) {
-            _sync.value = SyncState("offline", e.message)
+            _sync.value = SyncState(if (e.message == "HTTP 401") "signed_out" else "offline", e.message)
         }
     }
 
-    private fun http(method: String, url: String, token: String, body: String?): String {
+    private fun http(method: String, url: String, token: String?, body: String?, raw: ByteArray? = null): String {
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = method
         c.connectTimeout = 8000
-        c.readTimeout = 15000
-        c.setRequestProperty("Authorization", "Bearer $token")
-        if (body != null) {
+        c.readTimeout = if (raw != null) 120000 else 15000
+        if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
+        if (body != null || raw != null) {
             c.doOutput = true
-            c.setRequestProperty("Content-Type", "application/json")
-            c.outputStream.use { it.write(body.toByteArray()) }
+            c.setRequestProperty("Content-Type", if (raw != null) "application/octet-stream" else "application/json")
+            c.outputStream.use { it.write(raw ?: body!!.toByteArray()) }
         }
         val code = c.responseCode
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
-        if (code !in 200..299) throw RuntimeException("HTTP $code")
+        if (code !in 200..299) {
+            val msg = runCatching { JSONObject(text).optString("error") }.getOrNull()
+            throw RuntimeException(if (code == 401 && url.endsWith("/auth/login")) msg ?: "Wrong email or password" else if (code == 401) "HTTP 401" else msg?.ifBlank { null } ?: "HTTP $code")
+        }
         return text
     }
 

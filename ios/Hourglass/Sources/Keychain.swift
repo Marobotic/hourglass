@@ -24,6 +24,8 @@ enum Keychain {
         SecItemAdd(q as CFDictionary, nil)
     }
 
+    static func delete(_ key: String) { SecItemDelete(query(key) as CFDictionary) }
+
     // The build ships the token XOR-scrambled (hex), not as text.
     static func unscramble(_ hex: String) -> String {
         let salt = Array("dev.marobotic.hourglass".utf8)

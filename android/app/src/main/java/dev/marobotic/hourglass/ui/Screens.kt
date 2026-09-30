@@ -100,7 +100,17 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
     val today = remember(clock / 60_000) { java.time.LocalDate.now(zone) }
     val blocks = remember(version, today) { dev.marobotic.hourglass.core.merge(repo.occurrences(today, today.plusDays(7))) }
     val current = blocks.firstOrNull { it.endMs > clock }
-    val after = if (current != null) blocks.filter { it.startMs > current.startMs }.take(3) else emptyList()
+    // Notes dated today, then the class's: this session's, else the last one's.
+    val todayNotes = remember(version, today, current?.first?.courseId, current?.first?.date) {
+        val all = repo.notes()
+        val out = all.filter { it.str("session_date") == today.toString() }.toMutableList()
+        current?.first?.courseId?.let { cid ->
+            val mine = all.filter { it.str("course_id") == cid && (it.str("session_date") ?: "~") <= current.first.date.toString() }
+            val last = mine.maxOfOrNull { it.optString("session_date") }
+            mine.filter { it.optString("session_date") == last && it !in out }.forEach { out.add(it) }
+        }
+        out.sortedWith(compareByDescending<JSONObject> { it.optInt("pinned") }.thenByDescending { it.optLong("updated_at") }).take(6)
+    }
     val alarm = remember(version, clock / 60_000) {
         val cs = repo.store.all("courses"); val es = repo.events()
         repo.alarms().mapNotNull { a -> dev.marobotic.hourglass.core.Alarms.next(a, cs, es, clock, zone)?.let { a to it } }.minByOrNull { it.second }
@@ -139,19 +149,24 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                 }
             }
         }
-        if (after.isNotEmpty()) item {
-            Column {
-                T("AFTER THAT", 12, HColors.muted, bold = true, spacing = 2.0)
-                Spacer(Modifier.height(6.dp))
-                for (b in after) {
-                    Row(Modifier.fillMaxWidth().clickable { nav.sheets.session = b.first }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(4.dp).height(22.dp).background(hex(b.first.color)))
-                        Spacer(Modifier.width(12.dp))
-                        T((if (b.first.date == today) "" else Dates.WEEKDAYS[Dates.iso(b.first.date) - 1] + " ") + Dates.t(b.startTime), 15, bold = true, modifier = Modifier.width(118.dp))
-                        T(b.first.title, 15, maxLines = 1, modifier = Modifier.weight(1f))
-                        b.first.location?.let { T(it, 14, HColors.muted) }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                T("NOTES FOR TODAY", 12, HColors.muted, bold = true, spacing = 2.0)
+                if (todayNotes.isEmpty()) T("Nothing yet. Notes you take in class show up here.", 13, HColors.faint)
+                for (pair in todayNotes.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (n in pair) {
+                        val c = repo.course(n.str("course_id"))
+                        val tint = c?.let { hex(it.optString("color")) }
+                        Column(
+                            Modifier.weight(1f).background(tint?.copy(alpha = 0.14f) ?: HColors.surface).border(1.dp, tint?.copy(alpha = 0.45f) ?: HColors.border).clickable { nav.openNote(n) }.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (n.optString("title").isNotBlank()) T(n.optString("title"), 14, bold = true, maxLines = 1)
+                            if (n.optString("body").isNotBlank()) T(n.optString("body"), 13, HColors.fg.copy(alpha = 0.85f), maxLines = 4)
+                            T(listOfNotNull(c?.let { it.str("code") ?: it.optString("name") }, if (n.str("session_date") == today.toString()) "Today" else n.str("session_date")?.let { "Last class · " + Dates.short(java.time.LocalDate.parse(it)) }).joinToString("  ·  "), 11, tint ?: HColors.muted, bold = true, maxLines = 1)
+                        }
                     }
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
         }

@@ -24,6 +24,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -289,35 +293,100 @@ private fun AlarmSheet(nav: Nav, onDismiss: () -> Unit) {
 
 // ------------------------------------------------------------------ settings
 
-// Preferences for this phone. The sync server is built in; nothing to type.
+// Preferences. The account is the Omarchy Music one; ringtones and the
+// chosen one sync to every device.
 @Composable
 private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
     val repo = nav.repo
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var tick by remember { mutableStateOf(0) }
+    val version by repo.store.version.collectAsState()
+    val sync by repo.sync.collectAsState()
     fun set(k: String, v: String) { repo.setPref(k, v); tick++ }
-    val sync = repo.sync.value
-    key(tick) {
+    var email by remember { mutableStateOf(repo.account ?: "") }
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val pick = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val name = ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (i >= 0 && c.moveToFirst()) c.getString(i) else null
+        } ?: "My ringtone"
+        val bytes = runCatching { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+        if (bytes == null) { error = "Could not read that file"; return@rememberLauncherForActivityResult }
+        busy = true
+        error = null
+        repo.uploadRingtone(bytes, name) { busy = false; error = it; tick++ }
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { dev.marobotic.hourglass.alarm.Preview.stop() } }
+    key(tick, version, sync) {
         Sheet("Settings", onDismiss) {
+            Section("Account")
+            if (repo.signedIn) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        T(repo.account ?: "", 15)
+                        T(when (sync.state) {
+                            "synced" -> "Omarchy Music account · synced ${Dates.clock(sync.lastOk, repo.zone)}"
+                            "offline" -> "Offline. Changes are kept on the phone and sent later."
+                            else -> "Omarchy Music account"
+                        }, 12, HColors.muted)
+                    }
+                    HButton("Sign out") { nav.sheets.confirm = Triple("Sign out?", "This phone stops syncing until you sign in again.") { repo.signOut(); tick++ } }
+                }
+            }
+            error?.let { T(it, 13, HColors.accent) }
+
+            Section("Alarms")
+            T("LECTURE REMINDERS", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("Off" to 0, "10 min" to 10, "15 min" to 15, "30 min" to 30, "60 min" to 60), repo.reminderMin) { repo.setLectureReminders(it); tick++ }
+            T("Rings before every lecture, on all your devices, even with the app closed.", 12, HColors.faint)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                T("RINGTONE", 11, HColors.muted, spacing = 0.6, modifier = Modifier.weight(1f))
+                HButton(if (busy) "Uploading…" else "Upload", enabled = !busy && token(repo)) { pick.launch("audio/*") }
+            }
+            val current = repo.ringtone
+            val rows = dev.marobotic.hourglass.data.BUILTIN_RINGTONES.map { Triple(it, it.replaceFirstChar { c -> c.uppercase() }, "Built in") } +
+                repo.ringtones().map { r -> Triple(r.id, r.optString("name"), if (r.optString("kind") == "song") "Song" + (r.str("artist")?.let { " · $it" } ?: "") else "Upload") }
+            Column {
+                for ((id, name, sub) in rows) {
+                    val on = id == current
+                    val custom = sub != "Built in"
+                    Row(
+                        Modifier.fillMaxWidth().background(if (on) HColors.surface2 else Color.Transparent).clickable { repo.setRingtone(id); tick++ }.padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(14.dp).background(if (on) HColors.accent else Color.Transparent).border(1.dp, if (on) HColors.accent else HColors.faint))
+                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                            T(name, 15, bold = on, maxLines = 1)
+                            T(sub + if (custom && !repo.soundFile(id).exists()) " · downloading" else "", 12, HColors.muted, maxLines = 1)
+                        }
+                        IconButton({ dev.marobotic.hourglass.alarm.Preview.toggle(ctx, id); tick++ }) {
+                            Icon(if (dev.marobotic.hourglass.alarm.Preview.playing == id) Icons.Outlined.Stop else Icons.Outlined.PlayArrow, "Play", tint = HColors.muted)
+                        }
+                        if (custom) IconButton({ nav.sheets.confirm = Triple("Delete $name?", "It is removed from every device." + if (on) " Alarms go back to Classic." else "") { repo.removeRingtone(id); tick++ } }) {
+                            Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted)
+                        }
+                    }
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+                }
+            }
+            T("Add songs from Omarchy Music: open a song's menu and pick Set as alarm.", 12, HColors.faint)
+            Row(verticalAlignment = Alignment.CenterVertically) { T("Alarm sound", 15, modifier = Modifier.weight(1f)); Toggle(repo.sound) { set("sound", it.toString()) } }
+            Row(verticalAlignment = Alignment.CenterVertically) { T("Vibrate", 15, modifier = Modifier.weight(1f)); Toggle(repo.vibrate) { set("vibrate", it.toString()) } }
+
+            Section("Time")
             T("CLOCK", 11, HColors.muted, spacing = 0.6)
             Segmented(listOf("12-hour" to false, "24-hour" to true), repo.h24) { set("time_format", if (it) "24h" else "12h") }
             T("WEEK STARTS ON", 11, HColors.muted, spacing = 0.6)
             Segmented(listOf("Saturday" to 6, "Sunday" to 7, "Monday" to 1), repo.firstDay) { set("week_start", it.toString()) }
-            T("LECTURE REMINDERS", 11, HColors.muted, spacing = 0.6)
-            Segmented(listOf("Off" to 0, "10 min" to 10, "15 min" to 15, "30 min" to 30, "60 min" to 60), repo.reminderMin) { repo.setLectureReminders(it); tick++ }
-            T("Rings before every lecture, on all your devices, even with the app closed.", 12, HColors.faint)
-            T("RINGTONE", 11, HColors.muted, spacing = 0.6)
-            Segmented(listOf("Classic" to "classic", "Klaxon" to "klaxon", "Siren" to "siren", "Digital" to "digital", "Rising" to "rising", "Bell" to "bell"), repo.ringtone) { set("ringtone", it) }
-            Row(verticalAlignment = Alignment.CenterVertically) { T("Alarm sound", 15, modifier = Modifier.weight(1f)); Toggle(repo.sound) { set("sound", it.toString()) } }
-            Row(verticalAlignment = Alignment.CenterVertically) { T("Vibrate", 15, modifier = Modifier.weight(1f)); Toggle(repo.vibrate) { set("vibrate", it.toString()) } }
-            Section("Sync")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                T(when (sync.state) {
-                    "synced" -> "Synced with marobotic.dev · ${Dates.clock(sync.lastOk, repo.zone)}"
-                    "offline" -> "Offline. Changes are kept on the phone and sent later."
-                    else -> "Not connected"
-                }, 13, HColors.muted, modifier = Modifier.weight(1f))
+            if (repo.signedIn || sync.state == "synced") Row(verticalAlignment = Alignment.CenterVertically) {
+                T(if (sync.state == "offline") "Offline" else "Synced with marobotic.dev", 13, HColors.muted, modifier = Modifier.weight(1f))
                 HButton("Sync now") { repo.syncNow() }
             }
         }
     }
 }
+
+private fun token(repo: dev.marobotic.hourglass.data.Repo) = repo.signedIn || repo.sync.value.state == "synced"

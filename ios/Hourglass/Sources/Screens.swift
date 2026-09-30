@@ -14,7 +14,7 @@ struct NowView: View {
             let today = Dates.dayOf(clock)
             let blocks = merge(store.occurrences(today, Dates.add(today, 7)))
             let current = blocks.first { $0.endMs > clock }
-            let after = current.map { c in Array(blocks.filter { $0.startMs > c.startMs }.prefix(3)) } ?? []
+            let todays = todayNotes(today, current)
             let alarm = store.alarms.compactMap { a in Alarms.next(a, store.db.courses, store.db.events, clock).map { (a, $0) } }.min { $0.1 < $1.1 }
             let timer = store.timers.first
             ScrollView {
@@ -24,22 +24,11 @@ struct NowView: View {
                         T(Dates.clock(clock), 42, bold: true)
                     }
                     hero(current, today, clock)
-                    if !after.isEmpty {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("AFTER THAT").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted).padding(.bottom, 6)
-                            ForEach(after) { b in
-                                HStack(spacing: 12) {
-                                    Rectangle().fill(Color(hex: b.first.color)).frame(width: 4, height: 22)
-                                    T((b.first.date == today ? "" : Dates.weekdays[Dates.iso(b.first.date) - 1] + " ") + Dates.t(b.start), 15, bold: true).frame(width: 118, alignment: .leading)
-                                    T(b.first.title, 15, lines: 1)
-                                    Spacer()
-                                    if let l = b.first.location { T(l, 14, H.muted) }
-                                }
-                                .padding(.vertical, 12)
-                                .contentShape(Rectangle())
-                                .onTapGesture { sheets.session = b.first }
-                                Rectangle().fill(H.border).frame(height: 1)
-                            }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("NOTES FOR TODAY").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted)
+                        if todays.isEmpty { T("Nothing yet. Notes you take in class show up here.", 13, H.faint) }
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], alignment: .leading, spacing: 8) {
+                            ForEach(todays) { n in noteCard(n, today) }
                         }
                     }
                     if let al = alarm {
@@ -59,6 +48,34 @@ struct NowView: View {
             }
             .background(H.bg)
         }
+    }
+
+    // Notes dated today, then the class's: this session's, else the last one's.
+    private func todayNotes(_ today: String, _ b: Block?) -> [Note] {
+        var out = store.notes.filter { $0.session_date == today }
+        if let cid = b?.first.course_id, let day = b?.first.date {
+            let mine = store.notes.filter { $0.course_id == cid && ($0.session_date ?? "~") <= day }
+            let last = mine.compactMap(\.session_date).max()
+            for n in mine where n.session_date == last && !out.contains(where: { $0.id == n.id }) { out.append(n) }
+        }
+        return Array(out.sorted { ($0.pinned, $0.updated_at) > ($1.pinned, $1.updated_at) }.prefix(6))
+    }
+
+    private func noteCard(_ n: Note, _ today: String) -> some View {
+        let c = store.course(n.course_id)
+        let tint = c.map { Color(hex: $0.color) }
+        let foot = [c.map { $0.code ?? $0.name }, n.session_date == today ? "Today" : n.session_date.map { "Last class · " + Dates.short($0) }].compactMap { $0 }
+        return VStack(alignment: .leading, spacing: 4) {
+            if !n.title.isEmpty { T(n.title, 14, bold: true, lines: 1) }
+            if !n.body.isEmpty { Text(n.body).font(.system(size: 13)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(4) }
+            Text(foot.joined(separator: "  ·  ")).font(H.mono(11, bold: true)).foregroundStyle(tint ?? H.muted).lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(tint.map { $0.opacity(0.14) } ?? H.surface)
+        .overlay(Rectangle().stroke(tint?.opacity(0.45) ?? H.border, lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture { path.append(.note(n.id)) }
     }
 
     @ViewBuilder

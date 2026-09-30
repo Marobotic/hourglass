@@ -1,15 +1,38 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
-// Preferences for this computer. The sync server is built in and not editable.
+// Preferences. The account is the Omarchy Music one; ringtones and the
+// chosen one sync to every device.
 Item {
     id: page
     property var app
     readonly property var s: app.settings || ({})
     readonly property var sync: app.appState.sync || ({})
+    property var account: ({})
+    property var tones: []
+    property bool busy: false
 
-    function set(patch) { Api.put("/api/settings", patch, () => page.app.pollState()); }
+    function set(patch) { Api.put("/api/settings", patch, () => { page.app.pollState(); page.load(); }); }
+    function load() {
+        Api.get("/api/account", d => { if (d) page.account = d; });
+        Api.get("/api/ringtones", d => { if (d) page.tones = d; });
+    }
+    Component.onCompleted: load()
+    onVisibleChanged: if (visible) load()
+    Connections { target: Api; function onChanged() { page.load(); } }
+    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+
+    FileDialog {
+        id: picker
+        title: "Choose an audio file"
+        nameFilters: ["Audio (*.mp3 *.m4a *.aac *.wav *.ogg *.opus *.flac)", "All files (*)"]
+        onAccepted: {
+            page.busy = true;
+            Api.request("POST", "/api/ringtones/upload", { path: selectedFile.toString() }, (d, err) => { page.busy = false; page.app.pollState(); }, false);
+        }
+    }
 
     component SettingRow: RowLayout {
         property string label
@@ -66,12 +89,47 @@ Item {
                 }
                 SettingRow {
                     label: "Ringtone"
-                    hint: "Tap Play to hear it once."
+                    hint: "Rings on every device. Upload an MP3 or pick a song in Omarchy Music: Set as alarm."
+                    Btn { icon: "folder-open"; text: page.busy ? "Uploading…" : "Upload audio file"; enabled: !page.busy && !!page.account.signed_in; onClicked: picker.open() }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
                     Repeater {
-                        model: ["classic", "klaxon", "siren", "digital", "rising", "bell"]
-                        Btn { required property string modelData; text: modelData.charAt(0).toUpperCase() + modelData.slice(1); kind: "subtle"; active: (page.s.ringtone || "classic") === modelData; onClicked: page.set({ ringtone: modelData }) }
+                        model: page.tones
+                        Rectangle {
+                            id: tone
+                            required property var modelData
+                            Layout.fillWidth: true
+                            height: 48
+                            color: modelData.selected ? Theme.surface2 : toneMouse.containsMouse ? Theme.surface : "transparent"
+                            border.width: modelData.selected ? 1 : 0
+                            border.color: Theme.faint
+                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border; visible: !tone.modelData.selected }
+                            MouseArea { id: toneMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.set({ ringtone: tone.modelData.id }) }
+                            RowLayout {
+                                anchors { fill: parent; leftMargin: 14; rightMargin: 8 }
+                                spacing: 12
+                                Rectangle {
+                                    width: 14; height: 14
+                                    color: tone.modelData.selected ? Theme.accent : "transparent"
+                                    border.width: 1; border.color: tone.modelData.selected ? Theme.accent : Theme.faint
+                                }
+                                Text { text: tone.modelData.name; color: Theme.fg; elide: Text.ElideRight; Layout.maximumWidth: 360; font.family: Theme.mono; font.pixelSize: 15; font.weight: tone.modelData.selected ? Font.Bold : Font.Normal }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: tone.modelData.kind === "builtin" ? "Built in" : (tone.modelData.kind === "song" ? "Song" + (tone.modelData.artist ? " · " + tone.modelData.artist : "") : "Upload") + (tone.modelData.ready === false ? " · downloading" : "")
+                                    color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13
+                                }
+                                Btn { icon: "play"; compact: true; kind: "subtle"; enabled: tone.modelData.ready !== false; onClicked: Api.request("POST", "/api/ring/preview?name=" + tone.modelData.id, {}, null, true) }
+                                Btn {
+                                    visible: tone.modelData.kind !== "builtin"
+                                    icon: "trash"; compact: true; kind: "subtle"
+                                    onClicked: page.app.confirm("Delete " + tone.modelData.name + "?", "It is removed from every device." + (tone.modelData.selected ? " Alarms go back to Classic." : ""), "Delete", () => Api.del("/api/ringtones/" + tone.modelData.id))
+                                }
+                            }
+                        }
                     }
-                    Btn { icon: "play"; text: "Play"; compact: true; onClicked: Api.post("/api/ring/preview?name=" + (page.s.ringtone || "classic"), {}) }
                 }
                 SettingRow {
                     label: "Alarm sound"
@@ -80,13 +138,14 @@ Item {
                     Btn { text: "Off"; kind: "subtle"; active: page.s.sound === false; onClicked: page.set({ sound: false }) }
                 }
 
-                Section { Layout.fillWidth: true; text: "Sync" }
+                Section { Layout.fillWidth: true; text: "Account" }
                 SettingRow {
-                    label: page.sync.state === "synced" ? "Synced" : page.sync.state === "offline" ? "Offline" : "Not connected"
-                    hint: page.sync.state === "synced" ? "Everything is saved on marobotic.dev and shared with your phones. Last sync " + Util.clock(page.sync.last_ok || Date.now()) + "."
-                        : page.sync.state === "offline" ? "Changes are kept on this computer and sent when the connection is back."
-                        : "Sign-in token missing from the keyring."
+                    visible: !!page.account.signed_in
+                    label: page.account.email || ""
+                    hint: "Your Omarchy Music account. " + (page.sync.state === "synced" ? "Synced " + Util.clock(page.sync.last_ok || Date.now()) + ", shared with your phones."
+                        : page.sync.state === "offline" ? "Offline: changes are kept here and sent when the connection is back." : "")
                     Btn { icon: "sync"; text: "Sync now"; onClicked: Api.post("/api/sync/now", {}, () => page.app.pollState()) }
+                    Btn { text: "Sign out"; kind: "subtle"; onClicked: page.app.confirm("Sign out?", "This computer stops syncing until you sign in again.", "Sign out", () => Api.post("/api/account/logout", {}, () => page.app.pollState())) }
                 }
             }
         }

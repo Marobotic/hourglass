@@ -5,7 +5,7 @@ import { addDays, isDate, localParts, parseTime, shortLabel, systemZone, weekSta
 import { expand } from "../recurrence.js";
 import { resolveNow, sessionNotes } from "../now.js";
 import { nextAlarm } from "../alarms.js";
-import { PALETTE, parseWeekday } from "../model.js";
+import { BUILTIN_RINGTONES, PALETTE, parseWeekday } from "../model.js";
 import { numberedTitle } from "./store.js";
 
 export class Service {
@@ -437,13 +437,49 @@ export class Service {
       time_format: this.store.meta("time_format") || "12h",
       week_start: this.store.meta("week_start") || 6, // ISO weekday; 6 = Saturday
       sound: this.store.meta("sound") ?? true,
-      ringtone: this.store.meta("ringtone") || "classic",
+      ringtone: this.ringtone,
       lecture_reminder_min: this.lectureReminderMin(),
     };
   }
 
+  // The alarm sound, synced: a built-in name or a ringtones row id.
+  get ringtone() {
+    const v = this.store.get("prefs", "ringtone");
+    const r = v && !v.deleted ? v.value : null;
+    if (BUILTIN_RINGTONES.includes(r)) return r;
+    const row = r ? this.store.get("ringtones", r) : null;
+    return row && !row.deleted ? r : "classic";
+  }
+
+  listRingtones() {
+    const current = this.ringtone;
+    return [
+      ...BUILTIN_RINGTONES.map((n) => ({ id: n, name: n[0].toUpperCase() + n.slice(1), kind: "builtin", selected: n === current })),
+      ...this.store
+        .all("ringtones")
+        .sort((a, b) => b.updated_at - a.updated_at)
+        .map((r) => ({ ...r, selected: r.id === current })),
+    ];
+  }
+
+  setRingtone({ ringtone }) {
+    const r = String(ringtone ?? "").trim();
+    const row = BUILTIN_RINGTONES.includes(r) ? null : this.store.get("ringtones", r) ?? this.store.all("ringtones").find((x) => x.name.toLowerCase() === r.toLowerCase());
+    if (!BUILTIN_RINGTONES.includes(r) && (!row || row.deleted)) throw new Error(`no ringtone with id or name ${r}`);
+    this.store.upsert("prefs", { id: "ringtone", value: row ? row.id : r });
+    return this.listRingtones().find((x) => x.selected);
+  }
+
+  removeRingtone({ ringtone_id }) {
+    const row = this.store.get("ringtones", ringtone_id);
+    if (!row || row.deleted) throw new Error(`no ringtone with id ${ringtone_id}`);
+    if (this.store.get("prefs", "ringtone")?.value === row.id) this.store.upsert("prefs", { id: "ringtone", value: "classic" });
+    this.store.remove("ringtones", row.id);
+    return { ok: true, removed: row.name };
+  }
+
   setSettings({ tz, time_format, week_start, sound, lecture_reminder_min, ringtone }) {
-    if (typeof ringtone === "string" && /^[a-z]+$/.test(ringtone)) this.store.setMeta("ringtone", ringtone);
+    if (typeof ringtone === "string") this.setRingtone({ ringtone });
     if (tz) {
       Intl.DateTimeFormat(undefined, { timeZone: tz });
       this.store.setMeta("tz", tz);

@@ -1,4 +1,6 @@
 import SwiftUI
+import AVFoundation
+import UniformTypeIdentifiers
 
 struct SheetFrame<Content: View>: View {
     let title: String
@@ -276,32 +278,174 @@ struct AlarmSheet: View {
 // MARK: - Settings
 
 // Preferences for this phone. The sync server is built in; nothing to type.
+// Signed out, this is the whole app: the Omarchy Music account is the way
+// in, same as the music player's sign-in.
+struct LoginView: View {
+    @EnvironmentObject var store: Store
+    @State private var email = ""
+    @State private var password = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                PixelLogo(cell: 7).padding(.top, 64)
+                T("Hourglass", 26, bold: true).padding(.top, 6)
+                Text("Sign in with your Omarchy Music account. Your schedule, notes, alarms and ringtones are shared between your phone and your computer.")
+                    .font(H.mono(14)).foregroundStyle(H.muted).multilineTextAlignment(.center)
+                VStack(alignment: .leading, spacing: 12) {
+                    Field(label: "Email", text: $email)
+                        .textInputAutocapitalization(.never).keyboardType(.emailAddress).autocorrectionDisabled()
+                    VStack(alignment: .leading, spacing: 4) {
+                        T("PASSWORD", 11, H.muted)
+                        SecureField("", text: $password)
+                            .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent)
+                            .padding(.horizontal, 12).frame(minHeight: 46)
+                            .background(H.bg).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                            .onSubmit(submit)
+                    }
+                    if let error { T(error, 13, H.accent) }
+                    HButton(busy ? "Signing in…" : "Sign in", primary: true, enabled: !busy && email.contains("@") && !password.isEmpty, action: submit)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(20)
+                .background(H.surface)
+                .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                .padding(.top, 8)
+                T("No account yet? Create one in Omarchy Music.", 13, H.faint)
+            }
+            .padding(24)
+        }
+        .background(H.bg)
+        .onAppear { if email.isEmpty { email = store.account ?? "" } }
+    }
+
+    private func submit() {
+        guard !busy, email.contains("@"), !password.isEmpty else { return }
+        busy = true; error = nil
+        Task {
+            do { try await store.signIn(email: email.trimmingCharacters(in: .whitespaces), password: password) }
+            catch { self.error = error.localizedDescription }
+            busy = false
+        }
+    }
+}
+
+// Plays a ringtone once in Settings; tapping the same one again stops it.
+@MainActor
+final class TonePreview: ObservableObject {
+    @Published var playing: String?
+    private var player: AVAudioPlayer?
+    func toggle(_ id: String) {
+        let same = playing == id
+        player?.stop(); player = nil; playing = nil
+        guard !same, let url = Ringtones.playable(id) else { return }
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        player = try? AVAudioPlayer(contentsOf: url)
+        player?.play()
+        if player != nil { playing = id }
+    }
+    func stop() { player?.stop(); player = nil; playing = nil }
+}
+
 struct SettingsSheet: View {
     @EnvironmentObject var store: Store
     @AppStorage("time_format") private var timeFormat = "12h"
     @AppStorage("week_start") private var weekStart = 6
     @AppStorage("sound") private var sound = true
-    @AppStorage("ringtone") private var ringtone = "classic"
+    @StateObject private var preview = TonePreview()
+    @State private var importing = false
+    @State private var uploading = false
+    @State private var error: String?
+    @State private var confirmDelete: Ringtone?
+    @State private var confirmSignOut = false
+    @State private var alarmStatus = ""
 
     var body: some View {
         SheetFrame(title: "Settings") {
+            SectionLabel(text: "Account")
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    T(store.account ?? "", 15)
+                    T(store.syncState == "synced" ? "Omarchy Music account · synced \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline. Changes are kept on the phone and sent later." : "Omarchy Music account", 12, H.muted)
+                }
+                Spacer()
+                HButton("Sign out") { confirmSignOut = true }
+            }
+
+            SectionLabel(text: "Alarms")
+            T("LECTURE REMINDERS", 11, H.muted)
+            Segmented(options: [("Off", 0), ("10 min", 10), ("15 min", 15), ("30 min", 30), ("60 min", 60)],
+                      value: Binding(get: { store.reminderMin }, set: { store.setLectureReminders($0) }))
+            T(alarmStatus, 12, H.faint)
+            HStack {
+                T("RINGTONE", 11, H.muted)
+                Spacer()
+                HButton(uploading ? "Uploading…" : "Upload", enabled: !uploading) { importing = true }
+            }
+            VStack(spacing: 0) {
+                ForEach(Ringtones.all, id: \.self) { id in toneRow(id: id, name: id.capitalized, sub: "Built in", row: nil) }
+                ForEach(store.ringtoneRows) { r in
+                    toneRow(id: r.id, name: r.name, sub: (r.kind == "song" ? "Song" + (r.artist.map { " · \($0)" } ?? "") : "Upload") + (Ringtones.playable(r.id) == nil ? " · downloading" : ""), row: r)
+                }
+            }
+            if let error { T(error, 13, H.accent) }
+            T("Add songs from Omarchy Music: open a song's menu and pick Set as alarm.", 12, H.faint)
+            HStack { T("Alarm sound", 15); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
+
+            SectionLabel(text: "Time")
             T("CLOCK", 11, H.muted)
             Segmented(options: [("12-hour", "12h"), ("24-hour", "24h")], value: $timeFormat)
             T("WEEK STARTS ON", 11, H.muted)
             Segmented(options: [("Saturday", 6), ("Sunday", 7), ("Monday", 1)], value: $weekStart)
-            T("LECTURE REMINDERS", 11, H.muted)
-            Segmented(options: [("Off", 0), ("10 min", 10), ("15 min", 15), ("30 min", 30), ("60 min", 60)],
-                      value: Binding(get: { store.reminderMin }, set: { store.setLectureReminders($0) }))
-            T(AlarmKitScheduler.active ? "Rings like an alarm before every lecture, even with the app closed." : "Rings before every lecture, even with the app closed. Allow Alarms for Hourglass in Settings to ring through silent mode.", 12, H.faint)
-            T("RINGTONE", 11, H.muted)
-            Segmented(options: Ringtones.all.map { ($0.capitalized, $0) }, value: Binding(get: { ringtone }, set: { ringtone = $0; Notifications.reschedule(store) }))
-            HStack { T("Alarm sound", 15); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
-            SectionLabel(text: "Sync")
             HStack {
-                T(store.syncState == "synced" ? "Synced with marobotic.dev · \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline. Changes are kept on the phone and sent later." : "Not connected", 13, H.muted)
+                T(store.syncState == "offline" ? "Offline" : "Synced with marobotic.dev", 13, H.muted)
                 Spacer()
                 HButton("Sync now") { Task { await store.sync() } }
             }
+        }
+        .task { alarmStatus = AlarmKitScheduler.status() }
+        .onDisappear { preview.stop() }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
+            guard case .success(let url) = result else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            let data = try? Data(contentsOf: url)
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            guard let data else { error = "Could not read that file"; return }
+            uploading = true; error = nil
+            Task {
+                do { try await store.uploadRingtone(data, name: url.deletingPathExtension().lastPathComponent) }
+                catch { self.error = error.localizedDescription }
+                uploading = false
+            }
+        }
+        .confirmationDialog("Delete \(confirmDelete?.name ?? "")?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let r = confirmDelete { store.removeRingtone(r) }; confirmDelete = nil }
+        } message: { Text("It is removed from every device.") }
+        .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) { store.signOut() }
+        } message: { Text("This iPhone stops syncing until you sign in again.") }
+    }
+
+    private func toneRow(id: String, name: String, sub: String, row: Ringtone?) -> some View {
+        let on = store.ringtone == id
+        return VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Rectangle().fill(on ? H.accent : .clear).frame(width: 14, height: 14).overlay(Rectangle().stroke(on ? H.accent : H.faint, lineWidth: 1))
+                VStack(alignment: .leading, spacing: 2) {
+                    T(name, 15, bold: on, lines: 1)
+                    T(sub, 12, H.muted, lines: 1)
+                }
+                Spacer()
+                Button { preview.toggle(id) } label: { Image(systemName: preview.playing == id ? "stop.fill" : "play.fill").foregroundStyle(H.muted).frame(width: 36, height: 36) }
+                if let row { Button { confirmDelete = row } label: { Image(systemName: "trash").foregroundStyle(H.muted).frame(width: 36, height: 36) } }
+            }
+            .padding(.vertical, 6).padding(.leading, 12)
+            .background(on ? H.surface2 : .clear)
+            .contentShape(Rectangle())
+            .onTapGesture { store.setRingtone(id) }
+            Rectangle().fill(H.border).frame(height: 1)
         }
     }
 }

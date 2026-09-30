@@ -26,3 +26,4 @@ EventDialog 1.0 EventDialog.qml
 CourseDialog 1.0 CourseDialog.qml
 SessionDialog 1.0 SessionDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
+LoginPage 1.0 LoginPage.qml

@@ -21,6 +21,43 @@ import dev.marobotic.hourglass.R
 // Rings an alarm or timer: sound, vibration and a notification with Stop and
 // Snooze. Runs as a foreground service started by the exact alarm, so it rings
 // even if Android will not show the full-screen RingActivity.
+// A built-in ringtone ships in res/raw; uploads and songs are synced files.
+fun soundUri(ctx: Context, id: String): Uri {
+    val file = App.repo(ctx).soundFile(id)
+    if (file.exists()) return Uri.fromFile(file)
+    val res = ctx.resources.getIdentifier("ring_$id", "raw", ctx.packageName).takeIf { it != 0 } ?: R.raw.ring_classic
+    return Uri.parse("android.resource://${ctx.packageName}/$res")
+}
+
+// Plays a ringtone once in Settings; a second tap on the same one stops it.
+object Preview {
+    private var player: MediaPlayer? = null
+    var playing: String? = null
+        private set
+
+    fun toggle(ctx: Context, id: String) {
+        val same = playing == id
+        stop()
+        if (same) return
+        player = runCatching {
+            MediaPlayer().apply {
+                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                setDataSource(ctx, soundUri(ctx, id))
+                setOnCompletionListener { stop() }
+                prepare()
+                start()
+            }
+        }.getOrNull()
+        playing = if (player != null) id else null
+    }
+
+    fun stop() {
+        player?.run { runCatching { stop() }; release() }
+        player = null
+        playing = null
+    }
+}
+
 class RingService : Service() {
     companion object {
         const val STOP = "dev.marobotic.hourglass.STOP"
@@ -79,11 +116,10 @@ class RingService : Service() {
         if (repo.vibrate) getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 400), 0))
         if (!repo.sound) return
         player?.release()
-        val res = resources.getIdentifier("ring_${repo.ringtone}", "raw", packageName).takeIf { it != 0 } ?: R.raw.ring_classic
         player = runCatching {
             MediaPlayer().apply {
                 setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-                setDataSource(this@RingService, Uri.parse("android.resource://$packageName/$res"))
+                setDataSource(this@RingService, soundUri(this@RingService, repo.ringtone))
                 isLooping = true
                 prepare()
                 start()

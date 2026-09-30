@@ -83,6 +83,30 @@ struct Clock: Codable, Identifiable, Hashable {
     var dirty: Int? = 0
 }
 
+// Alarm sounds of the account: uploads and songs from Omarchy Music.
+struct Ringtone: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString.lowercased()
+    var name: String = ""
+    var kind: String = "upload"
+    var artist: String?
+    var song_id: String?
+    var duration_s: Int? = 0
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
+// Synced preferences, one row per key (id = key).
+struct Pref: Codable, Identifiable, Hashable {
+    var id: String
+    var value: String?
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
 struct HTimer: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString.lowercased()
     var label: String = ""

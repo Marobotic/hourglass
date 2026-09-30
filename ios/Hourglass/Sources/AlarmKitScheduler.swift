@@ -75,9 +75,37 @@ enum AlarmKitScheduler {
 // silent file, so the alarm still shows but makes no noise.
 enum Ringtones {
     static let all = ["classic", "klaxon", "siren", "digital", "rising", "bell"]
+    static var current = "classic" // set by Store from the synced pref
+    static var dir: URL { FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Sounds") }
+    static func fileName(_ id: String) -> String { "hg_\(id).wav" }
+    static func url(_ id: String) -> URL { dir.appendingPathComponent(fileName(id)) }
     static var file: String {
         if UserDefaults.standard.object(forKey: "sound") as? Bool == false { return "ring_silent.wav" }
-        let name = UserDefaults.standard.string(forKey: "ringtone") ?? "classic"
-        return "ring_\(all.contains(name) ? name : "classic").wav"
+        if all.contains(current) { return "ring_\(current).wav" }
+        return FileManager.default.fileExists(atPath: url(current).path) ? fileName(current) : "ring_classic.wav"
+    }
+    // Where a ringtone's audio is, for previews.
+    static func playable(_ id: String) -> URL? {
+        if all.contains(id) { return Bundle.main.url(forResource: "ring_\(id)", withExtension: "wav") }
+        return FileManager.default.fileExists(atPath: url(id).path) ? url(id) : nil
+    }
+}
+
+// What AlarmKit has, shown in Settings so it can be checked on the phone.
+extension AlarmKitScheduler {
+    @MainActor
+    static func status() -> String {
+        #if canImport(AlarmKit)
+        if #available(iOS 26.0, *) {
+            switch AlarmManager.shared.authorizationState {
+            case .authorized:
+                let n = ((try? AlarmManager.shared.alarms) ?? []).count
+                return "Alarms allowed · \(n) scheduled on this iPhone"
+            case .denied: return "Alarms are off for Hourglass: allow them in Settings > Hourglass"
+            default: return "Alarms not allowed yet"
+            }
+        }
+        #endif
+        return "Using notifications (AlarmKit needs iOS 26)"
     }
 }

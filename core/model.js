@@ -55,7 +55,21 @@ export const TABLES = {
     ["ends_at", "int", null],
     ["remaining_s", "int", null],
   ],
+  // Alarm sounds of the account: uploaded files and songs from Omarchy Music.
+  // The audio (a 30 s WAV) lives on the server: GET /api/ringtones/<id>/audio.
+  ringtones: [
+    ["name", "text", ""],
+    ["kind", "text", "upload"], // upload | song
+    ["artist", "text", null],
+    ["song_id", "text", null],
+    ["duration_s", "int", 0],
+  ],
+  // Synced preferences, one row per key (id = key). "ringtone": a built-in
+  // name or a ringtones row id.
+  prefs: [["value", "text", null]],
 };
+
+export const BUILTIN_RINGTONES = ["classic", "klaxon", "siren", "digital", "rising", "bell"];
 
 export const TABLE_NAMES = Object.keys(TABLES);
 
@@ -107,6 +121,7 @@ export function validate(table, r) {
     if (!r.lead_event_id && !r.lead_course_id && !isTime(r.time)) fail("time (HH:MM), lead_event_id or lead_course_id is required");
     if (r.date && !isDate(r.date)) fail("date must be YYYY-MM-DD");
   }
+  if (table === "ringtones" && !r.name.trim()) fail("name is required");
   if (table === "timers" && !(r.duration_s > 0)) fail("duration_s must be positive");
   if (table === "clocks") {
     try {

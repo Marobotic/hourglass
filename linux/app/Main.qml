@@ -21,6 +21,7 @@ ApplicationWindow {
     property var editingNote: null
     property bool loaded: false
     property var settings: ({})
+    property bool devLogin: false
     property string scheduleMode: "week"
     property string shotPath: "" // dev: render, save a PNG, quit
     property string devOpen: ""  // dev: note | course | event | session
@@ -72,6 +73,7 @@ ApplicationWindow {
             if (a[i] === "--screenshot") shotPath = a[i + 1];
             if (a[i] === "--open") devOpen = a[i + 1];
             if (a[i] === "--schedule") scheduleMode = a[i + 1];
+            if (a[i] === "--login") app.devLogin = true;
             if (a[i] === "--size") { const wh = a[i + 1].split("x"); app.width = +wh[0]; app.height = +wh[1]; }
         }
         pollState();
@@ -282,6 +284,13 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+
+        // Signed out: the sign-in page is all there is.
+        LoginPage {
+            anchors.fill: parent
+            app: app
+            visible: app.loaded && (app.devLogin || (!!app.appState.account && !app.appState.account.signed_in))
         }
     }
 

@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
-// An overview, not a dashboard: what is on (or next), the few things after it,
-// and one line for the next alarm and any running timer.
+// An overview, not a dashboard: what is on (or next), the notes that go with
+// today, and one line for the next alarm and any running timer.
 Item {
     id: page
     property var app
@@ -15,7 +15,20 @@ Item {
         return blocks.find(b => b.end_ms > now) || null;
     }
     readonly property bool live: !!(block && page.app.clock >= block.start_ms && page.app.clock < block.end_ms)
-    readonly property var upcoming: block ? blocks.filter(b => b.start_ms > block.start_ms).slice(0, 3) : []
+    property var allNotes: []
+    readonly property string today: Util.dayOf(app.clock)
+    // Notes dated today, then the class's notes: this session's, else the
+    // last session's (what to pick up from).
+    readonly property var todayNotes: {
+        const out = allNotes.filter(n => n.session_date === today);
+        const cid = block ? block.course_id : null;
+        if (cid) {
+            const mine = allNotes.filter(n => n.course_id === cid && n.session_date && n.session_date <= block.date);
+            const last = mine.reduce((m, n) => n.session_date > m ? n.session_date : m, "");
+            for (const n of mine) if (n.session_date === last && out.indexOf(n) < 0) out.push(n);
+        }
+        return out.sort((a, b) => (b.pinned - a.pinned) || (b.updated_at - a.updated_at)).slice(0, 6);
+    }
     readonly property var alarm: d && d.alarms.length ? d.alarms[0] : null
     readonly property var timer: d && d.timers.length ? d.timers[0] : null
 
@@ -25,6 +38,7 @@ Item {
             if (!r) return;
             page.blocks = Util.merge(r.occurrences);
         });
+        Api.get("/api/notes", d => { if (d) page.allNotes = d; });
     }
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
@@ -91,30 +105,45 @@ Item {
             }
         }
 
-        // after that
+        // notes for today
         ColumnLayout {
-            visible: page.upcoming.length > 0
             Layout.fillWidth: true
             Layout.maximumWidth: 760
-            spacing: 0
-            Text { text: "AFTER THAT"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 2; bottomPadding: 8 }
-            Repeater {
-                model: page.upcoming
-                Rectangle {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    height: 52
-                    color: rowMouse.containsMouse ? Theme.surface : "transparent"
-                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
-                    RowLayout {
-                        anchors { fill: parent; leftMargin: 4; rightMargin: 4 }
-                        spacing: 16
-                        Rectangle { width: 4; height: 22; color: modelData.color }
-                        Text { Layout.preferredWidth: 130; text: (modelData.date === (page.d ? page.d.now.date : "") ? "" : Util.weekdayOf(modelData.date) + " ") + Util.t(modelData.start_time); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.DemiBold }
-                        Text { Layout.fillWidth: true; text: modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15 }
-                        Text { text: modelData.location || ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
+            spacing: 10
+            Text { text: "NOTES FOR TODAY"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 2 }
+            Text {
+                visible: page.todayNotes.length === 0
+                text: "Nothing yet. Notes you take in class show up here."
+                color: Theme.faint; font.family: Theme.mono; font.pixelSize: 14
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 10
+                Repeater {
+                    model: page.todayNotes
+                    Rectangle {
+                        id: nc
+                        required property var modelData
+                        readonly property var c: page.app.courseById(modelData.course_id)
+                        width: (parent.width - 10) / 2
+                        height: Math.min(ncCol.implicitHeight + 24, 170)
+                        clip: true
+                        color: c ? Theme.mix(Theme.bg, Qt.color(c.color), ncMouse.containsMouse ? 0.2 : 0.13) : (ncMouse.containsMouse ? Theme.surface2 : Theme.surface)
+                        border.width: 1
+                        border.color: c ? Theme.alpha(c.color, 0.45) : Theme.border
+                        ColumnLayout {
+                            id: ncCol
+                            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                            spacing: 6
+                            Text { Layout.fillWidth: true; visible: !!nc.modelData.title; text: nc.modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold }
+                            Text { Layout.fillWidth: true; visible: !!nc.modelData.body; text: nc.modelData.body; textFormat: Text.PlainText; color: Theme.fg; opacity: 0.85; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight; font.family: Theme.sans; font.pixelSize: 14 }
+                            Text {
+                                text: [nc.c ? (nc.c.code || nc.c.name) : "", nc.modelData.session_date === page.today ? "Today" : nc.modelData.session_date ? "Last class · " + Util.shortDate(nc.modelData.session_date) : ""].filter(x => x).join("  ·  ")
+                                color: nc.c ? nc.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold
+                            }
+                        }
+                        MouseArea { id: ncMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.app.openNote(nc.modelData) }
                     }
-                    MouseArea { id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.app.openSession(modelData.parts[0]) }
                 }
             }
         }

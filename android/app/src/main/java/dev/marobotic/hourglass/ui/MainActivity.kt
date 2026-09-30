@@ -1,5 +1,9 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.RectangleShape
 
 import android.Manifest
@@ -115,6 +119,8 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
 
     BackHandler(enabled = nav.stack.isNotEmpty() || nav.tab != 0) { if (nav.stack.isNotEmpty()) nav.pop() else nav.tab = 0 }
 
+    if (repo.needsSignIn) { LoginScreen(repo); return }
+
     Box(Modifier.fillMaxSize().background(HColors.bg)) {
         val top = nav.stack.lastOrNull()
         when (top) {
@@ -168,5 +174,42 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
             }
         }
         SheetHost(nav, version)
+    }
+}
+
+// Signed out, this is the whole app: the Omarchy Music account is the way in,
+// same as the music player's sign-in.
+@Composable
+fun LoginScreen(repo: Repo) {
+    var email by remember { mutableStateOf(repo.account ?: "") }
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    fun submit() {
+        if (busy || "@" !in email || password.isEmpty()) return
+        busy = true
+        error = null
+        repo.signIn(email.trim(), password) { busy = false; error = it }
+    }
+    Column(
+        Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().navigationBarsPadding().imePadding()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 24.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Spacer(Modifier.height(24.dp))
+        PixelLogo(7.dp)
+        Spacer(Modifier.height(6.dp))
+        T("Hourglass", 26, bold = true)
+        T("Sign in with your Omarchy Music account. Your schedule, notes, alarms and ringtones are shared between your phone and your computer.",
+            14, HColors.muted, modifier = Modifier.fillMaxWidth(), align = androidx.compose.ui.text.style.TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Column(Modifier.fillMaxWidth().background(HColors.surface).border(1.dp, HColors.border).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Field(email, { email = it.trim() }, "Email", Modifier.fillMaxWidth())
+            Field(password, { password = it }, "Password", Modifier.fillMaxWidth(), password = true)
+            error?.let { T(it, 13, HColors.accent) }
+            HButton(if (busy) "Signing in…" else "Sign in", Modifier.fillMaxWidth(), primary = true, enabled = !busy && "@" in email && password.isNotEmpty()) { submit() }
+        }
+        T("No account yet? Create one in Omarchy Music.", 13, HColors.faint)
     }
 }

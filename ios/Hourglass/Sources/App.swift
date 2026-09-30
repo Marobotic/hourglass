@@ -7,7 +7,7 @@ struct HourglassApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Group { if store.signedIn { RootView() } else { LoginView() } }
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
                 .onAppear { Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
