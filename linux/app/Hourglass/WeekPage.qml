@@ -55,7 +55,7 @@ Item {
             ColumnLayout {
                 spacing: 2
                 Text { text: page.ws ? Util.monthName(page.ws) + " " + new Date(Util.parse(page.ws)).getUTCFullYear() : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
-                Text { text: page.ws ? Util.dayNum(page.ws) + " – " + Util.short(Util.addDays(page.ws, 6)).slice(4) : ""; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
+                Text { text: page.ws ? Util.dayNum(page.ws) + " – " + Util.shortDate(Util.addDays(page.ws, 6)).slice(4) : ""; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
             }
             Item { Layout.fillWidth: true }
             Btn { icon: "left"; onClicked: page.ws = Util.addDays(page.ws, -7) }

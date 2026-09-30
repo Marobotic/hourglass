@@ -35,7 +35,7 @@ Item {
                     Layout.fillWidth: true
                     ColumnLayout {
                         spacing: 2
-                        Text { text: page.d ? Util.long(page.d.now.date) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
+                        Text { text: page.d ? Util.longDate(page.d.now.date) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
                         Text { text: Util.clock(page.app.clock); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 38; font.weight: Font.Bold }
                     }
                     Item { Layout.fillWidth: true }
@@ -158,7 +158,7 @@ Item {
                             Layout.fillWidth: true
                             wrapMode: Text.Wrap
                             text: parent.parent.nx
-                                ? "Next: " + parent.parent.nx.title + ", " + Util.short(parent.parent.nx.date) + " at " + parent.parent.nx.start_time + " (" + Util.relative(Math.ceil((parent.parent.nx.start_ms - page.app.clock) / 60000)) + ")"
+                                ? "Next: " + parent.parent.nx.title + ", " + Util.shortDate(parent.parent.nx.date) + " at " + parent.parent.nx.start_time + " (" + Util.relative(Math.ceil((parent.parent.nx.start_ms - page.app.clock) / 60000)) + ")"
                                 : page.app.courses.length ? "Nothing scheduled in the next 7 days." : "Add your courses and their weekly times. During each lecture, its notes open right here."
                             color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14
                         }
@@ -177,7 +177,7 @@ Item {
                     visible: !!page.sess
                     Layout.fillWidth: true
                     spacing: 10
-                    Section { Layout.fillWidth: true; text: "This session"; detail: page.sess ? Util.short(page.sess.date) : "" }
+                    Section { Layout.fillWidth: true; text: "This session"; detail: page.sess ? Util.shortDate(page.sess.date) : "" }
                     Repeater {
                         model: page.notes ? page.notes.session : []
                         NoteCard { required property var modelData; Layout.fillWidth: true; note: modelData; onClicked: page.app.openNote(modelData) }
@@ -202,7 +202,7 @@ Item {
                     visible: !!(page.notes && page.notes.last.length)
                     Layout.fillWidth: true
                     spacing: 10
-                    Section { Layout.fillWidth: true; text: "Last time"; detail: page.notes && page.notes.last_date ? Util.short(page.notes.last_date) : "" }
+                    Section { Layout.fillWidth: true; text: "Last time"; detail: page.notes && page.notes.last_date ? Util.shortDate(page.notes.last_date) : "" }
                     Repeater {
                         model: page.notes ? page.notes.last : []
                         NoteCard { required property var modelData; Layout.fillWidth: true; note: modelData; onClicked: page.app.openNote(modelData) }
@@ -305,7 +305,7 @@ Item {
                         Icon { name: "bell"; size: 13; color: Theme.gold }
                         Text { text: Util.clock(modelData.next_at); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.DemiBold }
                         Text { Layout.fillWidth: true; text: modelData.label; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
-                        Text { text: Util.short(Util.dayOf(modelData.next_at)).slice(0, 3); color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
+                        Text { text: Util.shortDate(Util.dayOf(modelData.next_at)).slice(0, 3); color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
                     }
                 }
             }

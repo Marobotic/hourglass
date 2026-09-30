@@ -91,7 +91,7 @@ Rectangle {
             Btn { compact: true; icon: "right"; enabled: ed.dated; onClicked: ed.move({ session_date: Util.addDays(ed.note.session_date, 1) }) }
             Text {
                 Layout.fillWidth: true
-                text: ed.dated ? Util.long(ed.note.session_date) : "Not tied to a day"
+                text: ed.dated ? Util.longDate(ed.note.session_date) : "Not tied to a day"
                 color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14
             }
             Btn { compact: true; kind: "subtle"; text: ed.dated ? "Clear date" : "Today"; onClicked: ed.move({ session_date: ed.dated ? null : Util.dayOf(Date.now()) }) }

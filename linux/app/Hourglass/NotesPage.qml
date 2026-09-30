@@ -39,7 +39,7 @@ Item {
         const keys = Object.keys(by).filter(k => k).sort().reverse();
         const out = [];
         if (pinned.length) out.push({ label: "Pinned", notes: pinned });
-        for (const k of keys) out.push({ label: (k === page.today ? "Today · " : "") + Util.long(k), notes: by[k] });
+        for (const k of keys) out.push({ label: (k === page.today ? "Today · " : "") + Util.longDate(k), notes: by[k] });
         if (by[""]) out.push({ label: "No date", notes: by[""] });
         return out;
     }
@@ -94,7 +94,7 @@ Item {
                         onClicked: { searchField.text = ""; page.sel = modelData.id; }
                         label: modelData.name
                         swatch: modelData.color
-                        sub: [modelData.code, modelData.next ? Util.short(modelData.next.date).slice(0, 3) + " " + modelData.next.start_time : ""].filter(x => x).join(" · ")
+                        sub: [modelData.code, modelData.next ? Util.shortDate(modelData.next.date).slice(0, 3) + " " + modelData.next.start_time : ""].filter(x => x).join(" · ")
                     }
                 }
             }
@@ -221,7 +221,7 @@ Item {
                             Btn { compact: true; icon: "left"; onClicked: dateField.text = Util.addDays(Util.isDate(dateField.text) ? dateField.text : page.today, -1) }
                             Field { id: dateField; Layout.preferredWidth: 130; text: page.today; invalid: !Util.isDate(text) }
                             Btn { compact: true; icon: "right"; onClicked: dateField.text = Util.addDays(Util.isDate(dateField.text) ? dateField.text : page.today, 1) }
-                            Text { Layout.fillWidth: true; text: Util.isDate(dateField.text) ? Util.long(dateField.text) : ""; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
+                            Text { Layout.fillWidth: true; text: Util.isDate(dateField.text) ? Util.longDate(dateField.text) : ""; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                             Btn { kind: "primary"; icon: "plus"; text: "Write"; enabled: Util.isDate(dateField.text); onClicked: page.newNote(dateField.text) }
                         }
                     }

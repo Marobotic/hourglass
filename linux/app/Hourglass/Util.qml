@@ -18,8 +18,8 @@ QtObject {
     function weekStart(d) { return addDays(d, 1 - isoWeekday(d)); }
     function dayNum(d) { return new Date(parse(d)).getUTCDate(); }
     function monthName(d) { return months[new Date(parse(d)).getUTCMonth()]; }
-    function short(d) { return weekdays[isoWeekday(d) - 1] + " " + dayNum(d) + " " + monthName(d).slice(0, 3); }
-    function long(d) { return weekdaysLong[isoWeekday(d) - 1] + ", " + dayNum(d) + " " + monthName(d); }
+    function shortDate(d) { return weekdays[isoWeekday(d) - 1] + " " + dayNum(d) + " " + monthName(d).slice(0, 3); }
+    function longDate(d) { return weekdaysLong[isoWeekday(d) - 1] + ", " + dayNum(d) + " " + monthName(d); }
     function minutes(t) { const p = t.split(":"); return +p[0] * 60 + +p[1]; }
     function isDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); }
     function isTime(s) { return /^\d{1,2}:\d{2}$/.test(s) && +s.split(":")[0] < 24 && +s.split(":")[1] < 60; }
@@ -55,10 +55,10 @@ QtObject {
 
     function repeatText(ev) {
         const r = ev.repeat;
-        if (!r) return "Once, " + short(ev.start_date);
+        if (!r) return "Once, " + shortDate(ev.start_date);
         let s = r.freq === "daily" ? (r.interval > 1 ? "Every " + r.interval + " days" : "Daily")
             : (r.interval > 1 ? "Every " + r.interval + " weeks on " : "Every ") + (r.days || [isoWeekday(ev.start_date)]).map(d => weekdays[d - 1]).join(", ");
-        if (r.until) s += " until " + short(r.until);
+        if (r.until) s += " until " + shortDate(r.until);
         return s;
     }
 

@@ -23,7 +23,7 @@ Item {
 
     function alarmSubtitle(a) {
         if (a.lead_course_id || a.lead_event_id) return a.lead_minutes + " min before every session";
-        if (a.date) return "Once, " + Util.short(a.date);
+        if (a.date) return "Once, " + Util.shortDate(a.date);
         if (!a.days || !a.days.length) return "Every day";
         if (a.days.length === 5 && a.days.every(d => d <= 5)) return "Weekdays";
         return a.days.map(d => Util.weekdays[d - 1]).join(", ");
@@ -188,7 +188,7 @@ Item {
                                 Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15 }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: page.alarmSubtitle(modelData) + (modelData.next_at ? "  ·  next " + Util.short(Util.dayOf(modelData.next_at)) + " " + Util.clock(modelData.next_at) : "")
+                                    text: page.alarmSubtitle(modelData) + (modelData.next_at ? "  ·  next " + Util.shortDate(Util.dayOf(modelData.next_at)) + " " + Util.clock(modelData.next_at) : "")
                                     color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13
                                 }
                             }

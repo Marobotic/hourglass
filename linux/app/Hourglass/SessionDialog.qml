@@ -10,7 +10,7 @@ Modal {
     property var notes: []
     width: 560
     title: occ ? occ.title : ""
-    subtitle: occ ? Util.long(occ.date) + "  ·  " + occ.start_time + " – " + occ.end_time + (occ.location ? "  ·  " + occ.location : "") : ""
+    subtitle: occ ? Util.longDate(occ.date) + "  ·  " + occ.start_time + " – " + occ.end_time + (occ.location ? "  ·  " + occ.location : "") : ""
 
     function show(o) {
         occ = o;
@@ -53,14 +53,14 @@ Modal {
         Btn {
             kind: "primary"; icon: "note"
             text: dlg.notes.length ? "Add another note" : "Start a note for this session"
-            onClicked: { dlg.close(); dlg.app.newNote({ course: dlg.occ.course_id, date: dlg.occ.date, title: Util.short(dlg.occ.date) + (dlg.notes.length ? " (" + (dlg.notes.length + 1) + ")" : "") }); }
+            onClicked: { dlg.close(); dlg.app.newNote({ course: dlg.occ.course_id, date: dlg.occ.date, title: Util.shortDate(dlg.occ.date) + (dlg.notes.length ? " (" + (dlg.notes.length + 1) + ")" : "") }); }
         }
     }
 
     footer: [
         Btn {
             icon: "close"; kind: "danger"; text: "Skip this date"
-            onClicked: dlg.app.confirm("Skip " + Util.short(dlg.occ.date) + "?", "Only this session is removed. The rest of the series stays.", "Skip",
+            onClicked: dlg.app.confirm("Skip " + Util.shortDate(dlg.occ.date) + "?", "Only this session is removed. The rest of the series stays.", "Skip",
                 () => Api.action("remove_event", { event_id: dlg.occ.event_id, scope: "occurrence", date: dlg.occ.date }, () => dlg.close()))
         },
         Item { Layout.fillWidth: true },
