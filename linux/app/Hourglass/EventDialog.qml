@@ -1,0 +1,115 @@
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Layouts
+
+Modal {
+    id: dlg
+    property var app
+    property var ev: null
+    property string repeat: "none" // none | weekly | daily
+    property var days: []
+    property var courseId: null
+    property string kind: "lecture"
+    width: 560
+    title: ev ? "Edit event" : "New event"
+    subtitle: ev && ev.repeat ? "Changes apply to every session of this series." : ""
+
+    function edit(e, defaults) {
+        ev = e;
+        const d = defaults || {};
+        const today = app.nowData ? app.nowData.now.date : Util.fmt(Date.now());
+        titleF.text = e ? e.title : "";
+        courseId = e ? e.course_id : (d.course || null);
+        kind = e ? e.kind : (courseId ? "lecture" : "event");
+        dateF.text = e ? e.start_date : (d.date || today);
+        startF.text = e ? e.start_time : (d.start || "09:00");
+        endF.text = e ? e.end_time : (d.end || "10:00");
+        locF.text = e && e.location ? e.location : "";
+        repeat = e ? (e.repeat ? e.repeat.freq : "none") : (d.repeatWeekly ? "weekly" : "none");
+        days = e && e.repeat && e.repeat.days ? e.repeat.days.slice() : [Util.isoWeekday(dateF.text)];
+        untilF.text = e && e.repeat && e.repeat.until ? e.repeat.until : "";
+        open();
+    }
+
+    readonly property bool valid: Util.isDate(dateF.text) && Util.isTime(startF.text) && Util.isTime(endF.text)
+        && Util.minutes(endF.text) > Util.minutes(startF.text) && (titleF.text.trim() !== "" || courseId !== null)
+        && (untilF.text === "" || Util.isDate(untilF.text)) && (repeat !== "weekly" || days.length > 0)
+
+    function save() {
+        const args = {
+            title: titleF.text.trim(),
+            course: courseId,
+            kind: kind,
+            date: dateF.text,
+            start: startF.text,
+            end: endF.text,
+            location: locF.text.trim() || undefined,
+            repeat: repeat === "none" ? null : { freq: repeat, days: repeat === "weekly" ? days : undefined, until: untilF.text || undefined }
+        };
+        if (ev) Api.action("update_event", Object.assign({ event_id: ev.id }, args), r => { if (r) dlg.close(); });
+        else {
+            if (!args.repeat) delete args.repeat;
+            if (!args.course) delete args.course;
+            Api.action("add_event", args, r => { if (r) dlg.close(); });
+        }
+    }
+
+    component Label: Text { color: Theme.muted; font.family: Theme.mono; font.pixelSize: 11; font.letterSpacing: 0.8 }
+
+    GridLayout {
+        Layout.fillWidth: true
+        columns: 2
+        columnSpacing: 12
+        rowSpacing: 6
+
+        Label { text: "COURSE" }
+        Label { text: "KIND" }
+        Picker { Layout.fillWidth: true; options: dlg.app ? dlg.app.courseOptions(true) : []; value: dlg.courseId; onPicked: v => dlg.courseId = v }
+        Picker { Layout.fillWidth: true; options: Util.kinds.map(k => ({ label: Util.kindLabel(k), value: k })); value: dlg.kind; onPicked: v => dlg.kind = v }
+
+        Label { Layout.columnSpan: 2; Layout.topMargin: 6; text: dlg.courseId ? "TITLE (OPTIONAL, DEFAULTS TO THE COURSE)" : "TITLE" }
+        Field { id: titleF; Layout.columnSpan: 2; Layout.fillWidth: true; placeholderText: dlg.courseId ? "e.g. Lab" : "e.g. Dentist" }
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 12
+        ColumnLayout { spacing: 6; Label { text: dlg.repeat === "none" ? "DATE" : "FIRST DATE" } Field { id: dateF; Layout.preferredWidth: 140; placeholderText: "YYYY-MM-DD"; invalid: !Util.isDate(text) } }
+        ColumnLayout { spacing: 6; Label { text: "START" } Field { id: startF; Layout.preferredWidth: 90; invalid: !Util.isTime(text) } }
+        ColumnLayout { spacing: 6; Label { text: "END" } Field { id: endF; Layout.preferredWidth: 90; invalid: !Util.isTime(text) || (Util.isTime(startF.text) && Util.minutes(text) <= Util.minutes(startF.text)) } }
+        ColumnLayout { spacing: 6; Layout.fillWidth: true; Label { text: "ROOM" } Field { id: locF; Layout.fillWidth: true; placeholderText: "Optional" } }
+    }
+
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: 8
+        Label { text: "REPEAT" }
+        RowLayout {
+            spacing: 6
+            Repeater {
+                model: [{ l: "Once", v: "none" }, { l: "Weekly", v: "weekly" }, { l: "Daily", v: "daily" }]
+                Btn { required property var modelData; compact: true; kind: "subtle"; text: modelData.l; active: dlg.repeat === modelData.v; onClicked: dlg.repeat = modelData.v }
+            }
+        }
+        RowLayout {
+            visible: dlg.repeat !== "none"
+            spacing: 14
+            DayToggles { visible: dlg.repeat === "weekly"; days: dlg.days; onToggled: d => dlg.days = d }
+            Label { text: "UNTIL" }
+            Field { id: untilF; Layout.preferredWidth: 140; placeholderText: "End of term"; invalid: text !== "" && !Util.isDate(text) }
+        }
+    }
+
+    footer: [
+        Btn {
+            visible: !!dlg.ev
+            icon: "trash"; kind: "danger"; text: dlg.ev && dlg.ev.repeat ? "Delete series" : "Delete"
+            onClicked: dlg.app.confirm(dlg.ev.repeat ? "Delete every session?" : "Delete event?",
+                dlg.ev.repeat ? "This removes the whole series. To skip one date, open that session and choose Skip." : "This event will be removed from every device.",
+                "Delete", () => Api.action("remove_event", { event_id: dlg.ev.id, scope: "series" }, () => dlg.close()))
+        },
+        Item { Layout.fillWidth: true },
+        Btn { text: "Cancel"; onClicked: dlg.close() },
+        Btn { kind: "primary"; text: dlg.ev ? "Save" : "Add event"; enabled: dlg.valid; onClicked: dlg.save() }
+    ]
+}

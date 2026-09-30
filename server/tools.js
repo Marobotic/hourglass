@@ -118,7 +118,7 @@ export const TOOLS = [
     input: {
       event_id: z.string(),
       title: z.string().optional(),
-      course: course.optional(),
+      course: course.nullable().optional().describe("null detaches it from its course"),
       kind: z.enum(["lecture", "lab", "tutorial", "exam", "event"]).optional(),
       date: date.optional(),
       start: time.optional(),

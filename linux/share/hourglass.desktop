@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hourglass
+GenericName=Calendar, notes, alarms and timers
+Comment=The right notes at the right moment
+Exec=@ROOT@/bin/hourglass
+Icon=hourglass
+Terminal=false
+Categories=Office;Calendar;Education;
+Keywords=calendar;notes;alarm;timer;lecture;university;
+StartupWMClass=hourglass

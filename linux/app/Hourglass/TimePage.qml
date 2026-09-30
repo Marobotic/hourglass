@@ -1,0 +1,214 @@
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Layouts
+
+Item {
+    id: page
+    property var app
+    property var alarms: []
+    property var timers: []
+
+    function load() {
+        Api.action("list_alarms", {}, d => { if (d) page.alarms = d; });
+        Api.action("list_timers", {}, d => { if (d) page.timers = d; });
+    }
+    Component.onCompleted: load()
+    onVisibleChanged: if (visible) load()
+    Connections { target: Api; function onChanged() { page.load(); } }
+    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+
+    // new-alarm form state
+    property string mode: "time" // time | before
+    property var newDays: [1, 2, 3, 4, 5]
+
+    function alarmSubtitle(a) {
+        if (a.lead_course_id || a.lead_event_id) return a.lead_minutes + " min before every session";
+        if (a.date) return "Once, " + Util.short(a.date);
+        if (!a.days || !a.days.length) return "Every day";
+        if (a.days.length === 5 && a.days.every(d => d <= 5)) return "Weekdays";
+        return a.days.map(d => Util.weekdays[d - 1]).join(", ");
+    }
+
+    ScrollView {
+        anchors.fill: parent
+        contentWidth: availableWidth
+        clip: true
+
+        ColumnLayout {
+            width: Math.min(parent.width, 820)
+            spacing: 18
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.margins: 32
+                spacing: 18
+
+                Text { text: "Timers"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
+
+                // Quick start
+                Card {
+                    Layout.fillWidth: true
+                    implicitHeight: quick.implicitHeight + 32
+                    ColumnLayout {
+                        id: quick
+                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                        spacing: 12
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: [1, 5, 10, 15, 25, 45, 50, 90]
+                                Btn { required property int modelData; text: modelData + " min"; onClicked: page.app.startTimer(modelData, labelField.text) }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Field { id: minField; Layout.preferredWidth: 110; placeholderText: "Minutes"; validator: DoubleValidator { bottom: 0.1; top: 1440 } }
+                            Field { id: labelField; Layout.fillWidth: true; placeholderText: "Label (optional)" }
+                            Btn {
+                                kind: "primary"; icon: "play"; text: "Start"
+                                enabled: minField.acceptableInput
+                                onClicked: { page.app.startTimer(Number(minField.text), labelField.text); minField.text = ""; }
+                            }
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: page.timers
+                    Card {
+                        required property var modelData
+                        readonly property int remain: modelData.state === "running" ? Math.max(0, Math.ceil((modelData.ends_at - page.app.clock) / 1000)) : (modelData.remaining_s || 0)
+                        readonly property real frac: modelData.duration_s ? remain / modelData.duration_s : 0
+                        Layout.fillWidth: true
+                        implicitHeight: 92
+                        stripe: modelData.state === "running" ? Theme.accent : Theme.faint
+                        RowLayout {
+                            anchors { fill: parent; leftMargin: 22; rightMargin: 14 }
+                            spacing: 16
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                RowLayout {
+                                    spacing: 12
+                                    Text { text: Util.countdown(parent.parent.parent.parent.remain); color: modelData.state === "paused" ? Theme.muted : Theme.fg; font.family: Theme.mono; font.pixelSize: 34; font.weight: Font.Bold }
+                                    Chip { visible: modelData.state === "paused"; text: "Paused"; tint: Theme.gold }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+                                    Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        height: 4; radius: 2; color: Theme.surface2
+                                        Rectangle { width: parent.width * parent.parent.parent.parent.parent.frac; height: 4; radius: 2; color: Theme.accent; Behavior on width { NumberAnimation { duration: 900 } } }
+                                    }
+                                }
+                            }
+                            Btn { icon: modelData.state === "running" ? "pause" : "play"; text: modelData.state === "running" ? "Pause" : "Resume"; onClicked: Api.action("update_timer", { timer_id: modelData.id, action: modelData.state === "running" ? "pause" : "resume" }) }
+                            Btn { icon: "close"; kind: "subtle"; onClicked: Api.action("update_timer", { timer_id: modelData.id, action: "stop" }) }
+                        }
+                    }
+                }
+
+                Text { Layout.topMargin: 16; text: "Alarms"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
+
+                // New alarm
+                Card {
+                    Layout.fillWidth: true
+                    implicitHeight: form.implicitHeight + 32
+                    ColumnLayout {
+                        id: form
+                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                        spacing: 12
+                        RowLayout {
+                            spacing: 6
+                            Btn { compact: true; text: "At a time"; active: page.mode === "time"; kind: "subtle"; onClicked: page.mode = "time" }
+                            Btn { compact: true; text: "Before a course"; active: page.mode === "before"; kind: "subtle"; enabled: page.app.courses.length > 0; onClicked: page.mode = "before" }
+                        }
+                        RowLayout {
+                            visible: page.mode === "time"
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Field { id: timeField; Layout.preferredWidth: 90; placeholderText: "07:30"; invalid: text !== "" && !Util.isTime(text) }
+                            DayToggles { days: page.newDays; onToggled: d => page.newDays = d }
+                            Field { id: alarmLabel; Layout.fillWidth: true; placeholderText: "Label" }
+                        }
+                        RowLayout {
+                            visible: page.mode === "before"
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Field { id: leadField; Layout.preferredWidth: 70; text: "15"; validator: IntValidator { bottom: 0; top: 600 } }
+                            Text { text: "min before every session of"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                            Picker { id: coursePick; Layout.fillWidth: true; options: page.app.courseOptions(false); value: page.app.courses.length ? page.app.courses[0].id : null }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { Layout.fillWidth: true; text: page.mode === "time" ? (page.newDays.length ? "Repeats on the highlighted days." : "No days selected: rings once, at the next matching time.") : "Rings on this computer and your phone once synced."; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+                            Btn {
+                                kind: "primary"; icon: "bell"; text: "Add alarm"
+                                enabled: page.mode === "time" ? Util.isTime(timeField.text) : (coursePick.value !== null && leadField.acceptableInput)
+                                onClicked: {
+                                    if (page.mode === "time") {
+                                        const args = { time: timeField.text, days: page.newDays, label: alarmLabel.text };
+                                        if (!page.newDays.length) {
+                                            const now = new Date(page.app.clock);
+                                            const [h, m] = timeField.text.split(":").map(Number);
+                                            const t = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
+                                            if (t <= now) t.setDate(t.getDate() + 1);
+                                            args.date = Util.fmt(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()));
+                                        }
+                                        Api.action("set_alarm", args);
+                                        timeField.text = ""; alarmLabel.text = "";
+                                    } else {
+                                        Api.action("set_alarm", { before: coursePick.value, minutes_before: Number(leadField.text) });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: page.alarms
+                    Card {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 74
+                        opacity: modelData.enabled ? 1 : 0.55
+                        RowLayout {
+                            anchors { fill: parent; leftMargin: 18; rightMargin: 12 }
+                            spacing: 16
+                            Text {
+                                text: modelData.time || ("-" + modelData.lead_minutes + "′")
+                                color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold
+                                Layout.preferredWidth: 100
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: page.alarmSubtitle(modelData) + (modelData.next_at ? "  ·  next " + Util.short(Util.fmt(Date.UTC(new Date(modelData.next_at).getFullYear(), new Date(modelData.next_at).getMonth(), new Date(modelData.next_at).getDate()))) + " " + Util.clock(modelData.next_at) : "")
+                                    color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 11
+                                }
+                            }
+                            // enable toggle
+                            Rectangle {
+                                width: 40; height: 22; radius: 11
+                                color: modelData.enabled ? Theme.accent : Theme.surface2
+                                border.color: Theme.border
+                                Rectangle { width: 16; height: 16; radius: 8; y: 3; x: modelData.enabled ? 21 : 3; color: modelData.enabled ? Theme.accentInk : Theme.muted; Behavior on x { NumberAnimation { duration: 120 } } }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: Api.put("/api/alarms/" + modelData.id, { enabled: !modelData.enabled }) }
+                            }
+                            Btn { icon: "trash"; kind: "subtle"; onClicked: Api.action("remove_alarm", { alarm_id: modelData.id }) }
+                        }
+                    }
+                }
+                Item { Layout.preferredHeight: 20 }
+            }
+        }
+    }
+}

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Hourglass launcher: makes sure the sidecar is up, then opens the window.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+CONF="${HOURGLASS_CONFIG:-$HOME/.config/hourglass}"
+PORT="${HOURGLASS_PORT:-8931}"
+
+up() { curl -sf -m 1 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; }
+
+if ! up; then
+  if systemctl --user cat hourglassd.service >/dev/null 2>&1; then
+    systemctl --user start hourglassd.service
+  else
+    nohup node "$ROOT/sidecar/hourglassd.js" >/dev/null 2>&1 &
+  fi
+  for _ in $(seq 1 50); do up && break; sleep 0.1; done
+fi
+up || { notify-send -a Hourglass "Hourglass" "The Hourglass service did not start. Check: journalctl --user -u hourglassd" 2>/dev/null; exit 1; }
+
+export QT_QUICK_CONTROLS_STYLE=Basic
+exec qml6 -I "$ROOT/app" "$ROOT/app/Main.qml" -- --port "$PORT" --token "$(cat "$CONF/token")" "$@"

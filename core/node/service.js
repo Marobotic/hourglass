@@ -189,11 +189,12 @@ export class Service {
 
   // With a course and no date, the note goes to today's session if the
   // course meets today, otherwise it is a course note without a session.
+  // Pinned notes stay course-wide.
   addNote({ course, date, event_id, title, body = "", pinned = false }) {
     const c = this.course(course, { required: false });
     let session = date ?? null;
     let eventId = event_id ?? null;
-    if (c && !date) {
+    if (c && !date && !pinned) {
       const today = this.today();
       const occ = this.schedule({ from: today, to: today }).occurrences.find((o) => o.course_id === c.id);
       if (occ) {
