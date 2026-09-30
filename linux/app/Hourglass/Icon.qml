@@ -13,7 +13,7 @@ Text {
         "right": "", "note": "", "bell": "", "bell-off": "",
         "sync": "", "cloud": "", "person": "", "back": "",
         "eye": "", "code": "", "bolt": "", "folder-open": "",
-        "calendar-plus": "", "list": "", "timer": "", "down": ""
+        "calendar-plus": "", "list": "", "timer": "", "down": "", "gear": ""
     })
     text: glyphs[name] || ""
     font.family: Theme.mono

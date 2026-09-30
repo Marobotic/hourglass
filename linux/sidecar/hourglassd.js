@@ -7,7 +7,7 @@
 //   config.json: { "server": "https://...", "token": "..." }
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +26,9 @@ const SOUND = WIN ? "C:\\Windows\\Media\\Alarm01.wav" : "/usr/share/sounds/freed
 const SILENT = process.env.HOURGLASS_SILENT === "1"; // tests: no notification, no sound
 mkdirSync(CONF_DIR, { recursive: true });
 
+// Single-quoted PowerShell string literal.
+const psq = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 function token() {
@@ -36,14 +39,56 @@ function token() {
   return t;
 }
 
-const config = () => {
-  try {
-    return JSON.parse(readFileSync(join(CONF_DIR, "config.json"), "utf8"));
-  } catch {
-    return {};
+// The sync server is built in. Its token never sits on disk in plain text:
+// Linux keeps it in the Secret Service keyring (GNOME Keyring), Windows in a
+// DPAPI blob only this Windows user can decrypt. A package ships it once in
+// config.json (Windows) or it is handed over via HOURGLASS_PROVISION; it is
+// moved into the keyring and removed from the file on first start.
+const SERVER = process.env.HOURGLASS_SERVER || "https://marobotic.dev/hourglass";
+const DPAPI_FILE = join(CONF_DIR, "sync.dpapi");
+
+function keyringGet() {
+  if (WIN) {
+    if (!existsSync(DPAPI_FILE)) return null;
+    const r = spawnSync("powershell.exe", ["-NoProfile", "-Command",
+      `$s = Get-Content -Raw ${psq(DPAPI_FILE)} | ConvertTo-SecureString; [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))`], { encoding: "utf8", windowsHide: true });
+    return r.status === 0 ? r.stdout.trim() || null : null;
   }
+  const r = spawnSync("secret-tool", ["lookup", "service", "hourglass", "key", "sync-token"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() || null : null;
+}
+
+function keyringSet(token) {
+  if (WIN) {
+    const r = spawnSync("powershell.exe", ["-NoProfile", "-Command",
+      `ConvertTo-SecureString ${psq(token)} -AsPlainText -Force | ConvertFrom-SecureString | Set-Content -NoNewline ${psq(DPAPI_FILE)}`], { windowsHide: true });
+    return r.status === 0;
+  }
+  const r = spawnSync("secret-tool", ["store", "--label=Hourglass sync token", "service", "hourglass", "key", "sync-token"], { input: token });
+  return r.status === 0;
+}
+
+// Move a provisioned token into the keyring and scrub it from config.json.
+function adoptToken() {
+  const file = join(CONF_DIR, "config.json");
+  let cfg = {};
+  try { cfg = JSON.parse(readFileSync(file, "utf8")); } catch {}
+  const incoming = process.env.HOURGLASS_PROVISION || cfg.token;
+  if (incoming && keyringSet(incoming)) {
+    delete cfg.token;
+    delete cfg.server;
+    writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
+    log("sync token moved into the keyring");
+  }
+}
+
+let syncToken = null;
+const config = () => {
+  syncToken ??= keyringGet();
+  return syncToken ? { server: SERVER, token: syncToken } : {};
 };
 
+adoptToken();
 const store = new Store(join(DATA_DIR, "hourglass.db"), { replica: true });
 const service = new Service(store);
 const TOKEN = token();
@@ -107,9 +152,6 @@ setInterval(() => scheduleSync(0), 30000);
 const ringing = new Map(); // id -> { kind, id, label, at, sound }
 let lastCheck = Date.now();
 
-// Single-quoted PowerShell string literal.
-const psq = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-
 function notify(item) {
   if (SILENT) return;
   const title = item.kind === "timer" ? "Timer done" : "Alarm";
@@ -126,7 +168,7 @@ function notify(item) {
 }
 
 function playLoop(item) {
-  if (SILENT) return () => {};
+  if (SILENT || service.settings().sound === false) return () => {};
   let stopped = false;
   let child = null;
   const until = Date.now() + 60000;
@@ -166,11 +208,25 @@ function ring_stop(id) {
   return true;
 }
 
+// What rings in the next 36 h, recomputed once a minute and after any change;
+// the per-second check only compares timestamps. (Recomputing every second
+// expanded every recurrence and cost ~30% CPU.)
+let upcoming = [];
+let dirtyUpcoming = true;
+function refreshUpcoming(now) {
+  upcoming = dueBetween(service.data(), Math.max(lastCheck, now - 10 * 60000), now + 36 * 3600000, service.tz);
+  dirtyUpcoming = false;
+}
+store.onChange(() => { dirtyUpcoming = true; });
+setInterval(() => { dirtyUpcoming = true; }, 60000);
+
 setInterval(() => {
   const now = Date.now();
-  // a suspended laptop can skip ahead; ring what fell due, but not stale items older than 10 min
+  if (now - lastCheck > 5 * 60000) dirtyUpcoming = true; // woke from suspend
+  if (dirtyUpcoming) refreshUpcoming(now);
+  // ring what fell due since the last check, but nothing older than 10 min
   const from = Math.max(lastCheck, now - 10 * 60000);
-  for (const item of dueBetween(service.data(), from, now, service.tz)) ring(item);
+  for (const item of upcoming) if (item.at > from && item.at <= now) ring(item);
   lastCheck = now;
 }, 1000);
 

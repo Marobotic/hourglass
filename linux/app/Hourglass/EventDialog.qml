@@ -22,8 +22,8 @@ Modal {
         courseId = e ? e.course_id : (d.course || null);
         kind = e ? e.kind : (courseId ? "lecture" : "event");
         dateF.text = e ? e.start_date : (d.date || today);
-        startF.text = e ? e.start_time : (d.start || "09:00");
-        endF.text = e ? e.end_time : (d.end || "10:00");
+        startF.text = Util.t(e ? e.start_time : (d.start || "09:00"));
+        endF.text = Util.t(e ? e.end_time : (d.end || "10:00"));
         locF.text = e && e.location ? e.location : "";
         repeat = e ? (e.repeat ? e.repeat.freq : "none") : (d.repeatWeekly ? "weekly" : "none");
         days = e && e.repeat && e.repeat.days ? e.repeat.days.slice() : [Util.isoWeekday(dateF.text)];
@@ -41,8 +41,8 @@ Modal {
             course: courseId,
             kind: kind,
             date: dateF.text,
-            start: startF.text,
-            end: endF.text,
+            start: Util.parseTime(startF.text),
+            end: Util.parseTime(endF.text),
             location: locF.text.trim() || undefined,
             repeat: repeat === "none" ? null : { freq: repeat, days: repeat === "weekly" ? days : undefined, until: untilF.text || undefined }
         };
@@ -75,8 +75,8 @@ Modal {
         Layout.fillWidth: true
         spacing: 12
         ColumnLayout { spacing: 6; Label { text: dlg.repeat === "none" ? "DATE" : "FIRST DATE" } Field { id: dateF; Layout.preferredWidth: 140; placeholderText: "YYYY-MM-DD"; invalid: !Util.isDate(text) } }
-        ColumnLayout { spacing: 6; Label { text: "START" } Field { id: startF; Layout.preferredWidth: 90; invalid: !Util.isTime(text) } }
-        ColumnLayout { spacing: 6; Label { text: "END" } Field { id: endF; Layout.preferredWidth: 90; invalid: !Util.isTime(text) || (Util.isTime(startF.text) && Util.minutes(text) <= Util.minutes(startF.text)) } }
+        ColumnLayout { spacing: 6; Label { text: "START" } Field { id: startF; Layout.preferredWidth: 120; invalid: !Util.isTime(text) } }
+        ColumnLayout { spacing: 6; Label { text: "END" } Field { id: endF; Layout.preferredWidth: 120; invalid: !Util.isTime(text) || (Util.isTime(startF.text) && Util.minutes(text) <= Util.minutes(startF.text)) } }
         ColumnLayout { spacing: 6; Layout.fillWidth: true; Label { text: "ROOM" } Field { id: locF; Layout.fillWidth: true; placeholderText: "Optional" } }
     }
 

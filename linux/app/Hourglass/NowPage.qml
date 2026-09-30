@@ -64,7 +64,7 @@ Item {
                             spacing: 8
                             Rectangle {
                                 visible: hero.live
-                                width: 8; height: 8; radius: 4; color: Theme.accent
+                                width: 8; height: 8; radius: 0; color: Theme.accent
                                 SequentialAnimation on opacity { running: hero.live; loops: Animation.Infinite; NumberAnimation { to: 0.25; duration: 900 } NumberAnimation { to: 1; duration: 900 } }
                             }
                             Text {
@@ -74,7 +74,7 @@ Item {
                             }
                             Chip { text: hero.f ? Util.kindLabel(hero.f.kind) : ""; tint: hero.f ? hero.f.color : Theme.muted }
                             Item { Layout.fillWidth: true }
-                            Text { text: hero.f ? hero.f.start_time + " – " + hero.f.end_time : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
+                            Text { text: hero.f ? Util.range(hero.f.start_time, hero.f.end_time) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
                         }
 
                         Text {
@@ -109,17 +109,17 @@ Item {
                             spacing: 6
                             Rectangle {
                                 Layout.fillWidth: true
-                                height: 6; radius: 3
+                                height: 6; radius: 0
                                 color: Theme.surface2
                                 Rectangle {
                                     width: parent.width * (hero.live ? hero.progress : 0)
-                                    height: parent.height; radius: 3
+                                    height: parent.height; radius: 0
                                     color: hero.f ? hero.f.color : Theme.accent
                                     Behavior on width { NumberAnimation { duration: 400 } }
                                 }
                             }
                             Text {
-                                text: !hero.f ? "" : hero.live ? Util.left(hero.leftMin) : hero.f.state === "ended" ? "Ended " + hero.f.end_time + ". Good time to tidy your notes." : "Starts " + Util.relative(hero.inMin)
+                                text: !hero.f ? "" : hero.live ? Util.left(hero.leftMin) : hero.f.state === "ended" ? "Ended " + Util.t(hero.f.end_time) + ". Good time to tidy your notes." : "Starts " + Util.relative(hero.inMin)
                                 color: Theme.muted
                                 font.family: Theme.mono; font.pixelSize: 13
                             }
@@ -158,7 +158,7 @@ Item {
                             Layout.fillWidth: true
                             wrapMode: Text.Wrap
                             text: parent.parent.nx
-                                ? "Next: " + parent.parent.nx.title + ", " + Util.shortDate(parent.parent.nx.date) + " at " + parent.parent.nx.start_time + " (" + Util.relative(Math.ceil((parent.parent.nx.start_ms - page.app.clock) / 60000)) + ")"
+                                ? "Next: " + parent.parent.nx.title + ", " + Util.shortDate(parent.parent.nx.date) + " at " + Util.t(parent.parent.nx.start_time) + " (" + Util.relative(Math.ceil((parent.parent.nx.start_ms - page.app.clock) / 60000)) + ")"
                                 : page.app.courses.length ? "Nothing scheduled in the next 7 days." : "Add your courses and their weekly times. During each lecture, its notes open right here."
                             color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14
                         }
@@ -228,14 +228,14 @@ Item {
                     color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13
                 }
                 Repeater {
-                    model: page.d ? page.d.today : []
+                    model: page.d ? Util.merge(page.d.today) : []
                     Rectangle {
                         required property var modelData
                         readonly property bool past: page.app.clock >= modelData.end_ms
                         readonly property bool live: page.app.clock >= modelData.start_ms && !past
                         Layout.fillWidth: true
                         height: 52
-                        radius: Theme.radius
+                        radius: 0
                         color: live ? Theme.alpha(modelData.color, 0.13) : rowMouse.containsMouse ? Theme.surface : "transparent"
                         opacity: past ? 0.5 : 1
                         RowLayout {
@@ -243,10 +243,10 @@ Item {
                             spacing: 12
                             ColumnLayout {
                                 spacing: 0
-                                Text { text: modelData.start_time; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.DemiBold }
-                                Text { text: modelData.end_time; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
+                                Text { text: Util.t(modelData.start_time); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                Text { text: Util.t(modelData.end_time); color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
                             }
-                            Rectangle { width: 3; Layout.fillHeight: true; Layout.topMargin: 9; Layout.bottomMargin: 9; radius: 2; color: modelData.color }
+                            Rectangle { width: 3; Layout.fillHeight: true; Layout.topMargin: 9; Layout.bottomMargin: 9; radius: 0; color: modelData.color }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 1

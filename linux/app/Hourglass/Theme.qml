@@ -25,7 +25,7 @@ QtObject {
     readonly property string mono: "JetBrainsMono Nerd Font"
     readonly property string sans: "Noto Sans"
 
-    readonly property int radius: 6
+    readonly property int radius: 0
     readonly property int pad: 16
 
     function mix(a, b, k) {

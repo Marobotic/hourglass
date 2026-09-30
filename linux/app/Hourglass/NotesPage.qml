@@ -94,7 +94,7 @@ Item {
                         onClicked: { searchField.text = ""; page.sel = modelData.id; }
                         label: modelData.name
                         swatch: modelData.color
-                        sub: [modelData.code, modelData.next ? Util.shortDate(modelData.next.date).slice(0, 3) + " " + modelData.next.start_time : ""].filter(x => x).join(" · ")
+                        sub: [modelData.code, modelData.next ? Util.shortDate(modelData.next.date).slice(0, 3) + " " + Util.t(modelData.next.start_time) : ""].filter(x => x).join(" · ")
                     }
                 }
             }
@@ -141,7 +141,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 14
-                        Rectangle { visible: !!page.course; width: 6; Layout.fillHeight: true; radius: 3; color: page.course ? page.course.color : "transparent" }
+                        Rectangle { visible: !!page.course; width: 6; Layout.fillHeight: true; radius: 0; color: page.course ? page.course.color : "transparent" }
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 4
@@ -199,7 +199,7 @@ Item {
                                     anchors { fill: parent; leftMargin: 14; rightMargin: 12 }
                                     spacing: 12
                                     Chip { text: Util.kindLabel(modelData.kind); tint: page.course ? page.course.color : Theme.muted }
-                                    Text { text: modelData.start_time + " – " + modelData.end_time; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.DemiBold }
+                                    Text { text: Util.range(modelData.start_time, modelData.end_time); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.DemiBold }
                                     Text { Layout.fillWidth: true; text: Util.repeatText(modelData) + (modelData.location ? " · " + modelData.location : ""); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                                     Icon { name: "edit"; size: 13; color: Theme.faint }
                                 }

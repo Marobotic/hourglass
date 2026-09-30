@@ -289,6 +289,26 @@ export class Service {
     });
   }
 
+  // One alarm per lecture (kind "lecture"), N minutes before every session.
+  // minutes null/0 turns them off. Tutorials that follow a lecture are skipped
+  // on purpose: you are already in the room.
+  setLectureReminders({ minutes }) {
+    const on = Number(minutes) > 0;
+    const lectures = this.store.all("events").filter((e) => e.kind === "lecture");
+    const existing = this.store.all("alarms").filter((a) => a.lead_event_id && lectures.some((e) => e.id === a.lead_event_id));
+    const out = [];
+    for (const ev of lectures) {
+      const c = ev.course_id ? this.store.get("courses", ev.course_id) : null;
+      const room = (ev.location || c?.location || "").split(" · ")[0];
+      const label = `${c?.name || ev.title || "Lecture"} in ${minutes} min${room ? ` · ${room}` : ""}`;
+      const a = existing.find((x) => x.lead_event_id === ev.id);
+      if (a) out.push(this.store.upsert("alarms", { id: a.id, enabled: on ? 1 : 0, ...(on ? { lead_minutes: Number(minutes), label } : {}) }));
+      else if (on) out.push(this.store.upsert("alarms", { label, lead_event_id: ev.id, lead_minutes: Number(minutes), enabled: 1, days: [] }));
+    }
+    this.store.setMeta("lecture_reminder_min", on ? Number(minutes) : 0);
+    return out;
+  }
+
   removeAlarm({ alarm_id }) {
     return this.store.remove("alarms", this.row("alarms", alarm_id).id);
   }
@@ -330,15 +350,26 @@ export class Service {
 
   // --- settings --------------------------------------------------------------
 
+  // Per-device preferences (not synced). Lecture reminders are synced alarms.
   settings() {
-    return { tz: this.tz };
+    return {
+      tz: this.tz,
+      time_format: this.store.meta("time_format") || "12h",
+      week_start: this.store.meta("week_start") || 6, // ISO weekday; 6 = Saturday
+      sound: this.store.meta("sound") ?? true,
+      lecture_reminder_min: this.store.meta("lecture_reminder_min") ?? 0,
+    };
   }
 
-  setSettings({ tz }) {
+  setSettings({ tz, time_format, week_start, sound, lecture_reminder_min }) {
     if (tz) {
       Intl.DateTimeFormat(undefined, { timeZone: tz });
       this.store.setMeta("tz", tz);
     }
+    if (time_format === "12h" || time_format === "24h") this.store.setMeta("time_format", time_format);
+    if ([1, 6, 7].includes(Number(week_start))) this.store.setMeta("week_start", Number(week_start));
+    if (typeof sound === "boolean") this.store.setMeta("sound", sound);
+    if (lecture_reminder_min !== undefined) this.setLectureReminders({ minutes: Number(lecture_reminder_min) || 0 });
     return this.settings();
   }
 }

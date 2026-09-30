@@ -20,6 +20,8 @@ ApplicationWindow {
     property double clock: Date.now()
     property var editingNote: null
     property bool loaded: false
+    property var settings: ({})
+    property string scheduleMode: "week"
     property string shotPath: "" // dev: render, save a PNG, quit
     property string devOpen: ""  // dev: note | course | event | session
 
@@ -54,9 +56,10 @@ ApplicationWindow {
     FontLoader { source: Qt.platform.os === "windows" ? Qt.resolvedUrl("fonts/JetBrainsMonoNerdFont-Bold.ttf") : "" }
     readonly property var pages: [
         { name: "Now", icon: "now", key: "1" },
-        { name: "Week", icon: "week", key: "2" },
+        { name: "Schedule", icon: "week", key: "2" },
         { name: "Notes", icon: "note", key: "3" },
-        { name: "Time", icon: "time", key: "4" }
+        { name: "Time", icon: "time", key: "4" },
+        { name: "Settings", icon: "gear", key: "5" }
     ]
 
     Component.onCompleted: {
@@ -67,6 +70,7 @@ ApplicationWindow {
             if (a[i] === "--page") app.page = +a[i + 1];
             if (a[i] === "--screenshot") shotPath = a[i + 1];
             if (a[i] === "--open") devOpen = a[i + 1];
+            if (a[i] === "--schedule") scheduleMode = a[i + 1];
             if (a[i] === "--size") { const wh = a[i + 1].split("x"); app.width = +wh[0]; app.height = +wh[1]; }
         }
         pollState();
@@ -83,6 +87,11 @@ ApplicationWindow {
         Api.get("/api/app", d => {
             if (!d) return;
             Theme.apply(d.theme);
+            if (d.settings) {
+                Util.h24 = d.settings.time_format === "24h";
+                Util.weekStartDay = d.settings.week_start || 6;
+                app.settings = d.settings;
+            }
             if (d.tz_offset_min !== undefined) Util.offsetMin = d.tz_offset_min;
             app.appState = d;
         });
@@ -124,6 +133,7 @@ ApplicationWindow {
     Shortcut { sequences: ["2"]; onActivated: app.go(1) }
     Shortcut { sequences: ["3"]; onActivated: app.go(2) }
     Shortcut { sequences: ["4"]; onActivated: app.go(3) }
+    Shortcut { sequences: ["5"]; onActivated: app.go(4) }
     Shortcut {
         sequences: ["n", "Ctrl+N"]
         onActivated: {
@@ -173,9 +183,9 @@ ApplicationWindow {
                             readonly property bool current: app.page === index && app.editingNote === null
                             Layout.fillWidth: true
                             height: 38
-                            radius: Theme.radius
+                            radius: 0
                             color: current ? Theme.surface2 : navMouse.containsMouse ? Theme.alpha(Theme.fg, 0.04) : "transparent"
-                            Rectangle { visible: parent.current; width: 3; height: 18; radius: 2; color: Theme.accent; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
+                            Rectangle { visible: parent.current; width: 3; height: 18; radius: 0; color: Theme.accent; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
                             RowLayout {
                                 anchors { fill: parent; leftMargin: app.narrow ? 0 : 14; rightMargin: 10 }
                                 spacing: 12
@@ -200,7 +210,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.bottomMargin: 10
                         height: 58
-                        radius: Theme.radius
+                        radius: 0
                         color: Theme.alpha(Theme.accent, 0.12)
                         border.color: Theme.alpha(Theme.accent, 0.35)
                         readonly property var a: app.nowData ? app.nowData.active : null
@@ -219,7 +229,7 @@ ApplicationWindow {
                         spacing: 8
                         readonly property string st: app.appState.sync ? app.appState.sync.state : "local"
                         Rectangle {
-                            width: 7; height: 7; radius: 4
+                            width: 7; height: 7; radius: 0
                             color: parent.st === "synced" ? Theme.teal : parent.st === "offline" ? Theme.orange : Theme.faint
                         }
                         Text {
@@ -243,9 +253,10 @@ ApplicationWindow {
                     currentIndex: app.page
                     visible: app.editingNote === null
                     NowPage { app: app }
-                    WeekPage { app: app }
+                    SchedulePage { app: app }
                     NotesPage { app: app }
                     TimePage { app: app }
+                    SettingsPage { app: app }
                 }
 
                 NoteEditor {
@@ -291,7 +302,7 @@ ApplicationWindow {
             anchors.centerIn: parent
             width: 380
             height: ringCol.implicitHeight + 56
-            radius: 10
+            radius: 0
             color: Theme.surface
             border.color: Theme.accent
             border.width: 2
@@ -326,7 +337,7 @@ ApplicationWindow {
         anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 24 }
         width: Math.min(toastText.implicitWidth + 32, app.width - 48)
         height: toastText.implicitHeight + 20
-        radius: Theme.radius
+        radius: 0
         color: Theme.surface2
         border.color: Theme.accent
         opacity: 0

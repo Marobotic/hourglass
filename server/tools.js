@@ -219,6 +219,13 @@ export const TOOLS = [
     run: (s, a) => s.setAlarm(a),
   },
   {
+    name: "set_lecture_reminders",
+    title: "Lecture reminders",
+    description: "Ring N minutes before every lecture (one alarm per lecture event). minutes 0 turns them off.",
+    input: { minutes: z.number().int().min(0).max(240) },
+    run: (s, a) => s.setLectureReminders(a),
+  },
+  {
     name: "remove_alarm",
     title: "Remove alarm",
     description: "Delete an alarm.",

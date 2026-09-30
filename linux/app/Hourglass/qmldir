@@ -15,7 +15,8 @@ NoteCard 1.0 NoteCard.qml
 Picker 1.0 Picker.qml
 Modal 1.0 Modal.qml
 NowPage 1.0 NowPage.qml
-WeekPage 1.0 WeekPage.qml
+SchedulePage 1.0 SchedulePage.qml
+SettingsPage 1.0 SettingsPage.qml
 NotesPage 1.0 NotesPage.qml
 FolderRow 1.0 FolderRow.qml
 TimePage 1.0 TimePage.qml

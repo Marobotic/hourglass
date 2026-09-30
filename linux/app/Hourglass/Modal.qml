@@ -17,7 +17,7 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     Overlay.modal: Rectangle { color: Theme.alpha("#000000", 0.55) }
-    background: Rectangle { color: Theme.surface; radius: Theme.radius + 2; border.color: Theme.border }
+    background: Rectangle { color: Theme.surface; radius: 0; border.color: Theme.border }
 
     enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 } NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: 110; easing.type: Easing.OutCubic } }
     exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }

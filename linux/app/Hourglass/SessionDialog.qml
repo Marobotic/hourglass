@@ -10,7 +10,7 @@ Modal {
     property var notes: []
     width: 560
     title: occ ? occ.title : ""
-    subtitle: occ ? Util.longDate(occ.date) + "  ·  " + occ.start_time + " – " + occ.end_time + (occ.location ? "  ·  " + occ.location : "") : ""
+    subtitle: occ ? Util.longDate(occ.date) + "  ·  " + Util.range(occ.start_time, occ.end_time) + (occ.location ? "  ·  " + occ.location : "") : ""
 
     function show(o) {
         occ = o;

@@ -13,14 +13,18 @@ QtObject {
     signal error(string message)
     signal changed()
 
-    function request(method, path, body, cb) {
+    // Read-only actions are POSTs too; they must not announce a change, or every
+    // page reloads, re-posts, and the app spins in a loop.
+    readonly property var reads: ["whats_now", "get_schedule", "list_courses", "get_notes", "search_notes", "list_alarms", "list_timers"]
+
+    function request(method, path, body, cb, readOnly) {
         const xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function () {
             if (xhr.readyState !== XMLHttpRequest.DONE) return;
             let data = null;
             try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (e) {}
             if (xhr.status >= 200 && xhr.status < 300) {
-                if (method !== "GET") { api.revision++; api.changed(); }
+                if (method !== "GET" && !readOnly) { api.revision++; api.changed(); }
                 if (cb) cb(data);
             } else {
                 const msg = data && data.error ? data.error : (xhr.status ? "HTTP " + xhr.status : "Hourglass service is not running");
@@ -40,5 +44,5 @@ QtObject {
     function post(path, body, cb) { request("POST", path, body || {}, cb); }
     function put(path, body, cb) { request("PUT", path, body, cb); }
     function del(path, cb) { request("DELETE", path, null, cb); }
-    function action(name, args, cb) { request("POST", "/api/actions/" + name, args || {}, cb); }
+    function action(name, args, cb) { request("POST", "/api/actions/" + name, args || {}, cb, reads.indexOf(name) >= 0); }
 }

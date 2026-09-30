@@ -16,7 +16,7 @@ RowLayout {
             readonly property bool on: dt.days.indexOf(index + 1) >= 0
             width: dt.size
             height: dt.size
-            radius: 4
+            radius: 0
             color: on ? Theme.accent : Theme.bg
             border.width: 1
             border.color: on ? Theme.accent : Theme.border

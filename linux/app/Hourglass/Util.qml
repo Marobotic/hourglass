@@ -13,22 +13,73 @@ QtObject {
     // "YYYY-MM-DD" helpers on UTC midnights (no DST drift)
     function parse(d) { const p = d.split("-"); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
     function fmt(ms) { const d = new Date(ms); return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()); }
+    function daysBetween(a, b) { return Math.round((parse(b) - parse(a)) / 86400000); }
     function addDays(d, n) { return fmt(parse(d) + n * 86400000); }
     function isoWeekday(d) { return ((new Date(parse(d)).getUTCDay() + 6) % 7) + 1; }
-    function weekStart(d) { return addDays(d, 1 - isoWeekday(d)); }
+    // First day of the week containing d, per the "week starts on" setting.
+    property int weekStartDay: 6
+    function weekStart(d) { return addDays(d, -((isoWeekday(d) - weekStartDay + 7) % 7)); }
+    function weekdayOf(d) { return weekdays[isoWeekday(d) - 1]; }
     function dayNum(d) { return new Date(parse(d)).getUTCDate(); }
     function monthName(d) { return months[new Date(parse(d)).getUTCMonth()]; }
     function shortDate(d) { return weekdays[isoWeekday(d) - 1] + " " + dayNum(d) + " " + monthName(d).slice(0, 3); }
     function longDate(d) { return weekdaysLong[isoWeekday(d) - 1] + ", " + dayNum(d) + " " + monthName(d); }
-    function minutes(t) { const p = t.split(":"); return +p[0] * 60 + +p[1]; }
+    // Accepts "20:30", "8:30 pm", "8pm", "0830"; returns "HH:MM" or "".
+    function parseTime(s) {
+        const m = /^\s*(\d{1,2})(?::?(\d{2}))?\s*([ap])?\.?\s*m?\.?\s*$/i.exec(s || "");
+        if (!m) return "";
+        let h = +m[1];
+        const min = m[2] ? +m[2] : 0;
+        if (min > 59) return "";
+        if (m[3]) {
+            if (h < 1 || h > 12) return "";
+            h = (h % 12) + (m[3].toLowerCase() === "p" ? 12 : 0);
+        } else if (h > 23) return "";
+        return pad(h) + ":" + pad(min);
+    }
+    function minutes(t) { const p = (parseTime(t) || "00:00").split(":"); return +p[0] * 60 + +p[1]; }
+    // Display a stored "HH:MM" time in the chosen format.
+    property bool h24: false
+    function t(hhmm) {
+        if (!hhmm) return "";
+        const m = minutes(hhmm), h = Math.floor(m / 60);
+        if (h24) return pad(h) + ":" + pad(m % 60);
+        return ((h + 11) % 12 + 1) + ":" + pad(m % 60) + " " + (h < 12 ? "AM" : "PM");
+    }
+    function range(a, b) {
+        if (h24) return t(a) + " – " + t(b);
+        const pa = minutes(a) < 720, pb = minutes(b) < 720;
+        return (pa === pb ? t(a).slice(0, -3) : t(a)) + " – " + t(b);
+    }
     function isDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); }
-    function isTime(s) { return /^\d{1,2}:\d{2}$/.test(s) && +s.split(":")[0] < 24 && +s.split(":")[1] < 60; }
+    function isTime(s) { return parseTime(s) !== ""; }
 
     // Offset of the Hourglass time zone from UTC, sent by the sidecar. Wall-clock
     // helpers use it instead of the system zone.
     property int offsetMin: -new Date().getTimezoneOffset()
     function wall(ms) { return new Date(ms + offsetMin * 60000); } // read with getUTC*
-    function clock(ms) { const d = wall(ms); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()); }
+    function clock(ms) { const d = wall(ms); return t(pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes())); }
+
+    // Back-to-back sessions of one course on one day become one block
+    // (lecture 8:30-9:30 + tutorial 9:30-1:30 -> 8:30-1:30). parts keeps the pieces.
+    function merge(list) {
+        const out = [];
+        const sorted = list.slice().sort((a, b) => a.start_ms - b.start_ms);
+        for (const o of sorted) {
+            const last = out.length ? out[out.length - 1] : null;
+            const gap = last ? (o.start_ms - last.end_ms) / 60000 : 999;
+            if (last && last.course_id && last.course_id === o.course_id && last.date === o.date && gap >= 0 && gap <= 10) {
+                last.end_time = o.end_time;
+                last.end_ms = o.end_ms;
+                last.parts.push(o);
+            } else out.push(Object.assign({}, o, { parts: [o] }));
+        }
+        return out;
+    }
+    function partsText(m) {
+        return m.parts.map(p => kindLabel(p.kind) + " " + t(p.start_time)).join("  ·  ");
+    }
+    function lead(teacher) { return (teacher || "").split(",")[0].trim(); }
     function dayOf(ms) { return fmt(Date.UTC(wall(ms).getUTCFullYear(), wall(ms).getUTCMonth(), wall(ms).getUTCDate())); }
     function minutesOf(ms) { const d = wall(ms); return d.getUTCHours() * 60 + d.getUTCMinutes(); }
 

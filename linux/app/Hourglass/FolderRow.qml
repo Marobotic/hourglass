@@ -13,13 +13,13 @@ Rectangle {
     signal clicked()
     Layout.fillWidth: true
     height: sub ? 58 : 44
-    radius: Theme.radius
+    radius: 0
     color: current ? Theme.surface2 : fm.containsMouse ? Theme.surface : "transparent"
-    Rectangle { visible: f.current; width: 3; height: 20; radius: 2; color: Theme.accent; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
+    Rectangle { visible: f.current; width: 3; height: 20; radius: 0; color: Theme.accent; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
     RowLayout {
         anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
         spacing: 12
-        Rectangle { visible: f.glyph === ""; width: 12; height: 12; radius: 3; color: f.swatch }
+        Rectangle { visible: f.glyph === ""; width: 12; height: 12; radius: 0; color: f.swatch }
         Icon { visible: f.glyph !== ""; name: f.glyph; size: 14; color: Theme.muted }
         ColumnLayout {
             Layout.fillWidth: true

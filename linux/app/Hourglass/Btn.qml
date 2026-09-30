@@ -18,7 +18,7 @@ Rectangle {
 
     implicitHeight: compact ? 28 : 34
     implicitWidth: row.implicitWidth + (text ? (compact ? 20 : 28) : 0) + (text ? 0 : implicitHeight - row.implicitWidth)
-    radius: Theme.radius
+    radius: 0
     color: kind === "primary" ? (hovered ? Qt.lighter(base, 1.12) : base) : (hovered ? Theme.surface2 : base)
     border.width: kind === "ghost" ? 1 : 0
     border.color: Theme.border

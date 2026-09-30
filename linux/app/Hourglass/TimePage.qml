@@ -101,8 +101,8 @@ Item {
                                     Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                                     Rectangle {
                                         Layout.fillWidth: true
-                                        height: 4; radius: 2; color: Theme.surface2
-                                        Rectangle { width: parent.width * parent.parent.parent.parent.parent.frac; height: 4; radius: 2; color: Theme.accent; Behavior on width { NumberAnimation { duration: 900 } } }
+                                        height: 4; radius: 0; color: Theme.surface2
+                                        Rectangle { width: parent.width * parent.parent.parent.parent.parent.frac; height: 4; radius: 0; color: Theme.accent; Behavior on width { NumberAnimation { duration: 900 } } }
                                     }
                                 }
                             }
@@ -131,7 +131,7 @@ Item {
                             visible: page.mode === "time"
                             Layout.fillWidth: true
                             spacing: 10
-                            Field { id: timeField; Layout.preferredWidth: 90; placeholderText: "07:30"; invalid: text !== "" && !Util.isTime(text) }
+                            Field { id: timeField; Layout.preferredWidth: 120; placeholderText: "7:30 AM"; invalid: text !== "" && !Util.isTime(text) }
                             DayToggles { days: page.newDays; onToggled: d => page.newDays = d }
                             Field { id: alarmLabel; Layout.fillWidth: true; placeholderText: "Label" }
                         }
@@ -151,7 +151,7 @@ Item {
                                 enabled: page.mode === "time" ? Util.isTime(timeField.text) : (coursePick.value !== null && leadField.acceptableInput)
                                 onClicked: {
                                     if (page.mode === "time") {
-                                        const args = { time: timeField.text, days: page.newDays, label: alarmLabel.text };
+                                        const args = { time: Util.parseTime(timeField.text), days: page.newDays, label: alarmLabel.text };
                                         if (!page.newDays.length) {
                                             const today = Util.dayOf(page.app.clock);
                                             args.date = Util.minutes(timeField.text) > Util.minutesOf(page.app.clock) ? today : Util.addDays(today, 1);
@@ -178,7 +178,7 @@ Item {
                             anchors { fill: parent; leftMargin: 18; rightMargin: 12 }
                             spacing: 16
                             Text {
-                                text: modelData.time || ("-" + modelData.lead_minutes + "′")
+                                text: modelData.time ? Util.t(modelData.time) : ("-" + modelData.lead_minutes + " min")
                                 color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold
                                 Layout.preferredWidth: 100
                             }
@@ -194,10 +194,10 @@ Item {
                             }
                             // enable toggle
                             Rectangle {
-                                width: 40; height: 22; radius: 11
+                                width: 40; height: 22; radius: 0
                                 color: modelData.enabled ? Theme.accent : Theme.surface2
                                 border.color: Theme.border
-                                Rectangle { width: 16; height: 16; radius: 8; y: 3; x: modelData.enabled ? 21 : 3; color: modelData.enabled ? Theme.accentInk : Theme.muted; Behavior on x { NumberAnimation { duration: 120 } } }
+                                Rectangle { width: 16; height: 16; radius: 0; y: 3; x: modelData.enabled ? 21 : 3; color: modelData.enabled ? Theme.accentInk : Theme.muted; Behavior on x { NumberAnimation { duration: 120 } } }
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: Api.put("/api/alarms/" + modelData.id, { enabled: !modelData.enabled }) }
                             }
                             Btn { icon: "trash"; kind: "subtle"; onClicked: Api.action("remove_alarm", { alarm_id: modelData.id }) }

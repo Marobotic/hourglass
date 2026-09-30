@@ -7,7 +7,7 @@ Rectangle {
     signal clicked()
     readonly property bool hovered: mouse.containsMouse
 
-    radius: Theme.radius
+    radius: 0
     color: hoverable && hovered ? Theme.surface2 : Theme.surface
     border.width: 1
     border.color: hoverable && hovered ? Theme.faint : Theme.border
@@ -16,7 +16,7 @@ Rectangle {
     Rectangle {
         visible: card.stripe.a > 0
         width: 4
-        radius: 2
+        radius: 0
         color: card.stripe
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom; margins: 1 }
     }

@@ -15,6 +15,8 @@ New-Item -ItemType Directory -Force -Path $conf | Out-Null
 if (-not (Test-Path "$conf\config.json") -and (Test-Path "$root\config.json")) {
   Copy-Item "$root\config.json" "$conf\config.json"
 }
+# The service moves the token into DPAPI on start; do not leave a plain copy behind.
+if (Test-Path "$root\config.json") { Remove-Item "$root\config.json" -Force }
 
 if (-not (Test-Up)) {
   Start-Process -WindowStyle Hidden -FilePath "$root\node\node.exe" -ArgumentList "`"$root\linux\sidecar\hourglassd.js`""

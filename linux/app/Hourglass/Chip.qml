@@ -7,7 +7,7 @@ Rectangle {
     property bool solid: false
     implicitWidth: label.implicitWidth + 14
     implicitHeight: 20
-    radius: 4
+    radius: 0
     color: solid ? tint : Theme.alpha(tint, 0.16)
     Text {
         id: label

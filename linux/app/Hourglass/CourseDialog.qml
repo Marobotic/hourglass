@@ -20,7 +20,7 @@ Modal {
         teacherF.text = c && c.teacher ? c.teacher : "";
         const used = app.courses.map(x => x.color);
         color = c ? c.color : (Util.palette.find(p => used.indexOf(p) < 0) || Util.palette[0]);
-        slots = c ? [] : [{ day: 2, start: "09:00", end: "11:00", kind: "lecture" }];
+        slots = c ? [] : [{ day: 2, start: Util.t("09:00"), end: Util.t("11:00"), kind: "lecture" }];
         untilF.text = "";
         open();
         nameF.forceActiveFocus();
@@ -34,7 +34,7 @@ Modal {
         const base = { name: nameF.text.trim(), code: codeF.text.trim() || undefined, location: locF.text.trim() || undefined, teacher: teacherF.text.trim() || undefined, color: color };
         if (course) Api.action("update_course", Object.assign({ course: course.id }, base), r => { if (r) dlg.close(); });
         else Api.action("add_course", Object.assign(base, {
-            schedule: slots.map(s => ({ day: s.day, start: s.start, end: s.end, kind: s.kind })),
+            schedule: slots.map(s => ({ day: s.day, start: Util.parseTime(s.start), end: Util.parseTime(s.end), kind: s.kind })),
             term_end: untilF.text || undefined
         }), r => { if (r) dlg.close(); });
     }
@@ -65,7 +65,7 @@ Modal {
                 model: Util.palette
                 Rectangle {
                     required property string modelData
-                    width: 26; height: 26; radius: 5
+                    width: 26; height: 26; radius: 0
                     color: modelData
                     border.width: dlg.color === modelData ? 2 : 0
                     border.color: Theme.fg
@@ -87,16 +87,16 @@ Modal {
                 required property int index
                 spacing: 8
                 Picker { Layout.preferredWidth: 90; options: Util.weekdays.map((w, i) => ({ label: w, value: i + 1 })); value: modelData.day; onPicked: v => dlg.setSlot(index, "day", v) }
-                Field { Layout.preferredWidth: 80; text: modelData.start; invalid: !Util.isTime(text); onTextEdited: dlg.setSlot(index, "start", text) }
+                Field { Layout.preferredWidth: 110; text: modelData.start; invalid: !Util.isTime(text); onTextEdited: dlg.setSlot(index, "start", text) }
                 Text { text: "–"; color: Theme.muted; font.family: Theme.mono }
-                Field { Layout.preferredWidth: 80; text: modelData.end; invalid: !Util.isTime(text) || (Util.isTime(modelData.start) && Util.minutes(text) <= Util.minutes(modelData.start)); onTextEdited: dlg.setSlot(index, "end", text) }
+                Field { Layout.preferredWidth: 110; text: modelData.end; invalid: !Util.isTime(text) || (Util.isTime(modelData.start) && Util.minutes(text) <= Util.minutes(modelData.start)); onTextEdited: dlg.setSlot(index, "end", text) }
                 Picker { Layout.fillWidth: true; options: Util.kinds.slice(0, 4).map(k => ({ label: Util.kindLabel(k), value: k })); value: modelData.kind; onPicked: v => dlg.setSlot(index, "kind", v) }
                 Btn { icon: "close"; kind: "subtle"; compact: true; onClicked: { const s = dlg.slots.slice(); s.splice(index, 1); dlg.slots = s; } }
             }
         }
         RowLayout {
             spacing: 10
-            Btn { icon: "plus"; text: "Add a time"; compact: true; onClicked: dlg.slots = dlg.slots.concat([{ day: 4, start: "14:00", end: "15:00", kind: "lab" }]) }
+            Btn { icon: "plus"; text: "Add a time"; compact: true; onClicked: dlg.slots = dlg.slots.concat([{ day: 4, start: Util.t("14:00"), end: Util.t("15:00"), kind: "lab" }]) }
             Item { Layout.fillWidth: true }
             Label { text: "TERM ENDS" }
             Field { id: untilF; Layout.preferredWidth: 140; placeholderText: "YYYY-MM-DD"; invalid: text !== "" && !Util.isDate(text) }
