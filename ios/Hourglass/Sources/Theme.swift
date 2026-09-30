@@ -50,8 +50,8 @@ struct Card<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(H.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(H.border, lineWidth: 1))
+        .clipShape(Rectangle())
+        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
     }
 }
 
@@ -75,8 +75,8 @@ struct HButton: View {
             .foregroundStyle(ink.opacity(enabled ? 1 : 0.4))
             .padding(.horizontal, 16).frame(minHeight: 44)
             .background(primary ? H.accent : danger ? H.accent.opacity(0.14) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(primary || danger ? .clear : H.border, lineWidth: 1))
+            .clipShape(Rectangle())
+            .overlay(Rectangle().stroke(primary || danger ? .clear : H.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -88,7 +88,7 @@ struct Chip: View {
     let tint: Color
     var body: some View {
         Text(text.uppercased()).font(H.mono(10, bold: true)).tracking(0.8).foregroundStyle(tint)
-            .padding(.horizontal, 7).padding(.vertical, 3).background(tint.opacity(0.18)).clipShape(RoundedRectangle(cornerRadius: 4))
+            .padding(.horizontal, 7).padding(.vertical, 3).background(tint.opacity(0.18)).clipShape(Rectangle())
     }
 }
 
@@ -129,8 +129,8 @@ struct DayToggles: View {
                 Button { if on { days.removeAll { $0 == d } } else { days = (days + [d]).sorted() } } label: {
                     Text(String(Array("MTWTFSS")[d - 1])).font(H.mono(13, bold: true))
                         .foregroundStyle(on ? .white : H.muted).frame(width: 38, height: 38)
-                        .background(on ? H.accent : H.bg).clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(on ? H.accent : H.border, lineWidth: 1))
+                        .background(on ? H.accent : H.bg).clipShape(Rectangle())
+                        .overlay(Rectangle().stroke(on ? H.accent : H.border, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
             }
@@ -149,8 +149,8 @@ struct Segmented<V: Hashable>: View {
                     Button { value = options[i].1 } label: {
                         T(options[i].0, 13, on ? H.fg : H.muted)
                             .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(on ? H.surface2 : .clear).clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(on ? H.faint : H.border, lineWidth: 1))
+                            .background(on ? H.surface2 : .clear).clipShape(Rectangle())
+                            .overlay(Rectangle().stroke(on ? H.faint : H.border, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                 }
@@ -169,8 +169,8 @@ struct Field: View {
             TextField("", text: $text, prompt: Text(placeholder).foregroundStyle(H.faint))
                 .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent)
                 .padding(.horizontal, 12).frame(minHeight: 46)
-                .background(H.bg).clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(H.border, lineWidth: 1))
+                .background(H.bg).clipShape(Rectangle())
+                .overlay(Rectangle().stroke(H.border, lineWidth: 1))
         }
     }
 }
@@ -186,7 +186,7 @@ struct TimeField: View {
                 get: { Calendar.current.date(bySettingHour: Dates.minutes(value) / 60, minute: Dates.minutes(value) % 60, second: 0, of: Date()) ?? Date() },
                 set: { let c = Calendar.current.dateComponents([.hour, .minute], from: $0); value = String(format: "%02ld:%02ld", c.hour ?? 0, c.minute ?? 0) }
             ), displayedComponents: .hourAndMinute)
-            .labelsHidden().environment(\.locale, Locale(identifier: "en_GB")).tint(H.accent)
+            .labelsHidden().environment(\.locale, Locale(identifier: Dates.h24 ? "en_GB" : "en_US")).tint(H.accent)
         }
     }
 }
@@ -225,5 +225,48 @@ struct NoteRow: View {
                 .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
             if !preview.isEmpty { T(preview, 13, H.muted, lines: 2).padding(.top, 4) }
         }
+    }
+}
+
+// Square on/off switch (the system Toggle is a pill).
+struct SquareToggle: View {
+    let on: Bool
+    let change: (Bool) -> Void
+    var body: some View {
+        Button { change(!on) } label: {
+            ZStack(alignment: on ? .trailing : .leading) {
+                Rectangle().fill(on ? H.accent : H.surface2).frame(width: 46, height: 26).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                Rectangle().fill(on ? Color.white : H.muted).frame(width: 18, height: 18).padding(4)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// Merged session card: time range and room big, then course, parts, professor.
+struct BlockCard: View {
+    let b: Block
+    let clock: Int64
+    var body: some View {
+        let o = b.first
+        let live = clock >= b.startMs && clock < b.endMs
+        HStack(spacing: 0) {
+            Rectangle().fill(Color(hex: o.color)).frame(width: 4)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    T(Dates.range(b.start, b.end), 16, bold: true)
+                    Spacer()
+                    if let l = o.location { T(l, 16, bold: true) }
+                }
+                T(o.title, 15, lines: 1)
+                T(b.parts.map { "\(kindLabel($0.kind)) \(Dates.t($0.start_time))" }.joined(separator: " · "), 12, H.muted, lines: 1)
+                if let t = o.teacher { T(String(t.split(separator: ",").first ?? ""), 13, H.muted, lines: 1) }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(live ? Color(hex: o.color).opacity(0.18) : H.surface)
+        .overlay(Rectangle().stroke(live ? Color(hex: o.color) : H.border, lineWidth: 1))
+        .contentShape(Rectangle())
     }
 }

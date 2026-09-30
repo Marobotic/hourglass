@@ -32,7 +32,7 @@ struct NowView: View {
                     }
                     SectionLabel(text: "Today")
                     if st.todayList.isEmpty { T("Nothing scheduled today.", 12, H.faint) }
-                    ForEach(st.todayList) { o in TimelineRow(o: o, clock: clock).onTapGesture { sheets.session = o } }
+                    ForEach(merge(st.todayList)) { b in BlockCard(b: b, clock: clock).onTapGesture { sheets.session = b.first } }
                     SectionLabel(text: "Timers")
                     ForEach(store.timers) { t in TimerCard(t: t, clock: clock) }
                     HStack(spacing: 8) {
@@ -52,12 +52,12 @@ struct NowView: View {
         let color = Color(hex: f.color)
         return Card(stripe: color) {
             HStack(spacing: 8) {
-                if state == "live" { Circle().fill(H.accent).frame(width: 8, height: 8) }
+                if state == "live" { Rectangle().fill(H.accent).frame(width: 8, height: 8) }
                 Text(state == "live" ? "LIVE NOW" : state == "ended" ? "JUST ENDED" : "UP NEXT").font(H.mono(11, bold: true)).tracking(1.6)
                     .foregroundStyle(state == "live" ? H.accent : H.muted)
                 Chip(text: kindLabel(f.kind), tint: color)
                 Spacer()
-                T("\(f.start_time)–\(f.end_time)", 13, H.muted)
+                T(Dates.range(f.start_time, f.end_time), 14, H.muted)
             }
             T(f.title, 28, bold: true).padding(.top, 8)
             HStack(spacing: 14) {
@@ -70,12 +70,12 @@ struct NowView: View {
             }
             GeometryReader { g in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(H.surface2)
-                    Capsule().fill(color).frame(width: g.size.width * (state == "live" ? f.progress(clock) : 0))
+                    Rectangle().fill(H.surface2)
+                    Rectangle().fill(color).frame(width: g.size.width * (state == "live" ? f.progress(clock) : 0))
                 }
             }
             .frame(height: 6).padding(.top, 12)
-            T(state == "live" ? Dates.left((f.end_ms - clock + 59_999) / 60_000) : state == "ended" ? "Ended \(f.end_time). Good time to tidy your notes." : "Starts " + Dates.relative((f.start_ms - clock + 59_999) / 60_000), 12, H.muted)
+            T(state == "live" ? Dates.left((f.end_ms - clock + 59_999) / 60_000) : state == "ended" ? "Ended \(Dates.t(f.end_time)). Good time to tidy your notes." : "Starts " + Dates.relative((f.start_ms - clock + 59_999) / 60_000), 12, H.muted)
                 .padding(.top, 6)
             HStack(spacing: 8) {
                 HButton(session.isEmpty ? "Start today's note" : "Open today's note", icon: "square.and.pencil", primary: true) {
@@ -93,7 +93,7 @@ struct NowView: View {
             T(store.courses.isEmpty ? "Welcome to Hourglass" : "Nothing on right now", 20, bold: true)
             Group {
                 if let nx = st.next {
-                    T("Next: \(nx.title), \(Dates.short(nx.date)) at \(nx.start_time) (\(Dates.relative((nx.start_ms - clock) / 60_000)))", 13, H.muted)
+                    T("Next: \(nx.title), \(Dates.short(nx.date)) at \(Dates.t(nx.start_time)) (\(Dates.relative((nx.start_ms - clock) / 60_000)))", 13, H.muted)
                 } else if store.courses.isEmpty {
                     T("Add your courses and their weekly times. During each lecture its notes open right here.", 13, H.muted)
                 } else {
@@ -119,17 +119,17 @@ struct TimelineRow: View {
         let color = Color(hex: o.color)
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 0) { T(o.start_time, 14, bold: true); T(o.end_time, 11, H.faint) }.frame(width: 52, alignment: .leading)
-            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 3, height: 34)
+            Rectangle().fill(color).frame(width: 3, height: 34)
             VStack(alignment: .leading, spacing: 1) {
                 T(o.title, 14, lines: 1)
                 T([o.location.map { String($0.components(separatedBy: " · ")[0]) }, kindLabel(o.kind), o.code].compactMap { $0 }.joined(separator: " · "), 12, H.muted, lines: 1)
             }
             Spacer()
-            if live { Circle().fill(H.accent).frame(width: 8, height: 8) }
+            if live { Rectangle().fill(H.accent).frame(width: 8, height: 8) }
         }
         .padding(10)
         .background(live ? color.opacity(0.14) : .clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Rectangle())
         .opacity(past ? 0.5 : 1)
         .contentShape(Rectangle())
     }
@@ -156,8 +156,8 @@ struct TimerCard: View {
             if big {
                 GeometryReader { g in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(H.surface2)
-                        Capsule().fill(H.accent).frame(width: g.size.width * min(1, max(0, Double(remain) / Double(max(1, t.duration_s)))))
+                        Rectangle().fill(H.surface2)
+                        Rectangle().fill(H.accent).frame(width: g.size.width * min(1, max(0, Double(remain) / Double(max(1, t.duration_s)))))
                     }
                 }
                 .frame(height: 4).padding(.top, 8)
@@ -166,58 +166,95 @@ struct TimerCard: View {
     }
 }
 
-// MARK: - Week (agenda)
+// MARK: - Schedule
 
-struct WeekView: View {
+// Week: each day's merged blocks. Month: a grid; tap a day for its list.
+struct ScheduleView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var sheets: Sheets
-    @State private var weekStart = Dates.weekStart(Dates.today())
-    @State private var selected = Dates.today()
+    @State private var month = false
+    @State private var anchor = Dates.today()
+    @State private var picked = Dates.today()
 
     var body: some View {
         Ticking { clock in
-            let occ = store.occurrences(weekStart, Dates.add(weekStart, 6))
             let today = Dates.today()
+            let ws = Dates.displayWeekStart(anchor)
+            let first = String(anchor.prefix(8)) + "01"
+            let gridStart = Dates.displayWeekStart(first)
+            let (y, m, _) = Dates.parts(first)
+            let lastDay = Dates.format(Dates.utc.date(from: DateComponents(year: y, month: m + 1, day: 0))!)
+            let weeks = (Dates.between(gridStart, lastDay) + 7) / 7
+            let from = month ? gridStart : ws
+            let to = month ? Dates.add(gridStart, weeks * 7 - 1) : Dates.add(ws, 6)
+            let blocks = merge(store.occurrences(from, to))
             ZStack(alignment: .bottomTrailing) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 0) {
-                            T(Dates.longMonths[Dates.parts(weekStart).1 - 1] + " \(Dates.parts(weekStart).0)", 13, H.muted)
-                            T("\(Dates.parts(weekStart).2) – " + String(Dates.short(Dates.add(weekStart, 6)).dropFirst(4)), 24, bold: true)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            T(month ? "\(Dates.longMonths[m - 1]) \(y)" : "\(Dates.short(ws)) – \(Dates.short(Dates.add(ws, 6)))", 18, bold: true, lines: 1)
+                            Spacer()
+                            Button { anchor = month ? Dates.format(Dates.utc.date(from: DateComponents(year: y, month: m - 1, day: 1))!) : Dates.add(ws, -7) } label: { Image(systemName: "chevron.left").foregroundStyle(H.fg).frame(width: 36, height: 36) }
+                            Button { anchor = month ? Dates.format(Dates.utc.date(from: DateComponents(year: y, month: m + 1, day: 1))!) : Dates.add(ws, 7) } label: { Image(systemName: "chevron.right").foregroundStyle(H.fg).frame(width: 36, height: 36) }
                         }
-                        Spacer()
-                        Button { weekStart = Dates.add(weekStart, -7); selected = weekStart } label: { Image(systemName: "chevron.left").foregroundStyle(H.fg).frame(width: 36, height: 36) }
-                        Button { weekStart = Dates.weekStart(today); selected = today } label: { T("Today", 12, H.muted) }
-                        Button { weekStart = Dates.add(weekStart, 7); selected = weekStart } label: { Image(systemName: "chevron.right").foregroundStyle(H.fg).frame(width: 36, height: 36) }
-                    }
-                    HStack(spacing: 6) {
-                        ForEach(0..<7, id: \.self) { i in
-                            let d = Dates.add(weekStart, i)
-                            let isSel = d == selected, isToday = d == today
-                            let dots = occ.filter { $0.date == d }.prefix(4)
-                            Button { selected = d } label: {
-                                VStack(spacing: 2) {
-                                    T(String(Dates.weekdays[i].prefix(1)), 11, isToday ? H.accent : H.muted, bold: true)
-                                    T("\(Dates.parts(d).2)", 16, isToday ? H.accent : H.fg, bold: true)
-                                    HStack(spacing: 2) { ForEach(Array(dots), id: \.id) { o in Circle().fill(Color(hex: o.color)).frame(width: 4, height: 4) } }.frame(height: 6)
-                                }
-                                .frame(maxWidth: .infinity).padding(.vertical, 8)
-                                .background(isSel ? H.surface2 : .clear).clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSel ? H.faint : H.border, lineWidth: 1))
+                        HStack(spacing: 6) {
+                            tab("Week", !month) { month = false }
+                            tab("Month", month) { month = true }
+                            Spacer()
+                            tab("Today", false) { anchor = today; picked = today }
+                        }
+                        if !month {
+                            ForEach(0..<7, id: \.self) { i in
+                                let d = Dates.add(ws, i)
+                                let list = blocks.filter { $0.first.date == d }
+                                SectionLabel(text: (d == today ? "Today · " : "") + Dates.long(d))
+                                if list.isEmpty { T("Free", 13, H.faint) }
+                                ForEach(list) { b in BlockCard(b: b, clock: clock).onTapGesture { sheets.session = b.first } }
                             }
-                            .buttonStyle(.plain)
+                        } else {
+                            HStack(spacing: 0) { ForEach(0..<7, id: \.self) { i in T(String(Dates.weekdays[Dates.iso(Dates.add(gridStart, i)) - 1].prefix(2)), 12, H.muted).frame(maxWidth: .infinity) } }
+                            VStack(spacing: 0) {
+                                ForEach(0..<weeks, id: \.self) { w in
+                                    HStack(spacing: 0) {
+                                        ForEach(0..<7, id: \.self) { i in
+                                            let d = Dates.add(gridStart, w * 7 + i)
+                                            let list = blocks.filter { $0.first.date == d }
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                T("\(Dates.parts(d).2)", 14, d == today ? H.accent : d.hasPrefix(String(first.prefix(7))) ? H.fg : H.faint, bold: d == today)
+                                                ForEach(list.prefix(3)) { b in Rectangle().fill(Color(hex: b.first.color)).frame(height: 5) }
+                                                Spacer(minLength: 0)
+                                            }
+                                            .padding(4)
+                                            .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
+                                            .background(d == picked ? H.surface2 : .clear)
+                                            .overlay(Rectangle().stroke(H.border, lineWidth: 0.5))
+                                            .contentShape(Rectangle())
+                                            .onTapGesture { picked = d }
+                                        }
+                                    }
+                                }
+                            }
+                            let list = blocks.filter { $0.first.date == picked }
+                            SectionLabel(text: (picked == today ? "Today · " : "") + Dates.long(picked))
+                            if list.isEmpty { T("Free", 13, H.faint) }
+                            ForEach(list) { b in BlockCard(b: b, clock: clock).onTapGesture { sheets.session = b.first } }
                         }
+                        Spacer(minLength: 72)
                     }
-                    SectionLabel(text: Dates.long(selected))
-                    let list = occ.filter { $0.date == selected }
-                    if list.isEmpty { T("Nothing scheduled.", 12, H.faint) }
-                    ScrollView { VStack(spacing: 4) { ForEach(list) { o in TimelineRow(o: o, clock: clock).onTapGesture { sheets.session = o } } } }
+                    .padding(.horizontal, 16).padding(.vertical, 8)
                 }
-                .padding(.horizontal, 18).padding(.vertical, 12)
-                Fab(icon: "plus") { sheets.event = EventDraft(date: selected) }
+                Fab(icon: "plus") { sheets.event = EventDraft(date: month ? picked : today) }
             }
             .background(H.bg)
         }
+    }
+
+    private func tab(_ label: String, _ on: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            T(label, 14, on ? H.fg : H.muted, bold: on).padding(.horizontal, 14).padding(.vertical, 8)
+                .background(on ? H.surface2 : .clear).overlay(Rectangle().stroke(on ? H.faint : H.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -227,7 +264,7 @@ struct Fab: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon).font(.system(size: 20, weight: .semibold)).foregroundStyle(.white)
-                .frame(width: 56, height: 56).background(H.accent).clipShape(RoundedRectangle(cornerRadius: 16))
+                .frame(width: 56, height: 56).background(H.accent)
         }
         .padding(18)
     }
@@ -243,8 +280,11 @@ struct NotesView: View {
     @Binding var path: [Route]
     @State var sel = "all"
     @State private var query = ""
-    @State private var newDate: String? = Dates.today()
+    @State private var searching = false
+    @State private var info = false
 
+    // Notes first: one line of controls, folder chips, then the notes. Course
+    // details fold away behind the info button; + writes a note dated today.
     var body: some View {
         let course = store.courses.first { $0.id == sel }
         let list = store.notes.filter { sel == "all" ? true : sel == "inbox" ? $0.course_id == nil : $0.course_id == sel }.sorted { $0.updated_at > $1.updated_at }
@@ -253,100 +293,81 @@ struct NotesView: View {
         let undated = list.filter { $0.pinned == 0 && $0.session_date == nil }
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    T("Notes", 26, bold: true)
-                    Field(label: "Search all notes", text: $query)
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        T(course?.name ?? (sel == "inbox" ? "No course" : "Notes"), 20, bold: true, lines: 1)
+                        Spacer()
+                        if course != nil { Button { info.toggle() } label: { Image(systemName: "info.circle").foregroundStyle(info ? H.fg : H.muted).frame(width: 36, height: 36) } }
+                        Button { searching.toggle(); if !searching { query = "" } } label: { Image(systemName: searching ? "xmark" : "magnifyingglass").foregroundStyle(H.muted).frame(width: 36, height: 36) }
+                    }
+                    if searching { Field(label: "Search all notes", text: $query) }
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             folder("All", nil, "all")
-                            folder("No course", nil, "inbox")
                             ForEach(store.courses) { c in folder(c.code ?? c.name, Color(hex: c.color), c.id) }
+                            folder("No course", nil, "inbox")
+                            Button { sheets.course = CourseDraft() } label: { T("+ Course", 14, H.muted).padding(.horizontal, 12).padding(.vertical, 8).overlay(Rectangle().stroke(H.border, lineWidth: 1)) }.buttonStyle(.plain)
                         }
                     }
-                    if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    if let c = course, info { details(c) }
+                    if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty {
                         let words = query.lowercased().split(separator: " ").map(String.init)
                         let hits = store.notes.filter { n in let h = (n.title + "\n" + n.body).lowercased(); return words.allSatisfy { h.contains($0) } }
                         SectionLabel(text: "\(hits.count) result\(hits.count == 1 ? "" : "s")")
                         ForEach(hits) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
                     } else {
-                        if let c = course { header(c) }
-                        Card {
-                            T(course.map { "New note for \($0.code ?? $0.name)" } ?? "New note", 14, H.muted)
-                            HStack(alignment: .bottom) {
-                                DateField(label: "Date", value: $newDate)
-                                Spacer()
-                                HButton("Write", icon: "square.and.pencil", primary: true) {
-                                    path.append(.note(store.addNote(course: course?.id, date: newDate ?? Dates.today(), event: nil).id))
-                                }
-                            }
-                            .padding(.top, 8)
-                        }
                         if !pinned.isEmpty {
-                            SectionLabel(text: "Pinned", detail: "\(pinned.count)")
+                            SectionLabel(text: "Pinned")
                             ForEach(pinned) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
                         }
                         ForEach(dates, id: \.self) { d in
-                            let day = list.filter { $0.pinned == 0 && $0.session_date == d }
-                            SectionLabel(text: (d == Dates.today() ? "Today · " : "") + Dates.long(d), detail: "\(day.count) note\(day.count == 1 ? "" : "s")")
-                            ForEach(day) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
+                            SectionLabel(text: (d == Dates.today() ? "Today · " : "") + Dates.short(d))
+                            ForEach(list.filter { $0.pinned == 0 && $0.session_date == d }) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
                         }
                         if !undated.isEmpty {
-                            SectionLabel(text: "No date", detail: "\(undated.count)")
+                            SectionLabel(text: "No date")
                             ForEach(undated) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
                         }
-                        if list.isEmpty { T("No notes yet.", 13, H.faint) }
+                        if list.isEmpty { T("No notes yet. Tap + to write one.", 14, H.faint).padding(.top, 12) }
                     }
-                    Spacer(minLength: 72)
+                    Spacer(minLength: 80)
                 }
-                .padding(.horizontal, 18).padding(.vertical, 12)
+                .padding(.horizontal, 16).padding(.vertical, 8)
             }
-            Fab(icon: "plus") { sheets.course = CourseDraft() }
+            Fab(icon: "square.and.pencil") { path.append(.note(store.addNote(course: course?.id, date: Dates.today(), event: nil).id)) }
         }
         .background(H.bg)
+    }
+
+    private func details(_ c: Course) -> some View {
+        Card(stripe: Color(hex: c.color)) {
+            HStack {
+                T([c.code, c.location].compactMap { $0 }.joined(separator: "  ·  "), 14, bold: true)
+                Spacer()
+                Button { sheets.course = CourseDraft(course: c) } label: { Image(systemName: "pencil").foregroundStyle(H.muted) }
+            }
+            ForEach((c.teacher ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }, id: \.self) { t in T(t, 13, H.muted) }
+            ForEach(store.events.filter { $0.course_id == c.id }) { e in
+                T("\(kindLabel(e.kind))  \(Dates.range(e.start_time, e.end_time))  \(repeatText(e))", 13, lines: 1)
+                    .padding(.vertical, 3).onTapGesture { sheets.event = EventDraft(event: e) }
+            }
+        }
     }
 
     private func folder(_ label: String, _ swatch: Color?, _ key: String) -> some View {
         let on = sel == key
         return Button { sel = key } label: {
             HStack(spacing: 8) {
-                if let swatch { RoundedRectangle(cornerRadius: 2).fill(swatch).frame(width: 10, height: 10) }
+                if let swatch { Rectangle().fill(swatch).frame(width: 10, height: 10) }
                 T(label, 14, on ? H.fg : H.muted, bold: on)
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(on ? H.surface2 : .clear).clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? H.faint : H.border, lineWidth: 1))
+            .background(on ? H.surface2 : .clear).clipShape(Rectangle())
+            .overlay(Rectangle().stroke(on ? H.faint : H.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func header(_ c: Course) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            RoundedRectangle(cornerRadius: 3).fill(Color(hex: c.color)).frame(width: 5, height: 48)
-            VStack(alignment: .leading, spacing: 2) {
-                T(c.name, 22, bold: true)
-                T([c.code, c.location].compactMap { $0 }.joined(separator: "  ·  "), 14, H.muted)
-            }
-            Spacer()
-            Button { sheets.course = CourseDraft(course: c) } label: { Image(systemName: "pencil").foregroundStyle(H.muted) }
-        }
-        let teachers = (c.teacher ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        if !teachers.isEmpty {
-            SectionLabel(text: "Lecturers")
-            ForEach(teachers, id: \.self) { t in Label { T(t, 14) } icon: { Image(systemName: "person").foregroundStyle(H.muted) } }
-        }
-        SectionLabel(text: "Weekly times")
-        ForEach(store.events.filter { $0.course_id == c.id }) { e in
-            Card {
-                HStack(spacing: 10) {
-                    Chip(text: kindLabel(e.kind), tint: Color(hex: c.color))
-                    T("\(e.start_time)–\(e.end_time)", 15, bold: true)
-                    T(repeatText(e), 13, H.muted, lines: 1)
-                }
-            }
-            .onTapGesture { sheets.event = EventDraft(event: e) }
-        }
-    }
 }
 
 func repeatText(_ e: Event) -> String {
@@ -380,13 +401,13 @@ struct TimeView: View {
                             let next = item.1
                             Card {
                                 HStack(spacing: 12) {
-                                    T(a.time ?? "-\(a.lead_minutes ?? 0)′", 28, bold: true).frame(width: 100, alignment: .leading)
+                                    T(a.time.map(Dates.t) ?? next.map(Dates.clock) ?? "—", 24, bold: true).frame(width: 128, alignment: .leading)
                                     VStack(alignment: .leading, spacing: 2) {
                                         T(a.label, 14, lines: 1)
                                         T(alarmSub(a) + (next.map { "  ·  next " + Dates.short(Dates.dayOf($0)) + " " + Dates.clock($0) } ?? ""), 11, H.muted, lines: 2)
                                     }
                                     Spacer()
-                                    Toggle("", isOn: Binding(get: { a.enabled == 1 }, set: { store.setEnabled(a, $0) })).labelsHidden().tint(H.accent)
+                                    SquareToggle(on: a.enabled == 1) { store.setEnabled(a, $0) }
                                     Button { store.removeAlarm(a) } label: { Image(systemName: "trash").foregroundStyle(H.muted) }
                                 }
                             }
@@ -403,7 +424,7 @@ struct TimeView: View {
     }
 
     private func alarmSub(_ a: Alarm) -> String {
-        if a.lead_course_id != nil || a.lead_event_id != nil { return "\(a.lead_minutes ?? 10) min before every session" }
+        if a.lead_course_id != nil || a.lead_event_id != nil { return "Rings \(a.lead_minutes ?? 10) min before the lecture" }
         if let d = a.date { return "Once, " + Dates.short(d) }
         if a.days.isEmpty { return "Every day" }
         if a.days == [1, 2, 3, 4, 5] { return "Weekdays" }

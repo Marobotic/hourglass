@@ -19,8 +19,9 @@ final class Store: ObservableObject {
     @Published var syncError: String?
     @Published var lastSync: Int64 = 0
 
-    @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? ""
-    @Published var token: String = UserDefaults.standard.string(forKey: "token") ?? ""
+    // Built in at build time; not user-editable.
+    let server: String = (Bundle.main.object(forInfoDictionaryKey: "HourglassServer") as? String) ?? ""
+    private var token: String { Keychain.get("sync-token") ?? "" }
     private var cursor: Int64 { get { Int64(UserDefaults.standard.integer(forKey: "cursor")) } set { UserDefaults.standard.set(Int(newValue), forKey: "cursor") } }
 
     private let file: URL = {
@@ -31,13 +32,16 @@ final class Store: ObservableObject {
     private var syncTask: Task<Void, Never>?
 
     init() {
-        // A fresh install points at the server baked in at build time (CI secret).
-        if server.isEmpty, let s = Bundle.main.object(forInfoDictionaryKey: "HourglassServer") as? String, s.hasPrefix("http") {
-            server = s
-            token = Bundle.main.object(forInfoDictionaryKey: "HourglassToken") as? String ?? ""
-            UserDefaults.standard.set(server, forKey: "server")
-            UserDefaults.standard.set(token, forKey: "token")
+        // The token ships scrambled in Info.plist and is moved into the Keychain
+        // on first launch; older builds kept it in UserDefaults.
+        if Keychain.get("sync-token") == nil {
+            let legacy = UserDefaults.standard.string(forKey: "token") ?? ""
+            let shipped = Keychain.unscramble(Bundle.main.object(forInfoDictionaryKey: "HourglassTokenX") as? String ?? "")
+            let t = legacy.isEmpty ? shipped : legacy
+            if !t.isEmpty { Keychain.set("sync-token", t) }
         }
+        UserDefaults.standard.removeObject(forKey: "token")
+        UserDefaults.standard.removeObject(forKey: "server")
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
     }
 
@@ -158,19 +162,33 @@ final class Store: ObservableObject {
 
     // MARK: sync
 
-    func configure(server: String, token: String) {
-        self.server = server.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        self.token = token.trimmingCharacters(in: .whitespaces)
-        UserDefaults.standard.set(self.server, forKey: "server")
-        UserDefaults.standard.set(self.token, forKey: "token")
-        cursor = 0
-        Task { await sync() }
+    // Lecture reminders: one alarm per lecture, N minutes before (0 = off). Synced.
+    var reminderMin: Int {
+        let lectures = Set(events.filter { $0.kind == "lecture" }.map(\.id))
+        return alarms.first { $0.lead_event_id.map(lectures.contains) == true && $0.enabled == 1 }?.lead_minutes ?? 0
+    }
+
+    func setLectureReminders(_ minutes: Int) {
+        for ev in events where ev.kind == "lecture" {
+            let c = course(ev.course_id)
+            let room = (ev.location ?? c?.location ?? "").components(separatedBy: " · ")[0]
+            let m = Dates.minutes(ev.start_time), h = m / 60
+            let time = String(format: "%ld:%02ld %@", (h + 11) % 12 + 1, m % 60, h < 12 ? "AM" : "PM")
+            let label = [c?.name ?? ev.title, "lecture \(time)", room].filter { !$0.isEmpty }.joined(separator: " · ")
+            if var a = db.alarms.first(where: { $0.lead_event_id == ev.id && $0.deleted == 0 }) {
+                a.enabled = minutes > 0 ? 1 : 0
+                if minutes > 0 { a.lead_minutes = minutes; a.label = label }
+                save(a)
+            } else if minutes > 0 {
+                save(Alarm(label: label, days: [], lead_event_id: ev.id, lead_minutes: minutes))
+            }
+        }
     }
 
     private struct Pull: Decodable { let rev: Int64; let changes: DB }
 
     func sync() async {
-        guard !server.isEmpty, let base = URL(string: server) else { syncState = "local"; return }
+        guard !server.isEmpty, !token.isEmpty, let base = URL(string: server) else { syncState = "local"; return }
         do {
             var dirty = DB()
             dirty.courses = db.courses.filter { $0.dirty == 1 }
@@ -259,7 +277,8 @@ enum Notifications {
         for t in store.timers where t.state == "running" {
             if let at = t.ends_at, at > now { fires.append(("timer-\(t.id)", at, "Timer done", t.label)) }
         }
-        for a in store.alarms {
+        let alarmKit = AlarmKitScheduler.active
+        for a in store.alarms where !alarmKit {
             var from = now
             for k in 0..<10 {
                 guard let at = Alarms.next(a, store.db.courses, store.db.events, from), at < now + 8 * 86_400_000 else { break }
@@ -271,11 +290,12 @@ enum Notifications {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.sound = .default
+            content.sound = UserDefaults.standard.object(forKey: "sound") as? Bool == false ? nil : .default
             content.interruptionLevel = .timeSensitive
             let date = Date(timeIntervalSince1970: Double(at) / 1000)
             let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
             center.add(UNNotificationRequest(identifier: id, content: content, trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
         }
+        AlarmKitScheduler.reschedule(store)
     }
 }

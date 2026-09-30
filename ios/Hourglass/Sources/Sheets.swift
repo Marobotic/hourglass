@@ -124,8 +124,8 @@ struct CourseSheet: View {
             T("COLOUR", 11, H.muted)
             HStack(spacing: 8) {
                 ForEach(PALETTE, id: \.self) { p in
-                    RoundedRectangle(cornerRadius: 6).fill(Color(hex: p)).frame(width: 32, height: 32)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(p == color ? H.fg : .clear, lineWidth: 2))
+                    Rectangle().fill(Color(hex: p)).frame(width: 32, height: 32)
+                        .overlay(Rectangle().stroke(p == color ? H.fg : .clear, lineWidth: 2))
                         .onTapGesture { color = p }
                 }
             }
@@ -198,7 +198,7 @@ struct SessionSheet: View {
 
     var body: some View {
         let notes = occ.course_id.map { cid in store.courseNotes(cid).filter { $0.session_date == occ.date } } ?? []
-        SheetFrame(title: occ.title, subtitle: "\(Dates.long(occ.date))  ·  \(occ.start_time)–\(occ.end_time)" + (occ.location.map { "  ·  \($0)" } ?? "")) {
+        SheetFrame(title: occ.title, subtitle: "\(Dates.long(occ.date))  ·  \(Dates.range(occ.start_time, occ.end_time))" + (occ.location.map { "  ·  \($0)" } ?? "")) {
             HStack(spacing: 8) {
                 Chip(text: kindLabel(occ.kind), tint: Color(hex: occ.color))
                 if let c = occ.code { Chip(text: c, tint: H.muted) }
@@ -275,23 +275,30 @@ struct AlarmSheet: View {
 
 // MARK: - Settings
 
+// Preferences for this phone. The sync server is built in; nothing to type.
 struct SettingsSheet: View {
     @EnvironmentObject var store: Store
-    @Environment(\.dismiss) private var dismiss
-    @State private var server = ""
-    @State private var token = ""
+    @AppStorage("time_format") private var timeFormat = "12h"
+    @AppStorage("week_start") private var weekStart = 6
+    @AppStorage("sound") private var sound = true
 
     var body: some View {
-        SheetFrame(title: "Sync", subtitle: "Everything works offline. Connect a server to share with your computer and AIs.") {
-            Field(label: "Server URL", text: $server, placeholder: "https://marobotic.dev/hourglass")
-            Field(label: "Token", text: $token)
-            T(store.syncState == "synced" ? "Synced \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline: \(store.syncError ?? "server unreachable"). Changes are saved on the phone." : "Not connected. Data stays on this phone.", 12, H.muted)
+        SheetFrame(title: "Settings") {
+            T("CLOCK", 11, H.muted)
+            Segmented(options: [("12-hour", "12h"), ("24-hour", "24h")], value: $timeFormat)
+            T("WEEK STARTS ON", 11, H.muted)
+            Segmented(options: [("Saturday", 6), ("Sunday", 7), ("Monday", 1)], value: $weekStart)
+            T("LECTURE REMINDERS", 11, H.muted)
+            Segmented(options: [("Off", 0), ("10 min", 10), ("15 min", 15), ("30 min", 30), ("60 min", 60)],
+                      value: Binding(get: { store.reminderMin }, set: { store.setLectureReminders($0) }))
+            T(AlarmKitScheduler.active ? "Rings like an alarm before every lecture, even with the app closed." : "Rings before every lecture, even with the app closed. Allow Alarms for Hourglass in Settings to ring through silent mode.", 12, H.faint)
+            HStack { T("Alarm sound", 15); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
+            SectionLabel(text: "Sync")
             HStack {
-                HButton("Sync now") { Task { await store.sync() } }
+                T(store.syncState == "synced" ? "Synced with marobotic.dev · \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline. Changes are kept on the phone and sent later." : "Not connected", 13, H.muted)
                 Spacer()
-                HButton("Save", primary: true) { store.configure(server: server, token: token); dismiss() }
+                HButton("Sync now") { Task { await store.sync() } }
             }
         }
-        .onAppear { server = store.server; token = store.token }
     }
 }

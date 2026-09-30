@@ -144,8 +144,22 @@ enum Dates {
     }
     static func clock(_ ms: Int64) -> String {
         let c = local.dateComponents([.hour, .minute], from: Date(timeIntervalSince1970: Double(ms) / 1000))
-        return String(format: "%02ld:%02ld", c.hour!, c.minute!)
+        return t(String(format: "%02ld:%02ld", c.hour!, c.minute!))
     }
+    // Display format for stored "HH:MM" times (12-hour unless the user picks 24).
+    static var h24: Bool { UserDefaults.standard.string(forKey: "time_format") == "24h" }
+    static var firstDay: Int { let v = UserDefaults.standard.integer(forKey: "week_start"); return v == 0 ? 6 : v }
+    static func t(_ hhmm: String) -> String {
+        let m = minutes(hhmm), h = m / 60
+        if h24 { return String(format: "%02ld:%02ld", h, m % 60) }
+        return String(format: "%ld:%02ld %@", (h + 11) % 12 + 1, m % 60, h < 12 ? "AM" : "PM")
+    }
+    static func range(_ a: String, _ b: String) -> String {
+        if h24 { return t(a) + " – " + t(b) }
+        let same = (minutes(a) < 720) == (minutes(b) < 720)
+        return (same ? String(t(a).dropLast(3)) : t(a)) + " – " + t(b)
+    }
+    static func displayWeekStart(_ s: String) -> String { add(s, -((iso(s) - firstDay + 7) % 7)) }
     static func short(_ s: String) -> String {
         let (_, m, d) = parts(s)
         return "\(weekdays[iso(s) - 1]) \(d) \(months[m - 1])"
@@ -189,6 +203,30 @@ struct Occ: Identifiable, Hashable {
 
     func state(_ now: Int64) -> String { now < start_ms ? "upcoming" : now < end_ms ? "live" : "ended" }
     func progress(_ now: Int64) -> Double { min(1, max(0, Double(now - start_ms) / Double(end_ms - start_ms))) }
+}
+
+// A course's back-to-back sessions on one day shown as one block.
+struct Block: Identifiable {
+    var parts: [Occ]
+    var id: String { parts[0].id }
+    var first: Occ { parts[0] }
+    var start: String { parts[0].start_time }
+    var end: String { parts[parts.count - 1].end_time }
+    var startMs: Int64 { parts[0].start_ms }
+    var endMs: Int64 { parts[parts.count - 1].end_ms }
+}
+
+func merge(_ list: [Occ]) -> [Block] {
+    var out: [Block] = []
+    for o in list.sorted(by: { $0.start_ms < $1.start_ms }) {
+        if let last = out.last?.parts.last, last.course_id != nil, last.course_id == o.course_id, last.date == o.date,
+           (0...10).contains((o.start_ms - last.end_ms) / 60_000) {
+            out[out.count - 1].parts.append(o)
+        } else {
+            out.append(Block(parts: [o]))
+        }
+    }
+    return out
 }
 
 enum Recurrence {

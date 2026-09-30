@@ -10,7 +10,7 @@ struct HourglassApp: App {
             RootView()
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
-                .onAppear { Notifications.requestPermission(); Notifications.reschedule(store) }
+                .onAppear { Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
                 .task { while !Task.isCancelled { await store.sync(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
         }
         .onChange(of: phase) { _, p in if p == .active { Task { await store.sync() } } }
@@ -41,7 +41,7 @@ struct RootView: View {
         NavigationStack(path: $path) {
             TabView(selection: $tab) {
                 NowView(path: $path).tabItem { Label("Now", systemImage: "clock") }.tag(0)
-                WeekView().tabItem { Label("Week", systemImage: "calendar") }.tag(1)
+                ScheduleView().tabItem { Label("Schedule", systemImage: "calendar") }.tag(1)
                 NotesView(path: $path).tabItem { Label("Notes", systemImage: "note.text") }.tag(2)
                 TimeView().tabItem { Label("Time", systemImage: "hourglass") }.tag(3)
             }
@@ -52,7 +52,7 @@ struct RootView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
-                        Circle().fill(store.syncState == "synced" ? H.teal : store.syncState == "offline" ? H.orange : H.faint).frame(width: 8, height: 8)
+                        Rectangle().fill(store.syncState == "synced" ? H.teal : store.syncState == "offline" ? H.orange : H.faint).frame(width: 8, height: 8)
                         Button { sheets.settings = true } label: { Image(systemName: "gearshape").foregroundStyle(H.muted) }
                     }
                 }
