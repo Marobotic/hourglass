@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# hourglass-cli: call Hourglass actions from a shell (for agents without MCP, and scripts).
+#   hourglass-cli now
+#   hourglass-cli <action> '<json args>'      e.g. hourglass-cli add_note '{"course":"Algorithms","body":"..."}'
+#   hourglass-cli actions                     list actions and their arguments
+set -euo pipefail
+PORT="${HOURGLASS_PORT:-8931}"
+TOKEN="$(cat "${HOURGLASS_CONFIG:-$HOME/.config/hourglass}/token")"
+BASE="http://127.0.0.1:$PORT"
+curl -sf -m 1 "$BASE/health" >/dev/null 2>&1 || systemctl --user start hourglassd.service 2>/dev/null || true
+case "${1:-now}" in
+  now) curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/now" ;;
+  actions) curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/actions" ;;
+  -h|--help|help) sed -n '2,5p' "$0" ;;
+  *) curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "${2:-{\}}" "$BASE/api/actions/$1" ;;
+esac
+echo

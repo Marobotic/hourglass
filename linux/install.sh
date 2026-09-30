@@ -10,6 +10,7 @@ UNITS="$HOME/.config/systemd/user"
 mkdir -p "$BIN" "$APPS" "$UNITS" "$ICONS/scalable/apps"
 
 ln -sf "$ROOT/bin/hourglass" "$BIN/hourglass"
+ln -sf "$ROOT/bin/hourglass-cli" "$BIN/hourglass-cli"
 sed -e "s|@ROOT@|$ROOT|g" -e "s|@NODE@|$NODE|g" "$ROOT/share/hourglassd.service" > "$UNITS/hourglassd.service"
 sed -e "s|@ROOT@|$ROOT|g" "$ROOT/share/hourglass.desktop" > "$APPS/hourglass.desktop"
 cp "$ROOT/../assets/hourglass.svg" "$ICONS/scalable/apps/hourglass.svg"
