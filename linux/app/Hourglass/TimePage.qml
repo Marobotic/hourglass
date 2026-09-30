@@ -22,7 +22,7 @@ Item {
     property var newDays: [1, 2, 3, 4, 5]
 
     function alarmSubtitle(a) {
-        if (a.lead_course_id || a.lead_event_id) return a.lead_minutes + " min before every session";
+        if (a.lead_course_id || a.lead_event_id) return "Rings " + a.lead_minutes + " min before the lecture";
         if (a.date) return "Once, " + Util.shortDate(a.date);
         if (!a.days || !a.days.length) return "Every day";
         if (a.days.length === 5 && a.days.every(d => d <= 5)) return "Weekdays";
@@ -178,9 +178,9 @@ Item {
                             anchors { fill: parent; leftMargin: 18; rightMargin: 12 }
                             spacing: 16
                             Text {
-                                text: modelData.time ? Util.t(modelData.time) : ("-" + modelData.lead_minutes + " min")
+                                text: modelData.time ? Util.t(modelData.time) : modelData.next_at ? Util.clock(modelData.next_at) : "—"
                                 color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold
-                                Layout.preferredWidth: 100
+                                Layout.preferredWidth: 150
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true

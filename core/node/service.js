@@ -300,7 +300,9 @@ export class Service {
     for (const ev of lectures) {
       const c = ev.course_id ? this.store.get("courses", ev.course_id) : null;
       const room = (ev.location || c?.location || "").split(" · ")[0];
-      const label = `${c?.name || ev.title || "Lecture"} in ${minutes} min${room ? ` · ${room}` : ""}`;
+      // Says what starts and when, e.g. "Typography (1) · lecture 8:30 AM · B729";
+      // the alarm itself rings `minutes` earlier.
+      const label = [c?.name || ev.title || "Lecture", `lecture ${to12h(ev.start_time)}`, room].filter(Boolean).join(" · ");
       const a = existing.find((x) => x.lead_event_id === ev.id);
       if (a) out.push(this.store.upsert("alarms", { id: a.id, enabled: on ? 1 : 0, ...(on ? { lead_minutes: Number(minutes), label } : {}) }));
       else if (on) out.push(this.store.upsert("alarms", { label, lead_event_id: ev.id, lead_minutes: Number(minutes), enabled: 1, days: [] }));
@@ -372,6 +374,11 @@ export class Service {
     if (lecture_reminder_min !== undefined) this.setLectureReminders({ minutes: Number(lecture_reminder_min) || 0 });
     return this.settings();
   }
+}
+
+function to12h(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
 }
 
 function localWeekday(date) {
