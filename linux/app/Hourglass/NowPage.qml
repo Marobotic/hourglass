@@ -19,8 +19,7 @@ Item {
             width: parent.width
             columns: page.wide ? 2 : 1
             columnSpacing: 28
-            rowSpacing: 28
-            anchors.margins: 32
+            rowSpacing: page.wide ? 28 : 22
 
             // ---------------- left: header, hero, notes ----------------
             ColumnLayout {
@@ -28,6 +27,7 @@ Item {
                 Layout.alignment: Qt.AlignTop
                 Layout.margins: 32
                 Layout.rightMargin: page.wide ? 0 : 32
+                Layout.bottomMargin: page.wide ? 32 : 0
                 spacing: 22
 
                 // Header
@@ -202,7 +202,6 @@ Item {
                         NoteCard { required property var modelData; Layout.fillWidth: true; note: modelData; onClicked: page.app.openNote(modelData) }
                     }
                 }
-                Item { Layout.preferredHeight: 8 }
             }
 
             // ---------------- right: today, timers, alarms ----------------
