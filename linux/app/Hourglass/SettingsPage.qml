@@ -65,6 +65,15 @@ Item {
                     }
                 }
                 SettingRow {
+                    label: "Ringtone"
+                    hint: "Tap Play to hear it once."
+                    Repeater {
+                        model: ["classic", "klaxon", "siren", "digital", "rising", "bell"]
+                        Btn { required property string modelData; text: modelData.charAt(0).toUpperCase() + modelData.slice(1); kind: "subtle"; active: (page.s.ringtone || "classic") === modelData; onClicked: page.set({ ringtone: modelData }) }
+                    }
+                    Btn { icon: "play"; text: "Play"; compact: true; onClicked: Api.post("/api/ring/preview?name=" + (page.s.ringtone || "classic"), {}) }
+                }
+                SettingRow {
                     label: "Alarm sound"
                     hint: "Off: alarms still show a notification."
                     Btn { text: "On"; kind: "subtle"; active: page.s.sound !== false; onClicked: page.set({ sound: true }) }

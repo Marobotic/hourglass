@@ -23,6 +23,9 @@ export class Store {
          deleted INTEGER NOT NULL DEFAULT 0, rev INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0)`,
       );
       this.db.exec(`CREATE INDEX IF NOT EXISTS ${t}_rev ON ${t}(rev)`);
+      // Columns added after a table was created.
+      const have = new Set(this.db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name));
+      for (const [n, type] of TABLES[t]) if (!have.has(n)) this.db.exec(`ALTER TABLE ${t} ADD COLUMN ${n} ${sqlType[type]}`);
     }
     this.listeners = new Set();
   }
@@ -115,30 +118,51 @@ export class Store {
     this.db.prepare(`UPDATE ${table} SET dirty = 0 WHERE id = ? AND updated_at = ?`).run(id, updatedAt);
   }
 
+  // Record the server rev a pushed row got (the base for the next edit).
+  setRev(table, id, rev) {
+    this.db.prepare(`UPDATE ${table} SET rev = ? WHERE id = ?`).run(rev, id);
+  }
+
   onChange(fn) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
 }
 
-// Server side of sync: apply rows pushed by a client. A note whose body both
-// sides changed since the client last saw it is kept as a conflict copy.
+// Next free numbered title: "Untitled" -> "Untitled 01", "Hello" -> "Hello 02".
+export function numberedTitle(store, base, { startAt = 1 } = {}) {
+  const stem = String(base || "Untitled").replace(/\s+\d{2,}$/, "").trim() || "Untitled";
+  const taken = new Set(store.all("notes").map((n) => n.title));
+  for (let i = startAt; ; i++) {
+    const t = `${stem} ${String(i).padStart(2, "0")}`;
+    if (!taken.has(t)) return t;
+  }
+}
+
+// Server side of sync: apply rows pushed by a client, and report the rev each
+// accepted row got so the client can base its next edit on it. A note whose
+// body both sides changed since the client last synced is kept as a numbered
+// copy ("Title 02"), unless the losing side is empty.
 export function applyPush(store, changes) {
-  const result = { applied: 0, conflicts: 0 };
+  const result = { applied: 0, conflicts: 0, revs: {} };
+  const note = (t, row) => ((result.revs[t] ??= {})[row.id] = row.rev);
   for (const t of TABLE_NAMES) {
     for (const incoming of changes?.[t] ?? []) {
       const row = normalize(t, incoming);
       const existing = store.get(t, row.id);
       const baseRev = Number(incoming.base_rev ?? incoming.rev ?? 0);
-      if (t === "notes" && existing && !existing.deleted && !row.deleted && existing.rev > baseRev && existing.body !== row.body) {
+      if (t === "notes" && existing && !existing.deleted && !row.deleted && existing.rev > baseRev && existing.body !== row.body && existing.body && row.body) {
         const loser = existing.updated_at > row.updated_at ? row : existing;
         const winner = loser === row ? existing : row;
-        if (winner === row) store.write(t, row);
-        store.write(t, normalize(t, { ...loser, id: undefined, title: `${loser.title || "Note"} (conflict copy)`, updated_at: Date.now() }));
+        if (winner === row) note(t, store.write(t, row).row);
+        else note(t, existing);
+        store.write(t, normalize(t, { ...loser, id: undefined, title: numberedTitle(store, loser.title, { startAt: 2 }), updated_at: Date.now() }));
         result.conflicts++;
         continue;
       }
-      if (store.write(t, row).applied) result.applied++;
+      const w = store.write(t, row);
+      if (w.applied) result.applied++;
+      note(t, w.row);
     }
   }
   return result;

@@ -249,6 +249,13 @@ export const TOOLS = [
     run: (s, a) => s.addClock(a),
   },
   {
+    name: "set_home_zone",
+    title: "Set the app's time zone",
+    description: "Make a city the time zone Hourglass uses on every device (schedule, now, alarms). zone: IANA id or city name, or clock_id.",
+    input: { zone: z.string().optional(), clock_id: z.string().optional() },
+    run: (s, a) => s.setHomeZone(a),
+  },
+  {
     name: "remove_clock",
     title: "Remove world clock",
     description: "Remove a city from the world clock.",

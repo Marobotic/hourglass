@@ -49,7 +49,10 @@ test("course with schedule, then now surfaces the session", async () => {
   assert.equal(events[1].start_date, "2026-09-03");
   const note = await action("add_note", { course: "algo", body: "Big-O recap" });
   assert.equal(note.session_date, "2026-09-29");
-  assert.equal(note.title, "Tue 29 Sep");
+  assert.equal(note.title, "Untitled 01");
+  const second = await action("add_note", { course: "algo", body: "more" });
+  assert.equal(second.title, "Untitled 02");
+  await action("delete_note", { note_id: second.id });
   const now = await action("whats_now");
   assert.equal(now.active.title, "Algorithms");
   assert.equal(now.active.state, "live");
@@ -92,7 +95,7 @@ test("sync: pull, push, note conflict copy", async () => {
   assert.equal(push.body.conflicts, 1);
   const notes = (await call("GET", "/api/notes")).body;
   assert.deepEqual(notes.map((n) => n.body).sort(), ["client edit", "server edit"]);
-  assert.ok(notes.some((n) => n.title.endsWith("(conflict copy)")));
+  assert.ok(notes.some((n) => /\s0[2-9]$/.test(n.title)), notes.map((n) => n.title).join());
 });
 
 test("ical feed", async () => {
@@ -133,4 +136,14 @@ test("world clock: add by city, home zone, day and difference", async () => {
   const bad = await call("POST", "/api/actions/add_clock", { zone: "america" });
   assert.equal(bad.status, 400);
   store.setMeta("tz", TZ);
+});
+
+test("sync: pushed rows get their rev back, so the next edit is not a conflict", async () => {
+  const id = crypto.randomUUID();
+  const row = { id, title: "Draft", body: "one", updated_at: Date.now() };
+  const first = await call("POST", "/api/sync", { changes: { notes: [row] } });
+  const rev = first.body.revs.notes[id];
+  assert.ok(rev > 0);
+  const second = await call("POST", "/api/sync", { changes: { notes: [{ ...row, body: "two", updated_at: Date.now() + 5, base_rev: rev }] } });
+  assert.equal(second.body.conflicts, 0);
 });

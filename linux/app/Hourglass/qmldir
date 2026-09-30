@@ -17,6 +17,7 @@ Modal 1.0 Modal.qml
 NowPage 1.0 NowPage.qml
 SchedulePage 1.0 SchedulePage.qml
 SettingsPage 1.0 SettingsPage.qml
+WorldClockPage 1.0 WorldClockPage.qml
 NotesPage 1.0 NotesPage.qml
 FolderRow 1.0 FolderRow.qml
 TimePage 1.0 TimePage.qml

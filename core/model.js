@@ -46,6 +46,7 @@ export const TABLES = {
     ["zone", "text", ""],
     ["label", "text", ""],
     ["position", "int", 0],
+    ["home", "bool", 0], // the app's time zone, on every device
   ],
   timers: [
     ["label", "text", ""],

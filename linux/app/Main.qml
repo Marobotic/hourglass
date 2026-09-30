@@ -58,8 +58,9 @@ ApplicationWindow {
         { name: "Now", icon: "now", key: "1" },
         { name: "Schedule", icon: "week", key: "2" },
         { name: "Notes", icon: "note", key: "3" },
-        { name: "Time", icon: "time", key: "4" },
-        { name: "Settings", icon: "gear", key: "5" }
+        { name: "Alarms", icon: "bell", key: "4" },
+        { name: "World clock", icon: "globe", key: "5" },
+        { name: "Settings", icon: "gear", key: "6" }
     ]
 
     Component.onCompleted: {
@@ -134,6 +135,7 @@ ApplicationWindow {
     Shortcut { sequences: ["3"]; onActivated: app.go(2) }
     Shortcut { sequences: ["4"]; onActivated: app.go(3) }
     Shortcut { sequences: ["5"]; onActivated: app.go(4) }
+    Shortcut { sequences: ["6"]; onActivated: app.go(5) }
     Shortcut {
         sequences: ["n", "Ctrl+N"]
         onActivated: {
@@ -143,6 +145,7 @@ ApplicationWindow {
         }
     }
     Shortcut { sequences: ["t"]; onActivated: app.go(3) }
+    Shortcut { sequences: ["w"]; onActivated: app.go(4) }
     Shortcut { sequences: ["Escape"]; enabled: app.editingNote !== null; onActivated: app.editingNote = null }
 
     // --- layout ----------------------------------------------------------------------
@@ -196,8 +199,7 @@ ApplicationWindow {
                                     color: parent.parent.current ? Theme.fg : Theme.muted
                                 }
                                 Text { visible: !app.narrow; Layout.fillWidth: true; text: modelData.name; color: parent.parent.current ? Theme.fg : Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
-                                Text { visible: !app.narrow; text: modelData.key; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
-                            }
+                                }
                             MouseArea { id: navMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.go(index) }
                         }
                     }
@@ -256,6 +258,7 @@ ApplicationWindow {
                     SchedulePage { app: app }
                     NotesPage { app: app }
                     TimePage { app: app }
+                    WorldClockPage { app: app }
                     SettingsPage { app: app }
                 }
 

@@ -12,6 +12,8 @@ Item {
     property var occ: []
     readonly property int gutter: 88
     readonly property int hourH: 72
+    // Half a 1080p screen is too narrow for seven columns: list the days instead.
+    readonly property bool compact: width < 1050
 
     // week range
     readonly property string ws: anchor ? Util.weekStart(anchor) : ""
@@ -83,9 +85,58 @@ Item {
             Btn { kind: "primary"; icon: "plus"; text: "Event"; onClicked: page.app.editEvent(null) }
         }
 
+        // ------------------------------------------------------ week, narrow
+        ScrollView {
+            visible: page.mode === "week" && page.compact
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            contentWidth: availableWidth
+            clip: true
+            ColumnLayout {
+                width: parent.width
+                spacing: 8
+                Repeater {
+                    model: 7
+                    ColumnLayout {
+                        required property int index
+                        readonly property string date: page.ws ? Util.addDays(page.ws, index) : ""
+                        readonly property var items: date ? page.dayItems(date) : []
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Section { Layout.fillWidth: true; Layout.topMargin: 8; text: (parent.date === page.today ? "Today · " : "") + (parent.date ? Util.longDate(parent.date) : "") }
+                        Text { visible: parent.items.length === 0; text: "Free"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 14 }
+                        Repeater {
+                            model: parent.items
+                            Card {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                implicitHeight: agendaCol.implicitHeight + 26
+                                stripe: modelData.color
+                                hoverable: true
+                                onClicked: page.app.openSession(modelData.parts[0])
+                                ColumnLayout {
+                                    id: agendaCol
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 13; leftMargin: 18 }
+                                    spacing: 3
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text { Layout.fillWidth: true; text: Util.range(modelData.start_time, modelData.end_time); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Bold }
+                                        Text { text: modelData.location || ""; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Bold }
+                                    }
+                                    Text { Layout.fillWidth: true; text: modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15 }
+                                    Text { Layout.fillWidth: true; text: [Util.partsText(modelData), Util.lead(modelData.teacher)].filter(x => x).join("   ·   "); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
+                                }
+                            }
+                        }
+                    }
+                }
+                Item { Layout.preferredHeight: 20 }
+            }
+        }
+
         // ------------------------------------------------------------- week
         ColumnLayout {
-            visible: page.mode === "week"
+            visible: page.mode === "week" && !page.compact
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0

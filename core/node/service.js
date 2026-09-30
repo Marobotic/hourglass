@@ -6,6 +6,7 @@ import { expand } from "../recurrence.js";
 import { resolveNow, sessionNotes } from "../now.js";
 import { nextAlarm } from "../alarms.js";
 import { PALETTE, parseWeekday } from "../model.js";
+import { numberedTitle } from "./store.js";
 
 export class Service {
   constructor(store, { clock = () => Date.now() } = {}) {
@@ -13,8 +14,10 @@ export class Service {
     this.clock = clock;
   }
 
+  // The home clock (synced) sets the app's time zone everywhere; before one
+  // exists, the device setting or the system zone.
   get tz() {
-    return this.store.meta("tz") || systemZone();
+    return this.store.all("clocks").find((c) => c.home)?.zone || this.store.meta("tz") || systemZone();
   }
 
   today() {
@@ -206,7 +209,7 @@ export class Service {
       course_id: c?.id ?? null,
       event_id: eventId,
       session_date: session,
-      title: title || (session ? shortLabel(session) : "Untitled"),
+      title: title || numberedTitle(this.store, "Untitled"),
       body,
       pinned,
     });
@@ -375,7 +378,7 @@ export class Service {
         return {
           ...c,
           label: c.label || cityOf(c.zone),
-          home: c.zone === home,
+          home: !!c.home || c.zone === home,
           offset_min: off,
           diff_min: diff,
           date: p.date,
@@ -392,6 +395,16 @@ export class Service {
     if (existing) return existing;
     const pos = Math.max(-1, ...this.store.all("clocks").map((c) => c.position)) + 1;
     return this.store.upsert("clocks", { zone: z, label: label || cityOf(z), position: pos });
+  }
+
+  // Make one clock the app's time zone (all devices follow it).
+  setHomeZone({ zone, clock_id }) {
+    const target = clock_id ? this.row("clocks", clock_id) : this.addClock({ zone });
+    for (const c of this.store.all("clocks")) {
+      if (c.id === target.id && !c.home) this.store.upsert("clocks", { id: c.id, home: 1 });
+      else if (c.id !== target.id && c.home) this.store.upsert("clocks", { id: c.id, home: 0 });
+    }
+    return this.listClocks();
   }
 
   removeClock({ clock_id }) {
@@ -424,11 +437,13 @@ export class Service {
       time_format: this.store.meta("time_format") || "12h",
       week_start: this.store.meta("week_start") || 6, // ISO weekday; 6 = Saturday
       sound: this.store.meta("sound") ?? true,
+      ringtone: this.store.meta("ringtone") || "classic",
       lecture_reminder_min: this.lectureReminderMin(),
     };
   }
 
-  setSettings({ tz, time_format, week_start, sound, lecture_reminder_min }) {
+  setSettings({ tz, time_format, week_start, sound, lecture_reminder_min, ringtone }) {
+    if (typeof ringtone === "string" && /^[a-z]+$/.test(ringtone)) this.store.setMeta("ringtone", ringtone);
     if (tz) {
       Intl.DateTimeFormat(undefined, { timeZone: tz });
       this.store.setMeta("tz", tz);
