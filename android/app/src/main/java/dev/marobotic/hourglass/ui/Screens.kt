@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -82,7 +83,7 @@ fun NoteRow(n: JSONObject, course: JSONObject? = null, onClick: () -> Unit) {
                 tint = if (n.optInt("pinned") == 1) HColors.gold else HColors.muted, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(8.dp))
             T(n.optString("title").ifBlank { "Untitled" }, 15, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
-            if (course != null) T(course.str("code") ?: course.optString("name"), 12, hex(course.optString("color")), maxLines = 1)
+            if (course != null) T(course.optString("name"), 12, hex(course.optString("color")), maxLines = 1)
         }
         val preview = n.optString("body").replace(Regex("[#>*_`\\[\\]-]"), "").replace(Regex("\\s+"), " ").trim()
         if (preview.isNotEmpty()) { Spacer(Modifier.height(4.dp)); T(preview, 13, HColors.muted, maxLines = 2) }
@@ -115,7 +116,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
         val cs = repo.store.all("courses"); val es = repo.events()
         repo.alarms().mapNotNull { a -> dev.marobotic.hourglass.core.Alarms.next(a, cs, es, clock, zone)?.let { a to it } }.minByOrNull { it.second }
     }
-    val timer = remember(version) { repo.timers().firstOrNull() }
+    val timer = remember(version) { repo.timers().firstOrNull { it.optString("state") != "idle" } }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item {
             Column {
@@ -163,7 +164,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                         ) {
                             if (n.optString("title").isNotBlank()) T(n.optString("title"), 14, bold = true, maxLines = 1)
                             if (n.optString("body").isNotBlank()) T(n.optString("body"), 13, HColors.fg.copy(alpha = 0.85f), maxLines = 4)
-                            T(listOfNotNull(c?.let { it.str("code") ?: it.optString("name") }, if (n.str("session_date") == today.toString()) "Today" else n.str("session_date")?.let { "Last class · " + Dates.short(java.time.LocalDate.parse(it)) }).joinToString("  ·  "), 11, tint ?: HColors.muted, bold = true, maxLines = 1)
+                            T(listOfNotNull(c?.let { it.optString("name") }, if (n.str("session_date") == today.toString()) "Today" else n.str("session_date")?.let { "Last class · " + Dates.short(java.time.LocalDate.parse(it)) }).joinToString("  ·  "), 11, tint ?: HColors.muted, bold = true, maxLines = 1)
                         }
                     }
                     if (pair.size == 1) Spacer(Modifier.weight(1f))
@@ -180,7 +181,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                     }
                 }
                 timer?.let { t ->
-                    val remain = if (t.optString("state") == "running") (t.optLong("ends_at") - clock + 999) / 1000 else t.optLong("remaining_s")
+                    val remain = repo.timerLeft(t, clock)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Pause, null, tint = HColors.accent, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
                         T(Dates.countdown(remain) + "  " + t.optString("label"), 14)
@@ -264,7 +265,7 @@ fun TimelineRow(o: Occ, clock: Long, onClick: () -> Unit) {
 @Composable
 fun TimerCard(nav: Nav, t: JSONObject, clock: Long, big: Boolean = false) {
     val running = t.optString("state") == "running"
-    val remain = if (running) (t.optLong("ends_at") - clock + 999) / 1000 else t.optLong("remaining_s")
+    val remain = nav.repo.timerLeft(t, clock)
     HCard(Modifier.fillMaxWidth(), stripe = if (big) (if (running) HColors.accent else HColors.faint) else null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -299,21 +300,13 @@ fun repeatText(e: JSONObject): String {
 @Composable
 fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
-    val timers = remember(version) { repo.timers() }
     val alarms = remember(version, clock / 60_000) {
         val courses = repo.store.all("courses"); val events = repo.events()
         repo.alarms().map { it to dev.marobotic.hourglass.core.Alarms.next(it, courses, events, clock, repo.zone) }.sortedBy { it.second ?: Long.MAX_VALUE }
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { T("Timers", 24, bold = true) }
-            item {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (m in listOf(1, 5, 10, 15, 25, 45, 50, 90)) HButton("$m min") { repo.startTimer(m * 60, "") }
-                }
-            }
-            items(timers, key = { it.id }) { TimerCard(nav, it, clock, big = true) }
-            item { Spacer(Modifier.height(8.dp)); T("Alarms", 24, bold = true) }
+            item { T("Alarms", 24, bold = true) }
             if (alarms.isEmpty()) item { T("No alarms yet. Tap + to add one, at a time or before a course.", 13, HColors.muted) }
             items(alarms, key = { it.first.id }) { (a, next) ->
                 val on = a.optInt("enabled") == 1
@@ -343,6 +336,108 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     }
 }
 
+// Timers tab: the one that ends first, big; the others under it; a quick way
+// to start or schedule one; saved timers to start again. Every device rings.
+@Composable
+fun TimersScreen(nav: Nav, version: Int, clock: Long) {
+    val repo = nav.repo
+    val all = remember(version) { repo.timers() }
+    val active = all.filter { it.optString("state") == "running" || it.optString("state") == "paused" }
+        .sortedWith(compareBy<JSONObject> { it.optString("state") == "paused" }.thenBy { it.optLong("ends_at") })
+    val saved = all.filter { it.optString("state") == "idle" }
+    var focus by rememberSaveable { mutableStateOf<String?>(null) }
+    val hero = active.firstOrNull { it.id == focus } ?: active.firstOrNull()
+    var minutes by rememberSaveable { mutableStateOf("") }
+    var label by rememberSaveable { mutableStateOf("") }
+    var at by rememberSaveable { mutableStateOf<String?>(null) }
+    var keep by rememberSaveable { mutableStateOf(false) }
+    fun start(m: Double) {
+        val startAt = at?.let {
+            val now = java.time.ZonedDateTime.now(repo.zone)
+            var d = now.toLocalDate().atTime(Dates.time(it)).atZone(repo.zone)
+            if (!d.isAfter(now)) d = d.plusDays(1)
+            d.toInstant().toEpochMilli()
+        }
+        repo.startTimer((m * 60).toInt(), label, keep, startAt)
+        label = ""; minutes = ""; at = null
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { T("Timers", 24, bold = true) }
+        item {
+            val running = hero?.optString("state") == "running"
+            val waiting = running && hero!!.optLong("start_at") > clock
+            val left = hero?.let { repo.timerLeft(it, clock) } ?: 0L
+            HCard(Modifier.fillMaxWidth(), stripe = if (hero == null) HColors.border else if (running) HColors.accent else HColors.gold) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    T(when { hero == null -> "NO TIMER RUNNING"; waiting -> "STARTS AT " + Dates.clock(hero!!.optLong("start_at"), repo.zone).uppercase(); running -> "RUNNING"; else -> "PAUSED" },
+                        12, if (running && !waiting) HColors.accent else HColors.muted, bold = true, spacing = 2.0)
+                    T(Dates.countdown(left), 64, if (running) HColors.fg else HColors.muted, bold = true)
+                    if (hero != null) {
+                        T(hero.optString("label"), 15, HColors.muted, maxLines = 1)
+                        Spacer(Modifier.height(12.dp))
+                        val frac = (left.toFloat() / maxOf(1, hero.optInt("duration_s"))).coerceIn(0f, 1f)
+                        Box(Modifier.fillMaxWidth().height(6.dp).background(HColors.surface2)) {
+                            Box(Modifier.fillMaxWidth(frac).fillMaxHeight().background(if (running) HColors.accent else HColors.gold))
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            HButton(if (running) "Pause" else "Resume", primary = true) { if (running) repo.pauseTimer(hero) else repo.resumeTimer(hero) }
+                            HButton("+1 min") { repo.addMinute(hero) }
+                            HButton(if (hero.optInt("persistent") == 1) "Reset" else "Stop") { repo.resetTimer(hero) }
+                        }
+                    } else T("Start one below, or ask an AI for one.", 13, HColors.faint)
+                }
+            }
+        }
+        val others = active.filter { it.id != hero?.id }
+        if (others.isNotEmpty()) item { Section("Also running") }
+        items(others, key = { "o" + it.id }) { t ->
+            val running = t.optString("state") == "running"
+            Row(Modifier.fillMaxWidth().clickable { focus = t.id }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                T(Dates.countdown(repo.timerLeft(t, clock)), 20, if (running) HColors.fg else HColors.muted, bold = true, modifier = Modifier.width(110.dp))
+                T(t.optString("label") + when { t.optLong("start_at") > clock -> "  ·  starts " + Dates.clock(t.optLong("start_at"), repo.zone); !running -> "  ·  paused"; else -> "" }, 13, HColors.muted, maxLines = 1, modifier = Modifier.weight(1f))
+                IconButton({ if (running) repo.pauseTimer(t) else repo.resumeTimer(t) }) { Icon(if (running) Icons.Outlined.Pause else Icons.Outlined.PlayArrow, null, tint = HColors.fg) }
+                IconButton({ repo.resetTimer(t) }) { Icon(Icons.Outlined.Close, null, tint = HColors.muted) }
+            }
+        }
+        item { Section("New timer") }
+        item {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (m in listOf(1, 5, 10, 15, 20, 25, 30, 45, 60, 90)) HButton(if (m < 60) "$m min" else "${m / 60} h" + if (m % 60 > 0) " ${m % 60}" else "") { start(m.toDouble()) }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Field(minutes, { minutes = it.filter { c -> c.isDigit() || c == '.' }.take(5) }, "Minutes", Modifier.weight(1f))
+                    Field(label, { label = it }, "Label", Modifier.weight(2f))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (at == null) HButton("Start later…") { at = "%02d:00".format((java.time.LocalTime.now(repo.zone).hour + 1) % 24) }
+                    else { TimeField(at!!, { at = it }, "START AT", Modifier.weight(1f)); IconButton({ at = null }) { Icon(Icons.Outlined.Close, null, tint = HColors.muted) } }
+                    if (at == null) Grow()
+                    HButton(if (at != null) "Schedule" else "Start", primary = true, enabled = (minutes.toDoubleOrNull() ?: 0.0) > 0) { start(minutes.toDouble()) }
+                }
+                Row(Modifier.clickable { keep = !keep }, verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(16.dp).background(if (keep) HColors.accent else Color.Transparent).border(1.dp, if (keep) HColors.accent else HColors.faint))
+                    Spacer(Modifier.width(10.dp))
+                    T("Keep it as a saved timer to use again", 13, HColors.muted)
+                }
+            }
+        }
+        if (saved.isNotEmpty()) item { Section("Saved timers") }
+        items(saved, key = { "s" + it.id }) { t ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                T(Dates.countdown(t.optLong("duration_s")), 20, bold = true, modifier = Modifier.width(110.dp))
+                T(t.optString("label"), 13, HColors.muted, maxLines = 1, modifier = Modifier.weight(1f))
+                HButton("Start", primary = true) { focus = t.id; repo.restartTimer(t) }
+                IconButton({ nav.sheets.confirm = Triple("Delete ${t.optString("label")}?", "The saved timer is removed from every device.") { repo.stopTimer(t.id) } }) { Icon(Icons.Outlined.Delete, null, tint = HColors.muted) }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
 // World clock tab: cities, and which one is the app's time zone (synced).
 @Composable
 fun ClockScreen(nav: Nav, version: Int, clock: Long) {
@@ -364,11 +459,19 @@ fun ClockScreen(nav: Nav, version: Int, clock: Long) {
         val q = query.trim().lowercase().replace(' ', '_')
         if (q.isNotEmpty()) {
             val hits = java.time.ZoneId.getAvailableZoneIds().filter { it.contains('/') && it.lowercase().contains(q) }.sorted().take(8)
-            items(hits, key = { "z$it" }) { z ->
-                val t = now.atZone(java.time.ZoneId.of(z))
-                Row(Modifier.fillMaxWidth().clickable { repo.addClock(z); query = "" }.padding(vertical = 10.dp)) {
-                    T(z.substringAfterLast('/').replace('_', ' '), 15, modifier = Modifier.weight(1f))
-                    T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 15, HColors.muted)
+            if (hits.isNotEmpty()) item {
+                // Matches drop down under the field.
+                Column(Modifier.fillMaxWidth().offset(y = (-10).dp).background(HColors.surface).border(1.dp, HColors.faint)) {
+                    hits.forEachIndexed { i, z ->
+                        val t = now.atZone(java.time.ZoneId.of(z))
+                        if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+                        Row(Modifier.fillMaxWidth().clickable { repo.addClock(z); query = "" }.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            T(z.substringAfterLast('/').replace('_', ' '), 15)
+                            Spacer(Modifier.width(8.dp))
+                            T(z.substringBefore('/').replace('_', ' '), 12, HColors.faint, modifier = Modifier.weight(1f))
+                            T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 15, HColors.muted)
+                        }
+                    }
                 }
             }
         }

@@ -114,6 +114,8 @@ struct HTimer: Codable, Identifiable, Hashable {
     var state: String = "running"
     var ends_at: Int64?
     var remaining_s: Int?
+    var persistent: Int? = 0 // saved timer: back to idle when it rings
+    var start_at: Int64?     // scheduled: counts down from here
     var updated_at: Int64 = 0
     var deleted: Int = 0
     var rev: Int64? = 0

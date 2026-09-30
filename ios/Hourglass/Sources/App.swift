@@ -32,6 +32,7 @@ struct EventDraft: Identifiable { let id = UUID(); var event: Event?; var date: 
 struct CourseDraft: Identifiable { let id = UUID(); var course: Course? }
 
 struct RootView: View {
+    static let tabs = [("Now", "clock"), ("Schedule", "calendar"), ("Notes", "note.text"), ("Alarms", "alarm"), ("Timers", "hourglass"), ("Clock", "globe")]
     @EnvironmentObject var store: Store
     @StateObject private var sheets = Sheets()
     @State private var path: [Route] = []
@@ -39,14 +40,37 @@ struct RootView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            TabView(selection: $tab) {
-                NowView(path: $path).tabItem { Label("Now", systemImage: "clock") }.tag(0)
-                ScheduleView().tabItem { Label("Schedule", systemImage: "calendar") }.tag(1)
-                NotesView(path: $path).tabItem { Label("Notes", systemImage: "note.text") }.tag(2)
-                TimeView().tabItem { Label("Alarms", systemImage: "alarm") }.tag(3)
-                ClockView().tabItem { Label("Clock", systemImage: "globe") }.tag(4)
+            // Six tabs: a square bar of our own (the system one folds the
+            // sixth into "More").
+            VStack(spacing: 0) {
+                Group {
+                    switch tab {
+                    case 0: NowView(path: $path)
+                    case 1: ScheduleView()
+                    case 2: NotesView(path: $path)
+                    case 3: TimeView()
+                    case 4: TimersView()
+                    default: ClockView()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                HStack(spacing: 0) {
+                    ForEach(Array(RootView.tabs.enumerated()), id: \.offset) { i, t in
+                        let on = tab == i
+                        Button { tab = i } label: {
+                            VStack(spacing: 4) {
+                                Rectangle().fill(on ? H.accent : .clear).frame(width: 28, height: 2)
+                                Image(systemName: t.1).font(.system(size: 18)).foregroundStyle(on ? H.fg : H.muted).frame(height: 22)
+                                Text(t.0).font(H.mono(10, bold: on)).foregroundStyle(on ? H.fg : H.muted).lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity).padding(.bottom, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .background(H.surface.ignoresSafeArea(edges: .bottom))
             }
-            .tint(H.fg)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     HStack(spacing: 10) { PixelLogo(cell: 2.6); T("Hourglass", 17, bold: true) }
@@ -59,8 +83,6 @@ struct RootView: View {
                 }
             }
             .toolbarBackground(H.bg, for: .navigationBar)
-            .toolbarBackground(H.surface, for: .tabBar)
-            .toolbarBackground(.visible, for: .tabBar)
             .navigationDestination(for: Route.self) { r in
                 switch r {
                 case .note(let id): NoteView(id: id)

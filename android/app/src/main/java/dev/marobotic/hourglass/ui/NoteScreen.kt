@@ -77,7 +77,7 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
         Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
             // Which course and day this note belongs to; changes save at once.
             androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
-                val options = listOf<Pair<String, String?>>("No course" to null) + repo.courses().map { (it.str("code") ?: it.optString("name")) to it.optString("id") }
+                val options = listOf<Pair<String, String?>>("No course" to null) + repo.courses().map { (it.optString("name")) to it.optString("id") }
                 items(options.size) { i ->
                     val (label, cid) = options[i]
                     val on = cid == live.str("course_id")

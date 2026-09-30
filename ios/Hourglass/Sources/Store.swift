@@ -293,13 +293,36 @@ final class Store: ObservableObject {
         n.deleted = 1; save(n)
     }
 
-    func startTimer(seconds: Int, label: String) {
-        save(HTimer(label: label.isEmpty ? (seconds % 60 == 0 ? "\(seconds / 60) min timer" : "\(seconds)s timer") : label,
-                    duration_s: seconds, state: "running", ends_at: nowMs() + Int64(seconds) * 1000))
+    // Timers: running (a future start_at means scheduled), paused, idle (a
+    // saved timer waiting to start) or done. Every device rings at ends_at.
+    func timerLeft(_ t: HTimer, _ now: Int64 = nowMs()) -> Int64 {
+        switch t.state {
+        case "running": return max(0, ((t.ends_at ?? 0) - max(now, t.start_at ?? 0) + 999) / 1000)
+        case "idle": return Int64(t.duration_s)
+        default: return Int64(t.remaining_s ?? 0)
+        }
     }
-    func pause(_ t: HTimer) { var t = t; t.remaining_s = Int(max(0, ((t.ends_at ?? 0) - nowMs() + 999) / 1000)); t.ends_at = nil; t.state = "paused"; save(t) }
-    func resume(_ t: HTimer) { var t = t; t.ends_at = nowMs() + Int64(t.remaining_s ?? 0) * 1000; t.remaining_s = nil; t.state = "running"; save(t) }
+    func startTimer(seconds: Int, label: String, persistent: Bool = false, startAt: Int64? = nil) {
+        let start = startAt.flatMap { $0 > nowMs() ? $0 : nil }
+        save(HTimer(label: label.isEmpty ? (seconds % 60 == 0 ? "\(seconds / 60) min timer" : "\(seconds)s timer") : label,
+                    duration_s: seconds, state: "running", ends_at: (start ?? nowMs()) + Int64(seconds) * 1000, persistent: persistent ? 1 : 0, start_at: start))
+    }
+    private func run(_ t: HTimer, _ secs: Int64) { var t = t; t.state = "running"; t.start_at = nil; t.remaining_s = nil; t.ends_at = nowMs() + secs * 1000; save(t) }
+    func pause(_ t: HTimer) { var t = t; t.remaining_s = Int(timerLeft(t)); t.ends_at = nil; t.start_at = nil; t.state = "paused"; save(t) }
+    func resume(_ t: HTimer) { run(t, Int64(t.remaining_s ?? 0)) }
+    func restart(_ t: HTimer) { run(t, Int64(t.duration_s)) }
+    func addMinute(_ t: HTimer) { var t = t; if t.state == "running" { t.ends_at = (t.ends_at ?? nowMs()) + 60_000 } else { t.remaining_s = (t.remaining_s ?? 0) + 60 }; save(t) }
+    private func finished(_ t: HTimer) -> HTimer {
+        var t = t
+        if t.persistent == 1 { t.state = "idle"; t.ends_at = nil; t.remaining_s = nil; t.start_at = nil } else { t.state = "done" }
+        return t
+    }
+    func reset(_ t: HTimer) { if t.persistent == 1 { save(finished(t)) } else { stop(t) } }
     func stop(_ t: HTimer) { var t = t; t.deleted = 1; save(t) }
+    // Timers that rang while the app was closed.
+    func sweepTimers() {
+        for t in db.timers where t.deleted == 0 && t.state == "running" && (t.ends_at ?? .max) < nowMs() - 2000 { save(finished(t)) }
+    }
 
     func addAlarm(label: String, time: String?, days: [Int], date: String?, leadCourse: String?, leadMinutes: Int?) {
         let lbl = label.isEmpty ? (leadCourse.flatMap { course($0)?.name }.map { "\($0) in \(leadMinutes ?? 10) min" } ?? "Alarm") : label
@@ -348,6 +371,7 @@ final class Store: ObservableObject {
     }
 
     func sync() async {
+        sweepTimers()
         guard !server.isEmpty, !token.isEmpty, let base = URL(string: server) else { syncState = "signed_out"; return }
         do {
             var dirty = DB()

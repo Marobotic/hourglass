@@ -4,7 +4,7 @@
 import { addDays, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
 import { expand } from "../recurrence.js";
 import { resolveNow, sessionNotes } from "../now.js";
-import { nextAlarm } from "../alarms.js";
+import { finishedTimer, nextAlarm } from "../alarms.js";
 import { BUILTIN_RINGTONES, PALETTE, parseWeekday } from "../model.js";
 import { numberedTitle } from "./store.js";
 
@@ -325,30 +325,61 @@ export class Service {
     return this.store
       .all("timers")
       .filter((t) => t.state !== "done")
-      .map((t) => ({ ...t, remaining_s: t.state === "running" ? Math.max(0, Math.ceil((t.ends_at - now) / 1000)) : t.remaining_s }));
+      .map((t) => ({
+        ...t,
+        scheduled: t.state === "running" && t.start_at > now,
+        remaining_s: t.state === "running" ? Math.max(0, Math.ceil((t.ends_at - Math.max(now, t.start_at ?? 0)) / 1000)) : t.state === "idle" ? t.duration_s : t.remaining_s,
+      }));
   }
 
-  startTimer({ minutes, seconds, label }) {
-    const duration = Math.round((Number(minutes) || 0) * 60 + (Number(seconds) || 0));
-    if (duration <= 0) throw new Error("give minutes or seconds");
+  // at: "HH:MM" today (tomorrow if past) in the user's zone, or epoch ms.
+  startTimer({ minutes, seconds, hours, label, persistent, at }) {
+    const duration = Math.round((Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60 + (Number(seconds) || 0));
+    if (duration <= 0) throw new Error("give hours, minutes or seconds");
+    const now = this.clock();
+    let start = now;
+    if (at !== undefined && at !== null && at !== "") {
+      if (typeof at === "number") start = at;
+      else {
+        const hm = parseTime(String(at));
+        if (hm === null) throw new Error("at must be HH:MM");
+        const p = localParts(now, this.tz);
+        start = now + (hm - p.minutes) * 60000 - p.seconds * 1000;
+        if (start <= now) start += 86400000;
+      }
+    }
     return this.store.upsert("timers", {
       label: label || `${fmtDuration(duration)} timer`,
       duration_s: duration,
       state: "running",
-      ends_at: this.clock() + duration * 1000,
+      start_at: start > now ? start : null,
+      ends_at: start + duration * 1000,
       remaining_s: null,
+      persistent: persistent ? 1 : 0,
     });
   }
 
-  // action: pause | resume | stop | done
+  // A saved timer that rings as soon as it is created is pointless; this
+  // makes one without starting it.
+  saveTimer({ minutes, seconds, hours, label }) {
+    const duration = Math.round((Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60 + (Number(seconds) || 0));
+    if (duration <= 0) throw new Error("give hours, minutes or seconds");
+    return this.store.upsert("timers", { label: label || `${fmtDuration(duration)} timer`, duration_s: duration, state: "idle", ends_at: null, remaining_s: null, persistent: 1 });
+  }
+
+  // action: start | pause | resume | restart | reset | add_minute | stop | done
   updateTimer({ timer_id, action }) {
     const t = this.row("timers", timer_id);
     const now = this.clock();
+    const run = (secs) => this.store.upsert("timers", { id: t.id, state: "running", start_at: null, ends_at: now + secs * 1000, remaining_s: null });
     if (action === "pause" && t.state === "running")
-      return this.store.upsert("timers", { id: t.id, state: "paused", remaining_s: Math.max(0, Math.ceil((t.ends_at - now) / 1000)), ends_at: null });
-    if (action === "resume" && t.state === "paused")
-      return this.store.upsert("timers", { id: t.id, state: "running", ends_at: now + t.remaining_s * 1000, remaining_s: null });
-    if (action === "done") return this.store.upsert("timers", { id: t.id, state: "done" });
+      return this.store.upsert("timers", { id: t.id, state: "paused", remaining_s: Math.max(0, Math.ceil((t.ends_at - Math.max(now, t.start_at ?? 0)) / 1000)), ends_at: null, start_at: null });
+    if (action === "resume" && t.state === "paused") return run(t.remaining_s);
+    if (action === "start" || action === "restart") return run(t.duration_s);
+    if (action === "add_minute" && t.state === "running") return this.store.upsert("timers", { id: t.id, ends_at: t.ends_at + 60000 });
+    if (action === "add_minute" && t.state === "paused") return this.store.upsert("timers", { id: t.id, remaining_s: t.remaining_s + 60 });
+    if (action === "reset") return t.persistent ? this.store.upsert("timers", { id: t.id, ...finishedTimer(t) }) : this.store.remove("timers", t.id);
+    if (action === "done") return this.store.upsert("timers", { id: t.id, ...finishedTimer(t) });
     if (action === "stop") return this.store.remove("timers", t.id);
     throw new Error(`cannot ${action} a ${t.state} timer`);
   }

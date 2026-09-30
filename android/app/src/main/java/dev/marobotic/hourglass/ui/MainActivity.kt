@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.StickyNote2
 import androidx.compose.material.icons.outlined.HourglassBottom
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
@@ -119,7 +120,8 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
 
     BackHandler(enabled = nav.stack.isNotEmpty() || nav.tab != 0) { if (nav.stack.isNotEmpty()) nav.pop() else nav.tab = 0 }
 
-    if (repo.needsSignIn) { LoginScreen(repo); return }
+    // Read version so signing in (a store change) leaves this page.
+    if (version >= 0 && repo.needsSignIn) { LoginScreen(repo); return }
 
     Box(Modifier.fillMaxSize().background(HColors.bg)) {
         val top = nav.stack.lastOrNull()
@@ -152,12 +154,13 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                         1 -> ScheduleScreen(nav, version, clock)
                         2 -> NotesScreen(nav, version)
                         3 -> TimeScreen(nav, version, clock)
+                        4 -> TimersScreen(nav, version, clock)
                         else -> ClockScreen(nav, version, clock)
                     }
                 }
                 // Square tab bar (Material's has a pill indicator).
                 Row(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
-                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Alarms" to Icons.Outlined.Alarm, "Clock" to Icons.Outlined.Public)
+                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Alarms" to Icons.Outlined.Alarm, "Timers" to Icons.Outlined.HourglassEmpty, "Clock" to Icons.Outlined.Public)
                     for ((i, it) in items.withIndex()) {
                         val on = nav.tab == i
                         Column(
@@ -167,7 +170,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                             Box(Modifier.width(28.dp).height(2.dp).background(if (on) HColors.accent else androidx.compose.ui.graphics.Color.Transparent))
                             Spacer(Modifier.height(6.dp))
                             Icon(it.second, it.first, tint = if (on) HColors.fg else HColors.muted)
-                            T(it.first, 12, if (on) HColors.fg else HColors.muted, bold = on)
+                            T(it.first, 11, if (on) HColors.fg else HColors.muted, bold = on, maxLines = 1)
                         }
                     }
                 }

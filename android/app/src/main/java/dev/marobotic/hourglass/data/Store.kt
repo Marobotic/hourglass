@@ -21,7 +21,7 @@ class Store(private val file: File) {
             "notes" to mapOf("course_id" to null, "event_id" to null, "session_date" to null, "title" to "", "body" to "", "pinned" to 0),
             "alarms" to mapOf("label" to "", "time" to null, "days" to JSONArray(), "date" to null, "lead_event_id" to null, "lead_course_id" to null, "lead_minutes" to null, "enabled" to 1),
             "clocks" to mapOf("zone" to "", "label" to "", "position" to 0, "home" to 0),
-            "timers" to mapOf("label" to "", "duration_s" to 0, "state" to "running", "ends_at" to null, "remaining_s" to null),
+            "timers" to mapOf("label" to "", "duration_s" to 0, "state" to "running", "ends_at" to null, "remaining_s" to null, "persistent" to 0, "start_at" to null),
             "ringtones" to mapOf("name" to "", "kind" to "upload", "artist" to null, "song_id" to null, "duration_s" to 0),
             "prefs" to mapOf("value" to null),
         )

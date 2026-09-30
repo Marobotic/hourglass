@@ -51,9 +51,11 @@ export const TABLES = {
   timers: [
     ["label", "text", ""],
     ["duration_s", "int", 0],
-    ["state", "text", "running"],
+    ["state", "text", "running"], // running | paused | idle (saved, not running) | done
     ["ends_at", "int", null],
     ["remaining_s", "int", null],
+    ["persistent", "bool", 0], // saved timer: back to idle when it finishes
+    ["start_at", "int", null], // scheduled: counts down from here (ends_at = start_at + duration)
   ],
   // Alarm sounds of the account: uploaded files and songs from Omarchy Music.
   // The audio (a 30 s WAV) lives on the server: GET /api/ringtones/<id>/audio.

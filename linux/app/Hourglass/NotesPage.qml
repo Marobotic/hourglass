@@ -93,7 +93,7 @@ Item {
                                 anchors.centerIn: parent
                                 spacing: 8
                                 Rectangle { width: 10; height: 10; color: modelData.color }
-                                Text { text: modelData.code || modelData.name; color: parent.parent.on ? Theme.fg : Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                                Text { text: modelData.name; color: parent.parent.on ? Theme.fg : Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                             }
                             MouseArea { id: chipMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.sel = modelData.id }
                         }
@@ -128,7 +128,7 @@ Item {
                     border.color: takeMouse.containsMouse ? Theme.faint : Theme.border
                     RowLayout {
                         anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
-                        Text { Layout.fillWidth: true; text: page.course ? "Take a note for " + (page.course.code || page.course.name) + "…" : "Take a note…"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
+                        Text { Layout.fillWidth: true; text: page.course ? "Take a note for " + page.course.name + "…" : "Take a note…"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
                         Icon { name: "note"; size: 15; color: Theme.muted }
                     }
                     MouseArea { id: takeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.newNote() }
@@ -181,7 +181,7 @@ Item {
                                     RowLayout {
                                         visible: (!!card.c && page.sel === "all") || !!card.modelData.session_date
                                         spacing: 8
-                                        Text { visible: !!card.c && page.sel === "all"; text: card.c ? (card.c.code || card.c.name) : ""; color: card.c ? card.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold }
+                                        Text { visible: !!card.c && page.sel === "all"; text: card.c ? card.c.name : ""; color: card.c ? card.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold }
                                         Text { visible: !!card.modelData.session_date; text: card.modelData.session_date ? Util.shortDate(card.modelData.session_date) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
                                     }
                                 }

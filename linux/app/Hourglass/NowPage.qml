@@ -138,7 +138,7 @@ Item {
                             Text { Layout.fillWidth: true; visible: !!nc.modelData.title; text: nc.modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold }
                             Text { Layout.fillWidth: true; visible: !!nc.modelData.body; text: nc.modelData.body; textFormat: Text.PlainText; color: Theme.fg; opacity: 0.85; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight; font.family: Theme.sans; font.pixelSize: 14 }
                             Text {
-                                text: [nc.c ? (nc.c.code || nc.c.name) : "", nc.modelData.session_date === page.today ? "Today" : nc.modelData.session_date ? "Last class · " + Util.shortDate(nc.modelData.session_date) : ""].filter(x => x).join("  ·  ")
+                                text: [nc.c ? nc.c.name : "", nc.modelData.session_date === page.today ? "Today" : nc.modelData.session_date ? "Last class · " + Util.shortDate(nc.modelData.session_date) : ""].filter(x => x).join("  ·  ")
                                 color: nc.c ? nc.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold
                             }
                         }

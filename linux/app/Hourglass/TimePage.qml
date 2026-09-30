@@ -12,7 +12,6 @@ Item {
 
     function load() {
         Api.action("list_alarms", {}, d => { if (d) page.alarms = d; });
-        Api.action("list_timers", {}, d => { if (d) page.timers = d; });
     }
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
@@ -50,76 +49,7 @@ Item {
                 Layout.margins: 32
                 spacing: 18
 
-                Text { text: "Timers"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
-
-                // Quick start
-                Card {
-                    Layout.fillWidth: true
-                    implicitHeight: quick.implicitHeight + 32
-                    ColumnLayout {
-                        id: quick
-                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
-                        spacing: 12
-                        Flow {
-                            Layout.fillWidth: true
-                            spacing: 8
-                            Repeater {
-                                model: [1, 5, 10, 15, 25, 45, 50, 90]
-                                Btn { required property int modelData; text: modelData + " min"; onClicked: page.app.startTimer(modelData, labelField.text) }
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-                            Field { id: minField; Layout.preferredWidth: 110; placeholderText: "Minutes"; validator: DoubleValidator { bottom: 0.1; top: 1440 } }
-                            Field { id: labelField; Layout.fillWidth: true; placeholderText: "Label (optional)" }
-                            Btn {
-                                kind: "primary"; icon: "play"; text: "Start"
-                                enabled: minField.acceptableInput
-                                onClicked: { page.app.startTimer(Number(minField.text), labelField.text); minField.text = ""; }
-                            }
-                        }
-                    }
-                }
-
-                Repeater {
-                    model: page.timers
-                    Card {
-                        required property var modelData
-                        readonly property int remain: modelData.state === "running" ? Math.max(0, Math.ceil((modelData.ends_at - page.app.clock) / 1000)) : (modelData.remaining_s || 0)
-                        readonly property real frac: modelData.duration_s ? remain / modelData.duration_s : 0
-                        Layout.fillWidth: true
-                        implicitHeight: 92
-                        stripe: modelData.state === "running" ? Theme.accent : Theme.faint
-                        RowLayout {
-                            anchors { fill: parent; leftMargin: 22; rightMargin: 14 }
-                            spacing: 16
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 6
-                                RowLayout {
-                                    spacing: 12
-                                    Text { text: Util.countdown(parent.parent.parent.parent.remain); color: modelData.state === "paused" ? Theme.muted : Theme.fg; font.family: Theme.mono; font.pixelSize: 34; font.weight: Font.Bold }
-                                    Chip { visible: modelData.state === "paused"; text: "Paused"; tint: Theme.gold }
-                                }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-                                    Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        height: 4; radius: 0; color: Theme.surface2
-                                        Rectangle { width: parent.width * parent.parent.parent.parent.parent.frac; height: 4; radius: 0; color: Theme.accent; Behavior on width { NumberAnimation { duration: 900 } } }
-                                    }
-                                }
-                            }
-                            Btn { icon: modelData.state === "running" ? "pause" : "play"; text: modelData.state === "running" ? "Pause" : "Resume"; onClicked: Api.action("update_timer", { timer_id: modelData.id, action: modelData.state === "running" ? "pause" : "resume" }) }
-                            Btn { icon: "close"; kind: "subtle"; onClicked: Api.action("update_timer", { timer_id: modelData.id, action: "stop" }) }
-                        }
-                    }
-                }
-
-                Text { Layout.topMargin: 16; text: "Alarms"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
+                Text { text: "Alarms"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
 
                 // New alarm
                 Card {

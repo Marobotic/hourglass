@@ -222,16 +222,33 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     fun setAlarmEnabled(id: String, on: Boolean) = store.upsert("alarms", mapOf("enabled" to if (on) 1 else 0), id)
     fun removeAlarm(id: String) = store.remove("alarms", id)
 
-    fun startTimer(seconds: Int, label: String) = store.upsert("timers", mapOf(
-        "label" to label.ifBlank { if (seconds % 60 == 0) "${seconds / 60} min timer" else "${seconds}s timer" },
-        "duration_s" to seconds, "state" to "running", "ends_at" to System.currentTimeMillis() + seconds * 1000L, "remaining_s" to null,
-    ))
+    // Timers: running (a future start_at means scheduled), paused, idle (a
+    // saved timer waiting to be started) or done. Every device rings at ends_at.
+    fun timerLeft(t: JSONObject, now: Long = System.currentTimeMillis()): Long = when (t.optString("state")) {
+        "running" -> maxOf(0L, (t.optLong("ends_at") - maxOf(now, t.optLong("start_at")) + 999) / 1000)
+        "idle" -> t.optLong("duration_s")
+        else -> t.optLong("remaining_s")
+    }
 
-    fun pauseTimer(t: JSONObject) = store.upsert("timers", mapOf("state" to "paused", "ends_at" to null,
-        "remaining_s" to maxOf(0L, (t.optLong("ends_at") - System.currentTimeMillis() + 999) / 1000)), t.id)
-    fun resumeTimer(t: JSONObject) = store.upsert("timers", mapOf("state" to "running", "remaining_s" to null,
-        "ends_at" to System.currentTimeMillis() + t.optLong("remaining_s") * 1000), t.id)
-    fun finishTimer(id: String) = store.upsert("timers", mapOf("state" to "done"), id)
+    fun startTimer(seconds: Int, label: String, persistent: Boolean = false, startAt: Long? = null): JSONObject {
+        val start = startAt?.takeIf { it > System.currentTimeMillis() }
+        return store.upsert("timers", mapOf(
+            "label" to label.ifBlank { if (seconds % 60 == 0) "${seconds / 60} min timer" else "${seconds}s timer" },
+            "duration_s" to seconds, "state" to "running", "start_at" to start,
+            "ends_at" to (start ?: System.currentTimeMillis()) + seconds * 1000L, "remaining_s" to null, "persistent" to if (persistent) 1 else 0,
+        ))
+    }
+
+    private fun runTimer(t: JSONObject, secs: Long) = store.upsert("timers", mapOf("state" to "running", "start_at" to null, "remaining_s" to null,
+        "ends_at" to System.currentTimeMillis() + secs * 1000), t.id)
+    fun pauseTimer(t: JSONObject) = store.upsert("timers", mapOf("state" to "paused", "ends_at" to null, "start_at" to null, "remaining_s" to timerLeft(t)), t.id)
+    fun resumeTimer(t: JSONObject) = runTimer(t, t.optLong("remaining_s"))
+    fun restartTimer(t: JSONObject) = runTimer(t, t.optLong("duration_s"))
+    fun addMinute(t: JSONObject) = if (t.optString("state") == "running") store.upsert("timers", mapOf("ends_at" to t.optLong("ends_at") + 60_000), t.id)
+        else store.upsert("timers", mapOf("remaining_s" to t.optLong("remaining_s") + 60), t.id)
+    private fun finished(t: JSONObject): Map<String, Any?> = if (t.optInt("persistent") == 1) mapOf("state" to "idle", "ends_at" to null, "remaining_s" to null, "start_at" to null) else mapOf("state" to "done")
+    fun resetTimer(t: JSONObject) { if (t.optInt("persistent") == 1) store.upsert("timers", finished(t), t.id) else store.remove("timers", t.id) }
+    fun finishTimer(id: String) { store.get("timers", id)?.let { store.upsert("timers", finished(it), id) } }
     fun stopTimer(id: String) = store.remove("timers", id)
 
     // --- ringtones (synced; audio downloaded to files/sounds) ---

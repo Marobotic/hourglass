@@ -33,6 +33,9 @@ export function nextAlarm(alarm, data, fromMs, tz) {
 }
 
 // Everything due to ring in (fromMs, toMs]: alarms and running timers.
+// What a timer becomes when it rings: a saved one waits to be started again.
+export const finishedTimer = (t) => (t.persistent ? { state: "idle", ends_at: null, remaining_s: null, start_at: null } : { state: "done" });
+
 export function dueBetween(data, fromMs, toMs, tz) {
   const out = [];
   for (const a of data.alarms ?? []) {

@@ -79,7 +79,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
         item(span = StaggeredGridItemSpan.FullLine) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 item { Folder("All", null, sel == "all") { sel = "all" } }
-                items(courses, key = { it.id }) { c -> Folder(c.str("code") ?: c.optString("name"), hex(c.optString("color")), sel == c.id) { sel = c.id } }
+                items(courses, key = { it.id }) { c -> Folder(c.optString("name"), hex(c.optString("color")), sel == c.id) { sel = c.id } }
                 item { Folder("No course", null, sel == "inbox") { sel = "inbox" } }
                 item { Folder("+ Course", null, false) { nav.sheets.course = true to null } }
             }
@@ -94,7 +94,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
                     .clickable { nav.openNote(repo.addNote(course?.id, today, null)) }.padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                T(if (course != null) "Take a note for ${course.str("code") ?: course.optString("name")}…" else "Take a note…", 15, HColors.muted, modifier = Modifier.weight(1f))
+                T(if (course != null) "Take a note for ${course.optString("name")}…" else "Take a note…", 15, HColors.muted, modifier = Modifier.weight(1f))
                 Icon(Icons.Outlined.EditNote, null, tint = HColors.muted)
             }
         }
@@ -116,7 +116,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
                     n.optString("body"), color = HColors.fg.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 10,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontFamily = FontFamily.Default,
                 )
-                val foot = listOfNotNull(if (sel == "all") c?.let { it.str("code") ?: it.optString("name") } else null, n.str("session_date")?.let { Dates.short(it) })
+                val foot = listOfNotNull(if (sel == "all") c?.let { it.optString("name") } else null, n.str("session_date")?.let { Dates.short(it) })
                 if (foot.isNotEmpty()) T(foot.joinToString("  ·  "), 11, tint ?: HColors.muted, bold = true)
             }
         }

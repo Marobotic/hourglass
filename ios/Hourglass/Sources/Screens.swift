@@ -16,7 +16,7 @@ struct NowView: View {
             let current = blocks.first { $0.endMs > clock }
             let todays = todayNotes(today, current)
             let alarm = store.alarms.compactMap { a in Alarms.next(a, store.db.courses, store.db.events, clock).map { (a, $0) } }.min { $0.1 < $1.1 }
-            let timer = store.timers.first
+            let timer = store.timers.first { $0.state != "idle" }
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 0) {
@@ -40,7 +40,7 @@ struct NowView: View {
                         }
                     }
                     if let t = timer {
-                        let remain = t.state == "running" ? ((t.ends_at ?? 0) - clock + 999) / 1000 : Int64(t.remaining_s ?? 0)
+                        let remain = store.timerLeft(t, clock)
                         HStack(spacing: 8) { Image(systemName: "timer").foregroundStyle(H.accent); T(Dates.countdown(remain) + "  " + t.label, 14) }
                     }
                 }
@@ -64,7 +64,7 @@ struct NowView: View {
     private func noteCard(_ n: Note, _ today: String) -> some View {
         let c = store.course(n.course_id)
         let tint = c.map { Color(hex: $0.color) }
-        let foot = [c.map { $0.code ?? $0.name }, n.session_date == today ? "Today" : n.session_date.map { "Last class · " + Dates.short($0) }].compactMap { $0 }
+        let foot = [c.map { $0.name }, n.session_date == today ? "Today" : n.session_date.map { "Last class · " + Dates.short($0) }].compactMap { $0 }
         return VStack(alignment: .leading, spacing: 4) {
             if !n.title.isEmpty { T(n.title, 14, bold: true, lines: 1) }
             if !n.body.isEmpty { Text(n.body).font(.system(size: 13)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(4) }
@@ -136,7 +136,7 @@ struct TimerCard: View {
     var big = false
     var body: some View {
         let running = t.state == "running"
-        let remain = running ? ((t.ends_at ?? 0) - clock + 999) / 1000 : Int64(t.remaining_s ?? 0)
+        let remain = store.timerLeft(t, clock)
         Card(stripe: big ? (running ? H.accent : H.faint) : nil) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -297,7 +297,7 @@ struct NotesView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         folder("All", nil, "all")
-                        ForEach(store.courses) { c in folder(c.code ?? c.name, Color(hex: c.color), c.id) }
+                        ForEach(store.courses) { c in folder(c.name, Color(hex: c.color), c.id) }
                         folder("No course", nil, "inbox")
                         Button { sheets.course = CourseDraft() } label: { T("+ Course", 14, H.muted).padding(.horizontal, 12).padding(.vertical, 8).overlay(Rectangle().stroke(H.border, lineWidth: 1)) }.buttonStyle(.plain)
                     }
@@ -308,7 +308,7 @@ struct NotesView: View {
                 }
                 Button { path.append(.note(store.addNote(course: course?.id, date: Dates.today(), event: nil).id)) } label: {
                     HStack {
-                        T(course.map { "Take a note for \($0.code ?? $0.name)…" } ?? "Take a note…", 15, H.muted)
+                        T(course.map { "Take a note for \($0.name)…" } ?? "Take a note…", 15, H.muted)
                         Spacer()
                         Image(systemName: "square.and.pencil").foregroundStyle(H.muted)
                     }
@@ -343,7 +343,7 @@ struct NotesView: View {
     private func keepCard(_ n: Note) -> some View {
         let c = store.course(n.course_id)
         let tint = c.map { Color(hex: $0.color) }
-        let foot = [sel == "all" ? c.map { $0.code ?? $0.name } : nil, n.session_date.map(Dates.short)].compactMap { $0 }
+        let foot = [sel == "all" ? c.map { $0.name } : nil, n.session_date.map(Dates.short)].compactMap { $0 }
         return VStack(alignment: .leading, spacing: 6) {
             if !n.title.isEmpty {
                 HStack(alignment: .top) {
@@ -397,12 +397,7 @@ struct TimeView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        T("Timers", 24, bold: true)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) { ForEach([1, 5, 10, 15, 25, 45, 50, 90], id: \.self) { m in HButton("\(m) min") { store.startTimer(seconds: m * 60, label: "") } } }
-                        }
-                        ForEach(store.timers) { t in TimerCard(t: t, clock: clock, big: true) }
-                        T("Alarms", 24, bold: true).padding(.top, 8)
+                        T("Alarms", 24, bold: true)
                         let alarms = store.alarms.map { ($0, Alarms.next($0, store.db.courses, store.db.events, clock)) }.sorted { ($0.1 ?? Int64.max) < ($1.1 ?? Int64.max) }
                         if alarms.isEmpty { T("No alarms yet. Tap the alarm button to add one, at a time or before a course.", 13, H.muted) }
                         ForEach(alarms, id: \.0.id) { item in
@@ -441,6 +436,144 @@ struct TimeView: View {
     }
 }
 
+// MARK: - Timers
+
+// The one that ends first, big; the others under it; a quick way to start or
+// schedule one; saved timers to start again. Every device rings.
+struct TimersView: View {
+    @EnvironmentObject var store: Store
+    @State private var focus: String?
+    @State private var minutes = ""
+    @State private var label = ""
+    @State private var later = false
+    @State private var at = Date().addingTimeInterval(3600)
+    @State private var keep = false
+    @State private var confirm: HTimer?
+
+    var body: some View {
+        Ticking { clock in
+            let active = store.timers.filter { $0.state == "running" || $0.state == "paused" }
+                .sorted { ($0.state == "paused" ? 1 : 0, $0.ends_at ?? 0) < ($1.state == "paused" ? 1 : 0, $1.ends_at ?? 0) }
+            let saved = store.timers.filter { $0.state == "idle" }
+            let hero = active.first { $0.id == focus } ?? active.first
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    T("Timers", 24, bold: true)
+                    heroCard(hero, clock)
+                    let others = active.filter { $0.id != hero?.id }
+                    if !others.isEmpty { SectionLabel(text: "Also running") }
+                    ForEach(others) { t in
+                        let running = t.state == "running"
+                        HStack {
+                            T(Dates.countdown(store.timerLeft(t, clock)), 20, running ? H.fg : H.muted, bold: true).frame(width: 110, alignment: .leading)
+                            T(t.label + ((t.start_at ?? 0) > clock ? "  ·  starts " + Dates.clock(t.start_at!) : running ? "" : "  ·  paused"), 13, H.muted, lines: 1)
+                            Spacer()
+                            Button { running ? store.pause(t) : store.resume(t) } label: { Image(systemName: running ? "pause.fill" : "play.fill").foregroundStyle(H.fg).frame(width: 36, height: 36) }
+                            Button { store.reset(t) } label: { Image(systemName: "xmark").foregroundStyle(H.muted).frame(width: 36, height: 36) }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { focus = t.id }
+                    }
+                    SectionLabel(text: "New timer")
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach([1, 5, 10, 15, 20, 25, 30, 45, 60, 90], id: \.self) { m in
+                                HButton(m < 60 ? "\(m) min" : "\(m / 60) h" + (m % 60 > 0 ? " \(m % 60)" : "")) { start(Double(m)) }
+                            }
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        Field(label: "Minutes", text: $minutes).keyboardType(.decimalPad).frame(width: 110)
+                        Field(label: "Label", text: $label)
+                    }
+                    HStack {
+                        if later {
+                            DatePicker("", selection: $at, displayedComponents: .hourAndMinute).labelsHidden().colorScheme(.dark)
+                            Button { later = false } label: { Image(systemName: "xmark").foregroundStyle(H.muted).frame(width: 32, height: 32) }
+                        } else {
+                            HButton("Start later…") { later = true }
+                        }
+                        Spacer()
+                        HButton(later ? "Schedule" : "Start", primary: true, enabled: (Double(minutes) ?? 0) > 0) { start(Double(minutes) ?? 0) }
+                    }
+                    HStack(spacing: 10) {
+                        Rectangle().fill(keep ? H.accent : .clear).frame(width: 16, height: 16).overlay(Rectangle().stroke(keep ? H.accent : H.faint, lineWidth: 1))
+                        T("Keep it as a saved timer to use again", 13, H.muted)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { keep.toggle() }
+                    if !saved.isEmpty { SectionLabel(text: "Saved timers") }
+                    ForEach(saved) { t in
+                        HStack {
+                            T(Dates.countdown(Int64(t.duration_s)), 20, bold: true).frame(width: 110, alignment: .leading)
+                            T(t.label, 13, H.muted, lines: 1)
+                            Spacer()
+                            HButton("Start", primary: true) { focus = t.id; store.restart(t) }
+                            Button { confirm = t } label: { Image(systemName: "trash").foregroundStyle(H.muted).frame(width: 36, height: 36) }
+                        }
+                    }
+                    Spacer(minLength: 24)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 12)
+            }
+            .background(H.bg)
+        }
+        .onAppear { store.sweepTimers() }
+        .confirmationDialog("Delete \(confirm?.label ?? "")?", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let t = confirm { store.stop(t) }; confirm = nil }
+        } message: { Text("The saved timer is removed from every device.") }
+    }
+
+    private func start(_ m: Double) {
+        guard m > 0 else { return }
+        var startAt: Int64?
+        if later {
+            var cal = Calendar(identifier: .gregorian); cal.timeZone = Dates.zone
+            let hm = Calendar.current.dateComponents([.hour, .minute], from: at)
+            if var d = cal.date(bySettingHour: hm.hour ?? 0, minute: hm.minute ?? 0, second: 0, of: Date()) {
+                if d <= Date() { d = d.addingTimeInterval(86400) }
+                startAt = Int64(d.timeIntervalSince1970 * 1000)
+            }
+        }
+        store.startTimer(seconds: Int(m * 60), label: label, persistent: keep, startAt: startAt)
+        label = ""; minutes = ""; later = false
+    }
+
+    @ViewBuilder
+    private func heroCard(_ hero: HTimer?, _ clock: Int64) -> some View {
+        let running = hero?.state == "running"
+        let waiting = running && (hero?.start_at ?? 0) > clock
+        let left = hero.map { store.timerLeft($0, clock) } ?? 0
+        Card(stripe: hero == nil ? H.border : running ? H.accent : H.gold) {
+            VStack(spacing: 6) {
+                Text(hero == nil ? "NO TIMER RUNNING" : waiting ? "STARTS AT " + Dates.clock(hero!.start_at!).uppercased() : running ? "RUNNING" : "PAUSED")
+                    .font(H.mono(12, bold: true)).tracking(2).foregroundStyle(running && !waiting ? H.accent : H.muted)
+                T(Dates.countdown(left), 64, running ? H.fg : H.muted, bold: true)
+                if let h = hero {
+                    T(h.label, 15, H.muted, lines: 1)
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(H.surface2)
+                            Rectangle().fill(running ? H.accent : H.gold).frame(width: g.size.width * min(1, max(0, Double(left) / Double(max(1, h.duration_s)))))
+                        }
+                    }
+                    .frame(height: 6).padding(.top, 8)
+                    HStack(spacing: 8) {
+                        HButton(running ? "Pause" : "Resume", primary: true) { running ? store.pause(h) : store.resume(h) }
+                        HButton("+1 min") { store.addMinute(h) }
+                        HButton(h.persistent == 1 ? "Reset" : "Stop") { store.reset(h) }
+                    }
+                    .padding(.top, 8)
+                } else {
+                    T("Start one below, or ask an AI for one.", 13, H.faint)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+    }
+}
+
 // MARK: - Note editor
 
 struct NoteView: View {
@@ -457,7 +590,7 @@ struct NoteView: View {
         let note = store.notes.first { $0.id == id }
         VStack(alignment: .leading, spacing: 8) {
             // Which course and day this note belongs to; changes save at once.
-            Segmented(options: [("No course", String?.none)] + store.courses.map { ($0.code ?? $0.name, Optional($0.id)) },
+            Segmented(options: [("No course", String?.none)] + store.courses.map { ($0.name, Optional($0.id)) },
                       value: Binding(get: { note?.course_id }, set: { v in if var n = note { save(); n = store.notes.first { $0.id == id } ?? n; n.course_id = v; store.save(n) } }))
             DateField(label: "Date", value: Binding(get: { note?.session_date }, set: { v in if var n = note { save(); n = store.notes.first { $0.id == id } ?? n; n.session_date = v; store.save(n) } }), clearable: true)
             TextField("", text: $title, prompt: Text("Title").foregroundStyle(H.faint))
@@ -513,13 +646,28 @@ struct ClockView: View {
                     }
                     Field(label: "Add a city", text: $query, placeholder: "e.g. Tokyo")
                     let q = query.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: " ", with: "_")
-                    if !q.isEmpty {
-                        ForEach(Array(TimeZone.knownTimeZoneIdentifiers.filter { $0.contains("/") && $0.lowercased().contains(q) }.prefix(8)), id: \.self) { z in
-                            Button { store.addClock(z); query = "" } label: {
-                                HStack { T(city(z), 15); Spacer(); T(time(now, TimeZone(identifier: z)!), 15, H.muted) }.padding(.vertical, 10)
+                    let hits = q.isEmpty ? [] : Array(TimeZone.knownTimeZoneIdentifiers.filter { $0.contains("/") && $0.lowercased().contains(q) }.prefix(8))
+                    if !hits.isEmpty {
+                        // Matches drop down under the field.
+                        VStack(spacing: 0) {
+                            ForEach(Array(hits.enumerated()), id: \.element) { i, z in
+                                if i > 0 { Rectangle().fill(H.border).frame(height: 1) }
+                                Button { store.addClock(z); query = "" } label: {
+                                    HStack(spacing: 8) {
+                                        T(city(z), 15)
+                                        T(z.components(separatedBy: "/")[0].replacingOccurrences(of: "_", with: " "), 12, H.faint)
+                                        Spacer()
+                                        T(time(now, TimeZone(identifier: z)!), 15, H.muted)
+                                    }
+                                    .padding(.horizontal, 14).padding(.vertical, 12)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
+                        .background(H.surface)
+                        .overlay(Rectangle().stroke(H.faint, lineWidth: 1))
+                        .padding(.top, -6)
                     }
                     ForEach(store.clocks) { c in
                         if let z = TimeZone(identifier: c.zone) {

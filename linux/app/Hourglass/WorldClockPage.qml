@@ -16,6 +16,7 @@ Item {
         if (!q.trim()) { hits = []; return; }
         Api.get("/api/timezones?q=" + encodeURIComponent(q), d => { if (d) page.hits = d.slice(0, 10); });
     }
+    function addZone(zone) { Api.action("add_clock", { zone: zone }, () => { q.text = ""; page.hits = []; }); }
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
@@ -44,24 +45,42 @@ Item {
                     Item { Layout.fillWidth: true }
                     Field {
                         id: q
-                        Layout.preferredWidth: 300
+                        Layout.preferredWidth: 340
                         placeholderText: "Add a city, e.g. Tokyo"
                         onTextChanged: t.restart()
+                        Keys.onEscapePressed: text = ""
+                        onAccepted: if (page.hits.length) page.addZone(page.hits[0].zone)
                         Timer { id: t; interval: 200; onTriggered: page.search(q.text) }
-                    }
-                }
 
-                Flow {
-                    visible: q.text !== "" && page.hits.length > 0
-                    Layout.fillWidth: true
-                    spacing: 6
-                    Repeater {
-                        model: page.hits
-                        Btn {
-                            required property var modelData
-                            compact: true
-                            text: modelData.city + "  " + Util.clockAt(page.app.clock, modelData.offset_min)
-                            onClicked: Api.action("add_clock", { zone: modelData.zone }, () => { q.text = ""; page.hits = []; })
+                        // Matches drop down under the field.
+                        Popup {
+                            y: q.height
+                            width: q.width
+                            padding: 0
+                            visible: q.activeFocus && q.text !== "" && page.hits.length > 0
+                            closePolicy: Popup.NoAutoClose
+                            background: Rectangle { color: Theme.surface; border.width: 1; border.color: Theme.faint }
+                            contentItem: Column {
+                                Repeater {
+                                    model: page.hits
+                                    Rectangle {
+                                        required property var modelData
+                                        required property int index
+                                        width: q.width
+                                        height: 44
+                                        color: hitMouse.containsMouse ? Theme.surface2 : "transparent"
+                                        Rectangle { visible: index > 0; width: parent.width; height: 1; color: Theme.border }
+                                        RowLayout {
+                                            anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
+                                            spacing: 10
+                                            Text { text: modelData.city; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14 }
+                                            Text { Layout.fillWidth: true; text: modelData.zone.split("/")[0].replace("_", " "); color: Theme.faint; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
+                                            Text { text: Util.clockAt(page.app.clock, modelData.offset_min); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 14 }
+                                        }
+                                        MouseArea { id: hitMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.addZone(modelData.zone) }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

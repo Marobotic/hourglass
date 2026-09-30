@@ -60,8 +60,9 @@ ApplicationWindow {
         { name: "Schedule", icon: "week", key: "2" },
         { name: "Notes", icon: "note", key: "3" },
         { name: "Alarms", icon: "bell", key: "4" },
-        { name: "World clock", icon: "globe", key: "5" },
-        { name: "Settings", icon: "gear", key: "6" }
+        { name: "Timers", icon: "timer", key: "5" },
+        { name: "World clock", icon: "globe", key: "6" },
+        { name: "Settings", icon: "gear", key: "7" }
     ]
 
     Component.onCompleted: {
@@ -138,6 +139,7 @@ ApplicationWindow {
     Shortcut { sequences: ["4"]; onActivated: app.go(3) }
     Shortcut { sequences: ["5"]; onActivated: app.go(4) }
     Shortcut { sequences: ["6"]; onActivated: app.go(5) }
+    Shortcut { sequences: ["7"]; onActivated: app.go(6) }
     Shortcut {
         sequences: ["n", "Ctrl+N"]
         onActivated: {
@@ -146,8 +148,9 @@ ApplicationWindow {
             else app.newNote({});
         }
     }
-    Shortcut { sequences: ["t"]; onActivated: app.go(3) }
-    Shortcut { sequences: ["w"]; onActivated: app.go(4) }
+    Shortcut { sequences: ["a"]; onActivated: app.go(3) }
+    Shortcut { sequences: ["t"]; onActivated: app.go(4) }
+    Shortcut { sequences: ["w"]; onActivated: app.go(5) }
     Shortcut { sequences: ["Escape"]; enabled: app.editingNote !== null; onActivated: app.editingNote = null }
 
     // --- layout ----------------------------------------------------------------------
@@ -260,6 +263,7 @@ ApplicationWindow {
                     SchedulePage { app: app }
                     NotesPage { app: app }
                     TimePage { app: app }
+                    TimersPage { app: app }
                     WorldClockPage { app: app }
                     SettingsPage { app: app }
                 }

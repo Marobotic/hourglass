@@ -289,7 +289,7 @@ export const TOOLS = [
   {
     name: "list_timers",
     title: "List timers",
-    description: "Running and paused timers with seconds remaining.",
+    description: "Timers: running (scheduled: true if it has not started yet), paused, and idle saved timers (persistent) waiting to be started, with seconds remaining.",
     input: {},
     readOnly: true,
     run: (s) => s.listTimers(),
@@ -297,15 +297,22 @@ export const TOOLS = [
   {
     name: "start_timer",
     title: "Start timer",
-    description: "Start a countdown timer. It rings on the user's devices.",
-    input: { minutes: z.number().optional(), seconds: z.number().optional(), label: z.string().optional() },
+    description: "Start a countdown timer; it rings and notifies on all the user's devices. persistent: keep it as a saved timer to reuse after it rings. at: \"HH:MM\" to start it later (scheduled timer).",
+    input: { hours: z.number().optional(), minutes: z.number().optional(), seconds: z.number().optional(), label: z.string().optional(), persistent: z.boolean().optional(), at: z.string().optional() },
     run: (s, a) => s.startTimer(a),
   },
   {
+    name: "save_timer",
+    title: "Save a timer",
+    description: "Create a saved timer (for example \"Tea, 4 min\") without starting it; start it later with update_timer action start.",
+    input: { hours: z.number().optional(), minutes: z.number().optional(), seconds: z.number().optional(), label: z.string().optional() },
+    run: (s, a) => s.saveTimer(a),
+  },
+  {
     name: "update_timer",
-    title: "Pause, resume or stop a timer",
-    description: "action: pause | resume | stop (cancel and remove) | done.",
-    input: { timer_id: z.string(), action: z.enum(["pause", "resume", "stop", "done"]) },
+    title: "Control a timer",
+    description: "action: start (a saved timer) | pause | resume | restart (from full length) | add_minute | reset (saved timers go back to idle, others are removed) | stop (delete) | done.",
+    input: { timer_id: z.string(), action: z.enum(["start", "pause", "resume", "restart", "add_minute", "reset", "stop", "done"]) },
     run: (s, a) => s.updateTimer(a),
   },
 ];
