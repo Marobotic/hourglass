@@ -71,6 +71,17 @@ struct Alarm: Codable, Identifiable, Hashable {
     var dirty: Int? = 0
 }
 
+struct Clock: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString.lowercased()
+    var zone: String = ""
+    var label: String = ""
+    var position: Int = 0
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
 struct HTimer: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString.lowercased()
     var label: String = ""

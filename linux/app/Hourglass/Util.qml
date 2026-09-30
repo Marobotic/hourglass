@@ -81,6 +81,14 @@ QtObject {
     }
     function lead(teacher) { return (teacher || "").split(",")[0].trim(); }
     function dayOf(ms) { return fmt(Date.UTC(wall(ms).getUTCFullYear(), wall(ms).getUTCMonth(), wall(ms).getUTCDate())); }
+    // Wall-clock time in a zone that is offMin ahead of UTC.
+    function clockAt(ms, offMin) { const d = new Date(ms + offMin * 60000); return t(pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes())); }
+    function dateAt(ms, offMin) { const d = new Date(ms + offMin * 60000); return fmt(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
+    function diffText(min) {
+        if (!min) return "Same time";
+        const h = Math.floor(Math.abs(min) / 60), m = Math.abs(min) % 60;
+        return (min > 0 ? "+" : "−") + h + (m ? ":" + pad(m) : "") + " h";
+    }
     function minutesOf(ms) { const d = wall(ms); return d.getUTCHours() * 60 + d.getUTCMinutes(); }
 
     function countdown(sec) {

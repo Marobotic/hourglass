@@ -37,6 +37,8 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 // (same semantics as core/node/service.js) and the sync loop.
 // autoConfigure: point a fresh install at the build-time server. Tests pass false
 // so demo data never reaches the real account.
+const val SCHEMA = "2" // bump when a table is added
+
 class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val store = Store(File(ctx.filesDir, "hourglass.json"))
     val zone: ZoneId get() = ZoneId.systemDefault()
@@ -88,6 +90,9 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             store.setMeta("server", null)
         }
         syncEnabled = autoConfigure
+        // New tables since the last run: pull everything again once, or rows
+        // the old build skipped would stay missing.
+        if (store.meta("schema") != SCHEMA) { store.setMeta("cursor", 0); store.setMeta("schema", SCHEMA) }
         store.onLocalChange = {
             Scheduler.reschedule(ctx, this)
             pending?.cancel()
@@ -178,6 +183,14 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             "time" to if (leadCourse != null) null else time, "days" to days.toJson(), "date" to date,
             "lead_course_id" to leadCourse, "lead_minutes" to leadMinutes, "enabled" to 1,
         ))
+
+    // --- world clock (synced) ---
+    fun clocks() = store.all("clocks").sortedWith(compareBy({ it.optInt("position") }, { it.optLong("updated_at") }))
+    fun addClock(zone: String) {
+        if (clocks().any { it.optString("zone") == zone }) return
+        store.upsert("clocks", mapOf("zone" to zone, "label" to zone.substringAfterLast('/').replace('_', ' '), "position" to (clocks().maxOfOrNull { it.optInt("position") } ?: -1) + 1))
+    }
+    fun removeClock(id: String) = store.remove("clocks", id)
 
     fun setAlarmEnabled(id: String, on: Boolean) = store.upsert("alarms", mapOf("enabled" to if (on) 1 else 0), id)
     fun removeAlarm(id: String) = store.remove("alarms", id)

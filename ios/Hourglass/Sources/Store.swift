@@ -6,7 +6,20 @@ struct DB: Codable {
     var events: [Event] = []
     var notes: [Note] = []
     var alarms: [Alarm] = []
+    var clocks: [Clock] = []
     var timers: [HTimer] = []
+
+    init() {}
+    // Tolerant: files and servers from before a table existed decode fine.
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        courses = try c.decodeIfPresent([Course].self, forKey: .courses) ?? []
+        events = try c.decodeIfPresent([Event].self, forKey: .events) ?? []
+        notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
+        alarms = try c.decodeIfPresent([Alarm].self, forKey: .alarms) ?? []
+        clocks = try c.decodeIfPresent([Clock].self, forKey: .clocks) ?? []
+        timers = try c.decodeIfPresent([HTimer].self, forKey: .timers) ?? []
+    }
 }
 
 struct Slot: Hashable { var day: Int; var start: String; var end: String; var kind: String = "lecture" }
@@ -42,6 +55,11 @@ final class Store: ObservableObject {
         }
         UserDefaults.standard.removeObject(forKey: "token")
         UserDefaults.standard.removeObject(forKey: "server")
+        // New table since the last run: pull everything once.
+        if UserDefaults.standard.integer(forKey: "schema") != 2 {
+            UserDefaults.standard.set(0, forKey: "cursor")
+            UserDefaults.standard.set(2, forKey: "schema")
+        }
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
     }
 
@@ -94,6 +112,19 @@ final class Store: ObservableObject {
         if let i = db.alarms.firstIndex(where: { $0.id == a.id }) { db.alarms[i] = a } else { db.alarms.append(a) }
         changed(); return a
     }
+    @discardableResult
+    func save(_ k: Clock) -> Clock {
+        var k = k; k.updated_at = stamp(db.clocks.first { $0.id == k.id }?.updated_at ?? 0); k.dirty = 1
+        if let i = db.clocks.firstIndex(where: { $0.id == k.id }) { db.clocks[i] = k } else { db.clocks.append(k) }
+        changed(); return k
+    }
+    var clocks: [Clock] { db.clocks.filter { $0.deleted == 0 }.sorted { ($0.position, $0.updated_at) < ($1.position, $1.updated_at) } }
+    func addClock(_ zone: String) {
+        guard !clocks.contains(where: { $0.zone == zone }) else { return }
+        save(Clock(zone: zone, label: zone.components(separatedBy: "/").last!.replacingOccurrences(of: "_", with: " "), position: (clocks.map(\.position).max() ?? -1) + 1))
+    }
+    func removeClock(_ k: Clock) { var k = k; k.deleted = 1; save(k) }
+
     @discardableResult
     func save(_ t: HTimer) -> HTimer {
         var t = t; t.updated_at = stamp(db.timers.first { $0.id == t.id }?.updated_at ?? 0); t.dirty = 1
@@ -195,9 +226,10 @@ final class Store: ObservableObject {
             dirty.events = db.events.filter { $0.dirty == 1 }
             dirty.notes = db.notes.filter { $0.dirty == 1 }
             dirty.alarms = db.alarms.filter { $0.dirty == 1 }
+            dirty.clocks = db.clocks.filter { $0.dirty == 1 }
             dirty.timers = db.timers.filter { $0.dirty == 1 }
             let pushed = dirty
-            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.timers.isEmpty) {
+            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.clocks.isEmpty && dirty.timers.isEmpty) {
                 var req = request(base.appendingPathComponent("api/sync"))
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -242,6 +274,7 @@ final class Store: ObservableObject {
         c(&db.events, p.events, { $0.updated_at }, { $0.dirty = 0 })
         c(&db.notes, p.notes, { $0.updated_at }, { $0.dirty = 0 })
         c(&db.alarms, p.alarms, { $0.updated_at }, { $0.dirty = 0 })
+        c(&db.clocks, p.clocks, { $0.updated_at }, { $0.dirty = 0 })
         c(&db.timers, p.timers, { $0.updated_at }, { $0.dirty = 0 })
     }
 
@@ -257,6 +290,7 @@ final class Store: ObservableObject {
         m(&db.events, ch.events, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.notes, ch.notes, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.alarms, ch.alarms, { $0.updated_at }, { $0.dirty = 0 })
+        m(&db.clocks, ch.clocks, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.timers, ch.timers, { $0.updated_at }, { $0.dirty = 0 })
     }
 }

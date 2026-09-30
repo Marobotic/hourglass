@@ -388,6 +388,7 @@ struct TimeView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
+                        WorldClock(clock: clock)
                         T("Timers", 24, bold: true)
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) { ForEach([1, 5, 10, 15, 25, 45, 50, 90], id: \.self) { m in HButton("\(m) min") { store.startTimer(seconds: m * 60, label: "") } } }
@@ -484,5 +485,77 @@ struct NoteView: View {
         n.body = text
         store.save(n)
         dirty = false
+    }
+}
+
+// Cities: time, day and difference from this phone's zone. Synced.
+struct WorldClock: View {
+    @EnvironmentObject var store: Store
+    let clock: Int64
+    @State private var adding = false
+    @State private var query = ""
+
+    var body: some View {
+        let now = Date(timeIntervalSince1970: Double(clock) / 1000)
+        let home = TimeZone.current
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                T("World clock", 24, bold: true)
+                Spacer()
+                Button { adding.toggle(); query = "" } label: { Image(systemName: adding ? "xmark" : "plus").foregroundStyle(H.muted).frame(width: 36, height: 36) }
+            }
+            if adding {
+                Field(label: "City", text: $query, placeholder: "e.g. Tokyo")
+                let q = query.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: " ", with: "_")
+                if !q.isEmpty {
+                    ForEach(TimeZone.knownTimeZoneIdentifiers.filter { $0.contains("/") && $0.lowercased().contains(q) }.prefix(8), id: \.self) { z in
+                        Button { store.addClock(z); adding = false; query = "" } label: {
+                            HStack {
+                                T(z.components(separatedBy: "/").last!.replacingOccurrences(of: "_", with: " "), 15)
+                                Spacer()
+                                T(time(now, TimeZone(identifier: z)!), 15, H.muted)
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            ForEach(store.clocks) { c in
+                if let z = TimeZone(identifier: c.zone) {
+                    let isHome = z.identifier == home.identifier
+                    let diff = (z.secondsFromGMT(for: now) - home.secondsFromGMT(for: now)) / 60
+                    Card(stripe: isHome ? H.accent : nil) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                T(c.label, 15, bold: true)
+                                T(day(now, z, home) + (isHome ? "  ·  this phone" : "  ·  " + diffText(diff)), 13, H.muted)
+                            }
+                            Spacer()
+                            T(time(now, z), 28, bold: true)
+                            if !isHome { Button { store.removeClock(c) } label: { Image(systemName: "xmark").foregroundStyle(H.faint).frame(width: 32, height: 32) } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func time(_ now: Date, _ z: TimeZone) -> String {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = z
+        let c = cal.dateComponents([.hour, .minute], from: now)
+        return Dates.t(String(format: "%02ld:%02ld", c.hour!, c.minute!))
+    }
+    private func day(_ now: Date, _ z: TimeZone, _ home: TimeZone) -> String {
+        var a = Calendar(identifier: .gregorian); a.timeZone = z
+        var b = Calendar(identifier: .gregorian); b.timeZone = home
+        let da = a.dateComponents([.year, .month, .day], from: now), db = b.dateComponents([.year, .month, .day], from: now)
+        if da == db { return "Today" }
+        return (da.year!, da.month!, da.day!) > (db.year!, db.month!, db.day!) ? "Tomorrow" : "Yesterday"
+    }
+    private func diffText(_ min: Int) -> String {
+        if min == 0 { return "same time" }
+        let h = abs(min) / 60, m = abs(min) % 60
+        return (min > 0 ? "+" : "−") + "\(h)" + (m > 0 ? String(format: ":%02d", m) : "") + " h"
     }
 }

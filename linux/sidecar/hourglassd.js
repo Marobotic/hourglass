@@ -89,9 +89,14 @@ const config = () => {
 };
 
 adoptToken();
+const SCHEMA = 2; // bump when a table is added: forces one full pull
 const store = new Store(join(DATA_DIR, "hourglass.db"), { replica: true });
 const service = new Service(store);
 const TOKEN = token();
+if (store.meta("schema", 1) !== SCHEMA) {
+  store.setMeta("cursor", 0);
+  store.setMeta("schema", SCHEMA);
+}
 
 // --- theme ---------------------------------------------------------------------
 

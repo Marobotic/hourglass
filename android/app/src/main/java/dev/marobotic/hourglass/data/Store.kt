@@ -14,12 +14,13 @@ import java.util.UUID
 // Local changes are marked dirty until the server accepts them.
 class Store(private val file: File) {
     companion object {
-        val TABLES = listOf("courses", "events", "notes", "alarms", "timers")
+        val TABLES = listOf("courses", "events", "notes", "alarms", "clocks", "timers")
         private val DEFAULTS = mapOf(
             "courses" to mapOf("name" to "", "code" to null, "color" to "#B14242", "location" to null, "teacher" to null, "archived" to 0),
             "events" to mapOf("course_id" to null, "title" to "", "kind" to "event", "location" to null, "start_date" to null, "start_time" to null, "end_time" to null, "repeat" to null, "exceptions" to JSONArray()),
             "notes" to mapOf("course_id" to null, "event_id" to null, "session_date" to null, "title" to "", "body" to "", "pinned" to 0),
             "alarms" to mapOf("label" to "", "time" to null, "days" to JSONArray(), "date" to null, "lead_event_id" to null, "lead_course_id" to null, "lead_minutes" to null, "enabled" to 1),
+            "clocks" to mapOf("zone" to "", "label" to "", "position" to 0),
             "timers" to mapOf("label" to "", "duration_s" to 0, "state" to "running", "ends_at" to null, "remaining_s" to null),
         )
     }

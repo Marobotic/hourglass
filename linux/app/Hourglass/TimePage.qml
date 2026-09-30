@@ -7,8 +7,11 @@ Item {
     property var app
     property var alarms: []
     property var timers: []
+    property var clocks: []
+    property var zoneHits: []
 
     function load() {
+        Api.action("world_clock", {}, d => { if (d) page.clocks = d; });
         Api.action("list_alarms", {}, d => { if (d) page.alarms = d; });
         Api.action("list_timers", {}, d => { if (d) page.timers = d; });
     }
@@ -16,6 +19,11 @@ Item {
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
     Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+    function searchZones(q) {
+        if (!q.trim()) { zoneHits = []; return; }
+        Api.get("/api/timezones?q=" + encodeURIComponent(q), d => { if (d) page.zoneHits = d.slice(0, 8); });
+    }
+    readonly property string homeDate: Util.dayOf(app.clock)
 
     // new-alarm form state
     property string mode: "time" // time | before
@@ -43,7 +51,71 @@ Item {
                 Layout.margins: 32
                 spacing: 18
 
-                Text { text: "Timers"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
+                // ---------------------------------------------------------- world clock
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { Layout.fillWidth: true; text: "World clock"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
+                    Field {
+                        id: zoneField
+                        Layout.preferredWidth: 280
+                        placeholderText: "Add a city, e.g. Tokyo"
+                        onTextChanged: zoneTimer.restart()
+                        Timer { id: zoneTimer; interval: 200; onTriggered: page.searchZones(zoneField.text) }
+                    }
+                }
+                // search results
+                Flow {
+                    visible: page.zoneHits.length > 0 && zoneField.text !== ""
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Repeater {
+                        model: page.zoneHits
+                        Btn {
+                            required property var modelData
+                            compact: true
+                            text: modelData.city + "  " + Util.clockAt(page.app.clock, modelData.offset_min)
+                            onClicked: Api.action("add_clock", { zone: modelData.zone }, () => { zoneField.text = ""; page.zoneHits = []; })
+                        }
+                    }
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Repeater {
+                        model: page.clocks
+                        Card {
+                            id: clockCard
+                            required property var modelData
+                            readonly property string date: Util.dateAt(page.app.clock, modelData.offset_min)
+                            width: 250
+                            height: 132
+                            stripe: modelData.home ? Theme.accent : "transparent"
+                            ColumnLayout {
+                                anchors { fill: parent; margins: 14; leftMargin: 18 }
+                                spacing: 2
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold }
+                                    Chip { visible: modelData.home; text: "Home"; tint: Theme.accent }
+                                    Btn { visible: !modelData.home; icon: "close"; kind: "subtle"; compact: true; onClicked: Api.action("remove_clock", { clock_id: modelData.id }) }
+                                }
+                                Text { text: Util.clockAt(page.app.clock, modelData.offset_min); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 30; font.weight: Font.Bold }
+                                Text {
+                                    text: (clockCard.date === page.homeDate ? "Today" : clockCard.date > page.homeDate ? "Tomorrow" : "Yesterday") + (modelData.home ? "" : "  ·  " + Util.diffText(modelData.diff_min))
+                                    color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
+                                }
+                                Text {
+                                    visible: !modelData.home
+                                    text: "Make home"
+                                    color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12; font.underline: homeMouse.containsMouse
+                                    MouseArea { id: homeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: Api.put("/api/settings", { tz: modelData.zone }, () => page.app.pollState()) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text { Layout.topMargin: 16; text: "Timers"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold }
 
                 // Quick start
                 Card {

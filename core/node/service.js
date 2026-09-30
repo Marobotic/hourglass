@@ -350,6 +350,64 @@ export class Service {
     throw new Error(`cannot ${action} a ${t.state} timer`);
   }
 
+  // --- world clock ---------------------------------------------------------
+
+  // Minutes a zone is ahead of UTC at `ms`.
+  offsetMin(zone, ms = this.clock()) {
+    const p = localParts(ms, zone);
+    return Math.round((Date.UTC(...p.date.split("-").map((n, i) => (i === 1 ? n - 1 : +n))) + p.minutes * 60000 + p.seconds * 1000 - ms) / 60000);
+  }
+
+  // Clocks in display order with their current time, day and difference
+  // from the home zone (the one Hourglass runs on).
+  listClocks() {
+    const now = this.clock();
+    const home = this.tz;
+    const homeOff = this.offsetMin(home, now);
+    const homeDate = localParts(now, home).date;
+    return this.store
+      .all("clocks")
+      .sort((a, b) => a.position - b.position || a.updated_at - b.updated_at)
+      .map((c) => {
+        const p = localParts(now, c.zone);
+        const off = this.offsetMin(c.zone, now);
+        const diff = off - homeOff;
+        return {
+          ...c,
+          label: c.label || cityOf(c.zone),
+          home: c.zone === home,
+          offset_min: off,
+          diff_min: diff,
+          date: p.date,
+          time: p.time,
+          time_12h: to12h(p.time),
+          day: p.date === homeDate ? "Today" : p.date > homeDate ? "Tomorrow" : "Yesterday",
+        };
+      });
+  }
+
+  addClock({ zone, label }) {
+    const z = resolveZone(zone);
+    const existing = this.store.all("clocks").find((c) => c.zone === z);
+    if (existing) return existing;
+    const pos = Math.max(-1, ...this.store.all("clocks").map((c) => c.position)) + 1;
+    return this.store.upsert("clocks", { zone: z, label: label || cityOf(z), position: pos });
+  }
+
+  removeClock({ clock_id }) {
+    return this.store.remove("clocks", this.row("clocks", clock_id).id);
+  }
+
+  // Zones matching a city/region search, with their current offset.
+  searchZones({ query = "", limit = 30 } = {}) {
+    const q = query.trim().toLowerCase().replace(/\s+/g, "_");
+    const now = this.clock();
+    return Intl.supportedValuesOf("timeZone")
+      .filter((z) => !q || z.toLowerCase().includes(q))
+      .slice(0, limit)
+      .map((z) => ({ zone: z, city: cityOf(z), offset_min: this.offsetMin(z, now), time_12h: to12h(localParts(now, z).time) }));
+  }
+
   // --- settings --------------------------------------------------------------
 
   // From the synced lecture alarms, so every device agrees.
@@ -381,6 +439,26 @@ export class Service {
     if (lecture_reminder_min !== undefined) this.setLectureReminders({ minutes: Number(lecture_reminder_min) || 0 });
     return this.settings();
   }
+}
+
+function cityOf(zone) {
+  return zone.split("/").pop().replace(/_/g, " ");
+}
+
+// Accept an IANA zone ("America/New_York") or a city name ("new york", "Tokyo").
+function resolveZone(input) {
+  const raw = String(input ?? "").trim();
+  if (!raw) throw new Error("zone is required, e.g. Asia/Tokyo or a city name");
+  const zones = Intl.supportedValuesOf("timeZone");
+  const exact = zones.find((z) => z.toLowerCase() === raw.toLowerCase());
+  if (exact) return exact;
+  const q = raw.toLowerCase().replace(/\s+/g, "_");
+  const hits = zones.filter((z) => z.toLowerCase().split("/").pop() === q);
+  if (hits.length) return hits[0];
+  const partial = zones.filter((z) => z.toLowerCase().includes(q));
+  if (partial.length === 1) return partial[0];
+  if (partial.length > 1) throw new Error(`"${raw}" matches several zones: ${partial.slice(0, 8).join(", ")}`);
+  throw new Error(`no time zone for "${raw}"`);
 }
 
 function to12h(hhmm) {

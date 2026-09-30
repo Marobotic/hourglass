@@ -158,6 +158,7 @@ export function createHandler({ store, service, token, icalToken, publicUrl = ""
       if (path === "/api/schedule" && m === "GET") return send(res, 200, service.schedule(q));
       if (path === "/api/courses/summary" && m === "GET") return send(res, 200, service.listCourses());
       if (path === "/api/notes/search" && m === "GET") return send(res, 200, service.searchNotes({ query: q.q }));
+      if (path === "/api/timezones" && m === "GET") return send(res, 200, service.searchZones({ query: q.q || "" }));
       if (path === "/api/settings") {
         if (m === "GET") return send(res, 200, service.settings());
         if (m === "PUT") return send(res, 200, service.setSettings(await readJson(req)));

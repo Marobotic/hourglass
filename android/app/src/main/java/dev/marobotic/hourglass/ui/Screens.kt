@@ -267,6 +267,7 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item { WorldClock(nav, version, clock) }
             item { T("Timers", 24, bold = true) }
             item {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -280,28 +281,76 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
                 val on = a.optInt("enabled") == 1
                 HCard(Modifier.fillMaxWidth().alpha(if (on) 1f else 0.55f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        T(a.str("time")?.let { Dates.t(it) } ?: next?.let { Dates.clock(it, repo.zone) } ?: "—", 24, bold = true, modifier = Modifier.width(128.dp))
-                        Column(Modifier.weight(1f)) {
-                            T(a.optString("label"), 14, maxLines = 1)
-                            val days = a.ints("days")
-                            val sub = when {
-                                a.str("lead_course_id") != null || a.str("lead_event_id") != null -> "Rings ${a.optInt("lead_minutes")} min before the lecture"
-                                a.str("date") != null -> "Once, " + Dates.short(a.optString("date"))
-                                days.isEmpty() -> "Every day"
-                                days == listOf(1, 2, 3, 4, 5) -> "Weekdays"
-                                else -> days.joinToString(", ") { Dates.WEEKDAYS[it - 1] }
-                            }
-                            T(sub + (next?.let { "  ·  next " + Dates.short(Dates.local(it, repo.zone).toLocalDate()) + " " + Dates.clock(it, repo.zone) } ?: ""), 11, HColors.muted, maxLines = 2)
-                        }
+                        T(a.str("time")?.let { Dates.t(it) } ?: next?.let { Dates.clock(it, repo.zone) } ?: "—", 26, bold = true, modifier = Modifier.weight(1f))
                         Toggle(on) { repo.setAlarmEnabled(a.id, it) }
                         IconButton({ repo.removeAlarm(a.id) }) { Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted) }
                     }
+                    T(a.optString("label"), 14, maxLines = 2)
+                    val days = a.ints("days")
+                    val sub = when {
+                        a.str("lead_course_id") != null || a.str("lead_event_id") != null -> "Rings ${a.optInt("lead_minutes")} min before the lecture"
+                        a.str("date") != null -> "Once, " + Dates.short(a.optString("date"))
+                        days.isEmpty() -> "Every day"
+                        days == listOf(1, 2, 3, 4, 5) -> "Weekdays"
+                        else -> days.joinToString(", ") { Dates.WEEKDAYS[it - 1] }
+                    }
+                    T(sub + (next?.let { "  ·  next " + Dates.short(Dates.local(it, repo.zone).toLocalDate()) } ?: ""), 12, HColors.muted, maxLines = 1)
                 }
             }
             item { Spacer(Modifier.height(72.dp)) }
         }
         FloatingActionButton({ nav.sheets.alarm = true }, Modifier.align(Alignment.BottomEnd).padding(18.dp), containerColor = HColors.accent, shape = RectangleShape) {
             Icon(Icons.Outlined.Alarm, "Add alarm", tint = Color.White)
+        }
+    }
+}
+
+// Cities side by side: time, day and difference from this phone's zone.
+@Composable
+fun WorldClock(nav: Nav, version: Int, clock: Long) {
+    val repo = nav.repo
+    val clocks = remember(version) { repo.clocks() }
+    var query by rememberSaveable { mutableStateOf("") }
+    var adding by rememberSaveable { mutableStateOf(false) }
+    val now = java.time.Instant.ofEpochMilli(clock)
+    val home = repo.zone
+    val homeDate = now.atZone(home).toLocalDate()
+    val homeOff = home.rules.getOffset(now).totalSeconds / 60
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            T("World clock", 24, bold = true, modifier = Modifier.weight(1f))
+            IconButton({ adding = !adding; query = "" }) { Icon(if (adding) Icons.Outlined.Close else Icons.Outlined.Add, "Add city", tint = HColors.muted) }
+        }
+        if (adding) {
+            Field(query, { query = it }, "City, e.g. Tokyo", Modifier.fillMaxWidth())
+            val q = query.trim().lowercase().replace(' ', '_')
+            if (q.isNotEmpty()) {
+                val hits = remember(q) { java.time.ZoneId.getAvailableZoneIds().filter { it.contains('/') && it.lowercase().contains(q) }.sorted().take(8) }
+                for (z in hits) {
+                    val t = now.atZone(java.time.ZoneId.of(z))
+                    Row(Modifier.fillMaxWidth().clickable { repo.addClock(z); adding = false; query = "" }.padding(vertical = 8.dp)) {
+                        T(z.substringAfterLast('/').replace('_', ' '), 15, modifier = Modifier.weight(1f))
+                        T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 15, HColors.muted)
+                    }
+                }
+            }
+        }
+        for (c in clocks) {
+            val z = runCatching { java.time.ZoneId.of(c.optString("zone")) }.getOrNull() ?: continue
+            val t = now.atZone(z)
+            val isHome = z.rules.getOffset(now) == home.rules.getOffset(now) && c.optString("zone") == home.id
+            val diff = z.rules.getOffset(now).totalSeconds / 60 - homeOff
+            val day = when { t.toLocalDate() == homeDate -> "Today"; t.toLocalDate().isAfter(homeDate) -> "Tomorrow"; else -> "Yesterday" }
+            HCard(Modifier.fillMaxWidth(), stripe = if (isHome) HColors.accent else null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        T(c.optString("label"), 15, bold = true)
+                        T(day + if (isHome) "  ·  this phone" else "  ·  " + (if (diff == 0) "same time" else (if (diff > 0) "+" else "−") + "${kotlin.math.abs(diff) / 60}" + (if (kotlin.math.abs(diff) % 60 != 0) ":%02d".format(kotlin.math.abs(diff) % 60) else "") + " h"), 13, HColors.muted)
+                    }
+                    T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 28, bold = true)
+                    if (!isHome) IconButton({ repo.removeClock(c.optString("id")) }) { Icon(Icons.Outlined.Close, "Remove", tint = HColors.faint) }
+                }
+            }
         }
     }
 }

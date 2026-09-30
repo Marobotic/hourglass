@@ -119,3 +119,18 @@ test("openapi", async () => {
   const spec = await (await fetch(base + "/openapi.json")).json();
   assert.ok(spec.paths["/api/actions/add_course"].post.requestBody);
 });
+
+test("world clock: add by city, home zone, day and difference", async () => {
+  const cairo = await action("add_clock", { zone: "Africa/Cairo" });
+  await action("add_clock", { zone: "tokyo" });
+  const again = await action("add_clock", { zone: "Africa/Cairo" });
+  assert.equal(again.id, cairo.id); // no duplicates
+  store.setMeta("tz", "Africa/Cairo");
+  const list = await action("world_clock");
+  assert.deepEqual(list.map((c) => c.label), ["Cairo", "Tokyo"]);
+  assert.equal(list[0].home, true);
+  assert.equal(list[1].diff_min, 6 * 60);
+  const bad = await call("POST", "/api/actions/add_clock", { zone: "america" });
+  assert.equal(bad.status, 400);
+  store.setMeta("tz", TZ);
+});

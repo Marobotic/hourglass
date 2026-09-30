@@ -42,6 +42,11 @@ export const TABLES = {
     ["lead_minutes", "int", null],
     ["enabled", "bool", 1],
   ],
+  clocks: [
+    ["zone", "text", ""],
+    ["label", "text", ""],
+    ["position", "int", 0],
+  ],
   timers: [
     ["label", "text", ""],
     ["duration_s", "int", 0],
@@ -102,6 +107,13 @@ export function validate(table, r) {
     if (r.date && !isDate(r.date)) fail("date must be YYYY-MM-DD");
   }
   if (table === "timers" && !(r.duration_s > 0)) fail("duration_s must be positive");
+  if (table === "clocks") {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: r.zone });
+    } catch {
+      fail(`unknown time zone: ${r.zone}`);
+    }
+  }
 }
 
 // Parse "Tue", "tuesday", 2 -> ISO weekday number.
