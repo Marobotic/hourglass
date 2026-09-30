@@ -43,6 +43,15 @@ struct RootView: View {
             // Six tabs: a square bar of our own (the system one folds the
             // sixth into "More").
             VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    PixelLogo(cell: 2.6)
+                    T("Hourglass", 18, bold: true)
+                    Spacer()
+                    Button { sheets.settings = true } label: {
+                        Image(systemName: "gearshape").font(.system(size: 19)).foregroundStyle(H.muted).frame(width: 44, height: 44)
+                    }
+                }
+                .padding(.leading, 18).padding(.trailing, 8).padding(.top, 4)
                 Group {
                     switch tab {
                     case 0: NowView(path: $path)
@@ -71,18 +80,9 @@ struct RootView: View {
                 }
                 .background(H.surface.ignoresSafeArea(edges: .bottom))
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 10) { PixelLogo(cell: 2.6); T("Hourglass", 17, bold: true) }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 12) {
-                        Rectangle().fill(store.syncState == "synced" ? H.teal : store.syncState == "offline" ? H.orange : H.faint).frame(width: 8, height: 8)
-                        Button { sheets.settings = true } label: { Image(systemName: "gearshape").foregroundStyle(H.muted) }
-                    }
-                }
-            }
-            .toolbarBackground(H.bg, for: .navigationBar)
+            // Our own header: iOS 26 wraps toolbar items in round glass
+            // bubbles, which clipped the name.
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self) { r in
                 switch r {
                 case .note(let id): NoteView(id: id)

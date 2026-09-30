@@ -135,7 +135,6 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                     Spacer(Modifier.width(12.dp))
                     T("Hourglass", 18, bold = true)
                     Grow()
-                    Box(Modifier.size(8.dp).clip(RectangleShape).background(when (sync.state) { "synced" -> HColors.teal; "offline" -> HColors.orange; else -> HColors.faint }))
                     IconButton({ nav.sheets.settings = true }) { Icon(Icons.Outlined.Settings, "Settings", tint = HColors.muted) }
                 }
                 // Alarms can only take over the screen with this permission (Android 14+).
