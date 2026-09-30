@@ -352,6 +352,13 @@ export class Service {
 
   // --- settings --------------------------------------------------------------
 
+  // From the synced lecture alarms, so every device agrees.
+  lectureReminderMin() {
+    const lectures = new Set(this.store.all("events").filter((e) => e.kind === "lecture").map((e) => e.id));
+    const a = this.store.all("alarms").find((x) => lectures.has(x.lead_event_id) && x.enabled);
+    return a ? a.lead_minutes : 0;
+  }
+
   // Per-device preferences (not synced). Lecture reminders are synced alarms.
   settings() {
     return {
@@ -359,7 +366,7 @@ export class Service {
       time_format: this.store.meta("time_format") || "12h",
       week_start: this.store.meta("week_start") || 6, // ISO weekday; 6 = Saturday
       sound: this.store.meta("sound") ?? true,
-      lecture_reminder_min: this.store.meta("lecture_reminder_min") ?? 0,
+      lecture_reminder_min: this.lectureReminderMin(),
     };
   }
 

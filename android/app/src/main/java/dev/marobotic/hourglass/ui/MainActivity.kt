@@ -1,5 +1,7 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -9,6 +11,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,7 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.StickyNote2
@@ -46,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import dev.marobotic.hourglass.App
+import dev.marobotic.hourglass.core.Dates
 import dev.marobotic.hourglass.core.Occ
 import dev.marobotic.hourglass.data.Repo
 import kotlinx.coroutines.delay
@@ -102,6 +107,9 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
     var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1000); clock = System.currentTimeMillis() } }
     val sync by repo.sync.collectAsState()
+    // Device preferences drive the shared formatters.
+    Dates.h24 = repo.h24
+    Dates.firstDay = repo.firstDay
 
     BackHandler(enabled = nav.stack.isNotEmpty() || nav.tab != 0) { if (nav.stack.isNotEmpty()) nav.pop() else nav.tab = 0 }
 
@@ -117,25 +125,32 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                     Spacer(Modifier.width(12.dp))
                     T("Hourglass", 18, bold = true)
                     Grow()
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(when (sync.state) { "synced" -> HColors.teal; "offline" -> HColors.orange; else -> HColors.faint }))
+                    Box(Modifier.size(8.dp).clip(RectangleShape).background(when (sync.state) { "synced" -> HColors.teal; "offline" -> HColors.orange; else -> HColors.faint }))
                     IconButton({ nav.sheets.settings = true }) { Icon(Icons.Outlined.Settings, "Settings", tint = HColors.muted) }
                 }
                 Box(Modifier.weight(1f)) {
                     when (nav.tab) {
                         0 -> NowScreen(nav, version, clock)
-                        1 -> WeekScreen(nav, version, clock)
+                        1 -> ScheduleScreen(nav, version, clock)
                         2 -> NotesScreen(nav, version)
                         else -> TimeScreen(nav, version, clock)
                     }
                 }
-                NavigationBar(containerColor = HColors.surface, tonalElevation = 0.dp) {
-                    val items = listOf("Now" to Icons.Outlined.Schedule, "Week" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Time" to Icons.Outlined.HourglassBottom)
-                    for ((i, it) in items.withIndex()) NavigationBarItem(
-                        selected = nav.tab == i, onClick = { nav.tab = i },
-                        icon = { Icon(it.second, it.first) }, label = { T(it.first, 11) },
-                        colors = NavigationBarItemDefaults.colors(selectedIconColor = HColors.fg, selectedTextColor = HColors.fg, indicatorColor = HColors.accent.copy(alpha = 0.25f),
-                            unselectedIconColor = HColors.muted, unselectedTextColor = HColors.muted),
-                    )
+                // Square tab bar (Material's has a pill indicator).
+                Row(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
+                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Time" to Icons.Outlined.HourglassBottom)
+                    for ((i, it) in items.withIndex()) {
+                        val on = nav.tab == i
+                        Column(
+                            Modifier.weight(1f).clickable { nav.tab = i }.padding(vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(Modifier.width(28.dp).height(2.dp).background(if (on) HColors.accent else androidx.compose.ui.graphics.Color.Transparent))
+                            Spacer(Modifier.height(6.dp))
+                            Icon(it.second, it.first, tint = if (on) HColors.fg else HColors.muted)
+                            T(it.first, 12, if (on) HColors.fg else HColors.muted, bold = on)
+                        }
+                    }
                 }
             }
         }

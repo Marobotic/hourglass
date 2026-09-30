@@ -66,6 +66,9 @@ class RingActivity : ComponentActivity() {
     }
 
     private fun startSound() {
+        val repo = App.repo(this)
+        if (repo.vibrate) getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 400), 0))
+        if (!repo.sound) return
         val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
         player = runCatching {
             MediaPlayer().apply {
@@ -76,7 +79,6 @@ class RingActivity : ComponentActivity() {
                 start()
             }
         }.getOrNull()
-        getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 400), 0))
     }
 
     private fun finishRing(id: String) {

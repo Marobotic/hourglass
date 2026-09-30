@@ -35,13 +35,29 @@ object Dates {
     fun isDate(s: String?) = s != null && Regex("""\d{4}-\d{2}-\d{2}""").matches(s) && runCatching { date(s) }.isSuccess
     fun isTime(s: String?) = s != null && Regex("""\d{1,2}:\d{2}""").matches(s) && runCatching { time(s) }.isSuccess
     fun iso(d: LocalDate): Int = d.dayOfWeek.value // 1 = Monday
+    // Recurrence maths always uses Monday weeks; the UI uses the user's first day.
     fun weekStart(d: LocalDate): LocalDate = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    var firstDay = 6 // ISO weekday the calendar starts on (6 = Saturday)
+    fun displayWeekStart(d: LocalDate): LocalDate = d.minusDays(((iso(d) - firstDay + 7) % 7).toLong())
+
+    // Display format for stored "HH:MM" times.
+    var h24 = false
+    fun t(hhmm: String): String {
+        val m = runCatching { minutes(hhmm) }.getOrDefault(0)
+        val h = m / 60
+        return if (h24) "%02d:%02d".format(h, m % 60) else "${(h + 11) % 12 + 1}:%02d %s".format(m % 60, if (h < 12) "AM" else "PM")
+    }
+    fun range(a: String, b: String): String {
+        if (h24) return "${t(a)} – ${t(b)}"
+        val same = (minutes(a) < 720) == (minutes(b) < 720)
+        return (if (same) t(a).dropLast(3) else t(a)) + " – " + t(b)
+    }
     fun short(d: LocalDate) = "${WEEKDAYS[iso(d) - 1]} ${d.dayOfMonth} ${MONTHS[d.monthValue - 1]}"
     fun short(s: String) = short(date(s))
     fun long(d: LocalDate) = "${d.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }}, ${d.dayOfMonth} ${d.month.name.lowercase().replaceFirstChar { it.uppercase() }}"
     fun epoch(d: LocalDate, t: String, zone: ZoneId): Long = d.atTime(time(t)).atZone(zone).toInstant().toEpochMilli()
     fun local(ms: Long, zone: ZoneId) = Instant.ofEpochMilli(ms).atZone(zone)
-    fun clock(ms: Long, zone: ZoneId) = local(ms, zone).let { "%02d:%02d".format(it.hour, it.minute) }
+    fun clock(ms: Long, zone: ZoneId) = local(ms, zone).let { t("%02d:%02d".format(it.hour, it.minute)) }
     fun pad(n: Int) = "%02d".format(n)
 
     fun relative(min: Long): String = when {
@@ -79,6 +95,26 @@ data class Occ(
         else -> "ended"
     }
     fun progress(now: Long) = ((now - startMs).toFloat() / (endMs - startMs)).coerceIn(0f, 1f)
+}
+
+// A course's back-to-back sessions on one day (lecture then tutorial) shown as
+// one block; parts keeps the pieces.
+data class Block(val first: Occ, val parts: List<Occ>) {
+    val startTime get() = first.startTime
+    val endTime get() = parts.last().endTime
+    val startMs get() = first.startMs
+    val endMs get() = parts.last().endMs
+}
+
+fun merge(list: List<Occ>): List<Block> {
+    val out = mutableListOf<MutableList<Occ>>()
+    for (o in list.sortedBy { it.startMs }) {
+        val last = out.lastOrNull()?.last()
+        val gap = if (last != null) (o.startMs - last.endMs) / 60_000 else 999
+        if (last != null && last.courseId != null && last.courseId == o.courseId && last.date == o.date && gap in 0..10) out.last() += o
+        else out += mutableListOf(o)
+    }
+    return out.map { Block(it.first(), it) }
 }
 
 object Recurrence {

@@ -1,5 +1,7 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -28,8 +30,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
@@ -113,7 +113,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                 Spacer(Modifier.height(6.dp))
                 val nx = st.next
                 T(when {
-                    nx != null -> "Next: ${nx.title}, ${Dates.short(nx.date)} at ${nx.startTime} (${Dates.relative((nx.startMs - clock) / 60_000)})"
+                    nx != null -> "Next: ${nx.title}, ${Dates.short(nx.date)} at ${Dates.t(nx.startTime)} (${Dates.relative((nx.startMs - clock) / 60_000)})"
                     repo.courses().isEmpty() -> "Add your courses and their weekly times. During each lecture its notes open right here."
                     else -> "Nothing scheduled in the next 7 days."
                 }, 13, HColors.muted)
@@ -139,7 +139,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
         }
         item { Section("Today") }
         if (st.todayList.isEmpty()) item { T("Nothing scheduled today.", 12, HColors.faint) }
-        items(st.todayList, key = { "t" + it.eventId + it.date }) { o -> TimelineRow(o, clock) { nav.sheets.session = o } }
+        items(dev.marobotic.hourglass.core.merge(st.todayList), key = { "t" + it.first.eventId }) { b -> BlockCard(b, clock) { nav.sheets.session = b.first } }
         item { Section("Timers") }
         items(timers, key = { "tm" + it.id }) { TimerCard(nav, it, clock) }
         item {
@@ -160,12 +160,12 @@ private fun Hero(nav: Nav, f: Occ, session: List<JSONObject>, clock: Long) {
     val pulse by rememberInfiniteTransition(label = "p").animateFloat(1f, 0.25f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
     HCard(Modifier.fillMaxWidth(), stripe = color) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (live) { Box(Modifier.size(8.dp).alpha(pulse).clip(CircleShape).background(HColors.accent)); Spacer(Modifier.width(8.dp)) }
+            if (live) { Box(Modifier.size(8.dp).alpha(pulse).clip(RectangleShape).background(HColors.accent)); Spacer(Modifier.width(8.dp)) }
             T(when (state) { "live" -> "LIVE NOW"; "ended" -> "JUST ENDED"; else -> "UP NEXT" }, 11, if (live) HColors.accent else HColors.muted, bold = true, spacing = 1.6)
             Spacer(Modifier.width(8.dp))
             Chip(kindLabel(f.kind), color)
             Grow()
-            T("${f.startTime}–${f.endTime}", 13, HColors.muted)
+            T(Dates.range(f.startTime, f.endTime), 14, HColors.muted)
         }
         Spacer(Modifier.height(8.dp))
         T(f.title, 28, bold = true)
@@ -184,13 +184,13 @@ private fun Hero(nav: Nav, f: Occ, session: List<JSONObject>, clock: Long) {
             }
         }
         Spacer(Modifier.height(12.dp))
-        Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(HColors.surface2)) {
-            Box(Modifier.fillMaxWidth(if (live) f.progress(clock) else 0f).fillMaxHeight().clip(RoundedCornerShape(3.dp)).background(color))
+        Box(Modifier.fillMaxWidth().height(6.dp).clip(RectangleShape).background(HColors.surface2)) {
+            Box(Modifier.fillMaxWidth(if (live) f.progress(clock) else 0f).fillMaxHeight().clip(RectangleShape).background(color))
         }
         Spacer(Modifier.height(6.dp))
         T(when (state) {
             "live" -> Dates.left((f.endMs - clock + 59_999) / 60_000)
-            "ended" -> "Ended ${f.endTime}. Good time to tidy your notes."
+            "ended" -> "Ended ${Dates.t(f.endTime)}. Good time to tidy your notes."
             else -> "Starts " + Dates.relative((f.startMs - clock + 59_999) / 60_000)
         }, 12, HColors.muted)
         Spacer(Modifier.height(12.dp))
@@ -207,18 +207,18 @@ fun TimelineRow(o: Occ, clock: Long, onClick: () -> Unit) {
     val live = clock >= o.startMs && !past
     val color = hex(o.color)
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (live) color.copy(alpha = 0.14f) else Color.Transparent)
+        Modifier.fillMaxWidth().clip(RectangleShape).background(if (live) color.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 10.dp).alpha(if (past) 0.5f else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.width(52.dp)) { T(o.startTime, 14, bold = true); T(o.endTime, 11, HColors.faint) }
-        Box(Modifier.width(3.dp).height(34.dp).clip(RoundedCornerShape(2.dp)).background(color))
+        Box(Modifier.width(3.dp).height(34.dp).clip(RectangleShape).background(color))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             T(o.title, 14, maxLines = 1)
             T(listOfNotNull(o.location?.substringBefore(" · "), kindLabel(o.kind), o.courseCode).joinToString(" · "), 12, HColors.muted, maxLines = 1)
         }
-        if (live) Box(Modifier.size(8.dp).clip(CircleShape).background(HColors.accent))
+        if (live) Box(Modifier.size(8.dp).clip(RectangleShape).background(HColors.accent))
     }
 }
 
@@ -240,65 +240,9 @@ fun TimerCard(nav: Nav, t: JSONObject, clock: Long, big: Boolean = false) {
         if (big) {
             val frac = (remain.toFloat() / maxOf(1, t.optInt("duration_s"))).coerceIn(0f, 1f)
             Spacer(Modifier.height(8.dp))
-            Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(HColors.surface2)) {
+            Box(Modifier.fillMaxWidth().height(4.dp).clip(RectangleShape).background(HColors.surface2)) {
                 Box(Modifier.fillMaxWidth(frac).fillMaxHeight().background(HColors.accent))
             }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ Week (agenda on phones)
-
-@Composable
-fun WeekScreen(nav: Nav, version: Int, clock: Long) {
-    val repo = nav.repo
-    val today = remember(clock / 60_000) { LocalDate.now(repo.zone) }
-    var weekStart by rememberSaveable { mutableStateOf(Dates.weekStart(today).toString()) }
-    var selected by rememberSaveable { mutableStateOf(today.toString()) }
-    val ws = LocalDate.parse(weekStart)
-    val occ = remember(version, weekStart) { repo.occurrences(ws, ws.plusDays(6)) }
-    val sel = LocalDate.parse(selected)
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(ScreenPadding)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    T("${ws.month.name.lowercase().replaceFirstChar { it.uppercase() }} ${ws.year}", 13, HColors.muted)
-                    T("${ws.dayOfMonth} – ${Dates.short(ws.plusDays(6)).drop(4)}", 24, bold = true)
-                }
-                IconButton({ weekStart = ws.minusWeeks(1).toString(); selected = ws.minusWeeks(1).toString() }) { Icon(Icons.Outlined.ChevronLeft, null, tint = HColors.fg) }
-                IconButton({ weekStart = Dates.weekStart(today).toString(); selected = today.toString() }) { T("Today", 12, HColors.muted) }
-                IconButton({ weekStart = ws.plusWeeks(1).toString(); selected = ws.plusWeeks(1).toString() }) { Icon(Icons.Outlined.ChevronRight, null, tint = HColors.fg) }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (i in 0..6) {
-                    val d = ws.plusDays(i.toLong())
-                    val isSel = d == sel
-                    val isToday = d == today
-                    val dayOcc = occ.filter { it.date == d }
-                    Column(
-                        Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(if (isSel) HColors.surface2 else Color.Transparent)
-                            .border(1.dp, if (isSel) HColors.faint else HColors.border, RoundedCornerShape(8.dp)).clickable { selected = d.toString() }.padding(vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        T(Dates.WEEKDAYS[i].take(1), 11, if (isToday) HColors.accent else HColors.muted, bold = true)
-                        T("${d.dayOfMonth}", 16, if (isToday) HColors.accent else HColors.fg, bold = true)
-                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.height(6.dp).padding(top = 2.dp)) {
-                            for (o in dayOcc.take(4)) Box(Modifier.size(4.dp).clip(CircleShape).background(hex(o.color)))
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            Section(Dates.long(sel))
-            val list = occ.filter { it.date == sel }
-            if (list.isEmpty()) T("Nothing scheduled.", 12, HColors.faint, modifier = Modifier.padding(top = 8.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(list, key = { it.eventId + it.date }) { o -> TimelineRow(o, clock) { nav.sheets.session = o } }
-            }
-        }
-        FloatingActionButton({ nav.sheets.event = null to mapOf("date" to selected) }, Modifier.align(Alignment.BottomEnd).padding(18.dp), containerColor = HColors.accent) {
-            Icon(Icons.Outlined.Add, "Add event", tint = Color.White)
         }
     }
 }
@@ -336,12 +280,12 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
                 val on = a.optInt("enabled") == 1
                 HCard(Modifier.fillMaxWidth().alpha(if (on) 1f else 0.55f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        T(a.str("time") ?: "-${a.optInt("lead_minutes")}′", 28, bold = true, modifier = Modifier.width(104.dp))
+                        T(a.str("time")?.let { Dates.t(it) } ?: next?.let { Dates.clock(it, repo.zone) } ?: "—", 24, bold = true, modifier = Modifier.width(128.dp))
                         Column(Modifier.weight(1f)) {
                             T(a.optString("label"), 14, maxLines = 1)
                             val days = a.ints("days")
                             val sub = when {
-                                a.str("lead_course_id") != null || a.str("lead_event_id") != null -> "${a.optInt("lead_minutes")} min before every session"
+                                a.str("lead_course_id") != null || a.str("lead_event_id") != null -> "Rings ${a.optInt("lead_minutes")} min before the lecture"
                                 a.str("date") != null -> "Once, " + Dates.short(a.optString("date"))
                                 days.isEmpty() -> "Every day"
                                 days == listOf(1, 2, 3, 4, 5) -> "Weekdays"
@@ -349,14 +293,14 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
                             }
                             T(sub + (next?.let { "  ·  next " + Dates.short(Dates.local(it, repo.zone).toLocalDate()) + " " + Dates.clock(it, repo.zone) } ?: ""), 11, HColors.muted, maxLines = 2)
                         }
-                        Switch(on, { repo.setAlarmEnabled(a.id, it) }, colors = SwitchDefaults.colors(checkedTrackColor = HColors.accent, checkedThumbColor = Color.White, uncheckedTrackColor = HColors.surface2))
+                        Toggle(on) { repo.setAlarmEnabled(a.id, it) }
                         IconButton({ repo.removeAlarm(a.id) }) { Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted) }
                     }
                 }
             }
             item { Spacer(Modifier.height(72.dp)) }
         }
-        FloatingActionButton({ nav.sheets.alarm = true }, Modifier.align(Alignment.BottomEnd).padding(18.dp), containerColor = HColors.accent) {
+        FloatingActionButton({ nav.sheets.alarm = true }, Modifier.align(Alignment.BottomEnd).padding(18.dp), containerColor = HColors.accent, shape = RectangleShape) {
             Icon(Icons.Outlined.Alarm, "Add alarm", tint = Color.White)
         }
     }

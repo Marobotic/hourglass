@@ -1,5 +1,7 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -21,7 +23,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
@@ -90,6 +91,8 @@ fun HourglassTheme(content: @Composable () -> Unit) {
             outline = HColors.border, secondary = HColors.gold, surfaceContainer = HColors.surface, surfaceContainerHigh = HColors.surface2,
             surfaceContainerHighest = HColors.surface2, surfaceContainerLow = HColors.surface,
         ),
+        // Square everything, like Omarchy.
+        shapes = androidx.compose.material3.Shapes(Square, Square, Square, Square, Square),
         typography = MaterialTheme.typography.copy(
             bodyLarge = TextStyle(fontFamily = Mono, fontSize = 15.sp),
             bodyMedium = TextStyle(fontFamily = Mono, fontSize = 14.sp),
@@ -98,6 +101,8 @@ fun HourglassTheme(content: @Composable () -> Unit) {
         content = content,
     )
 }
+
+private val Square = androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
 
 // --- building blocks ---
 
@@ -108,7 +113,7 @@ fun T(text: String, size: Int = 14, color: Color = HColors.fg, bold: Boolean = f
 
 @Composable
 fun HCard(modifier: Modifier = Modifier, stripe: Color? = null, onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RectangleShape
     Row(
         modifier.clip(shape).background(HColors.surface).border(1.dp, HColors.border, shape)
             .let { if (onClick != null) it.clickable(onClick = onClick) else it }
@@ -121,7 +126,7 @@ fun HCard(modifier: Modifier = Modifier, stripe: Color? = null, onClick: (() -> 
 
 @Composable
 fun HButton(text: String, modifier: Modifier = Modifier, primary: Boolean = false, icon: ImageVector? = null, danger: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RectangleShape
     val bg = when { primary -> HColors.accent; danger -> HColors.accent.copy(alpha = 0.14f); else -> Color.Transparent }
     val ink = when { primary -> Color.White; danger -> HColors.accent; else -> HColors.fg }
     Row(
@@ -139,7 +144,7 @@ fun HButton(text: String, modifier: Modifier = Modifier, primary: Boolean = fals
 
 @Composable
 fun Chip(text: String, tint: Color) {
-    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(tint.copy(alpha = 0.18f)).padding(horizontal = 7.dp, vertical = 3.dp)) {
+    Box(Modifier.clip(RectangleShape).background(tint.copy(alpha = 0.18f)).padding(horizontal = 7.dp, vertical = 3.dp)) {
         T(text.uppercase(), 10, tint, bold = true, spacing = 0.8)
     }
 }
@@ -176,7 +181,7 @@ fun Field(value: String, onChange: (String) -> Unit, label: String, modifier: Mo
         value, onChange, modifier, label = { T(label, 12, HColors.muted) }, singleLine = singleLine, isError = isError,
         placeholder = placeholder?.let { { T(it, 14, HColors.faint) } },
         textStyle = TextStyle(fontFamily = Mono, fontSize = 15.sp, color = HColors.fg),
-        shape = RoundedCornerShape(8.dp),
+        shape = RectangleShape,
         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HColors.fg, unfocusedBorderColor = HColors.border, cursorColor = HColors.accent,
             focusedContainerColor = HColors.bg, unfocusedContainerColor = HColors.bg),
     )
@@ -187,10 +192,10 @@ fun Field(value: String, onChange: (String) -> Unit, label: String, modifier: Mo
 @Composable
 fun TimeField(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
-    PickerBox(value, label, modifier) { open = true }
+    PickerBox(dev.marobotic.hourglass.core.Dates.t(value), label, modifier) { open = true }
     if (open) {
         val (h, m) = value.split(":").map { it.toIntOrNull() ?: 0 }.let { if (it.size == 2) it[0] to it[1] else 9 to 0 }
-        val state = rememberTimePickerState(h, m, is24Hour = true)
+        val state = rememberTimePickerState(h, m, is24Hour = dev.marobotic.hourglass.core.Dates.h24)
         AlertDialog(
             onDismissRequest = { open = false },
             containerColor = HColors.surface,
@@ -234,7 +239,7 @@ fun DateField(value: String?, onChange: (String?) -> Unit, label: String, modifi
 
 @Composable
 private fun PickerBox(text: String, label: String, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RectangleShape
     Column(modifier) {
         T(label, 11, HColors.muted, spacing = 0.6)
         Spacer(Modifier.height(4.dp))
@@ -248,7 +253,7 @@ fun DayToggles(days: List<Int>, onChange: (List<Int>) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (d in 1..7) {
             val on = d in days
-            val shape = RoundedCornerShape(6.dp)
+            val shape = RectangleShape
             Box(Modifier.size(38.dp).clip(shape).background(if (on) HColors.accent else HColors.bg).border(BorderStroke(1.dp, if (on) HColors.accent else HColors.border), shape)
                 .clickable { onChange(if (on) days - d else (days + d).sorted()) }, contentAlignment = Alignment.Center) {
                 T("MTWTFSS"[d - 1].toString(), 13, if (on) Color.White else HColors.muted, bold = true)
@@ -258,3 +263,11 @@ fun DayToggles(days: List<Int>, onChange: (List<Int>) -> Unit) {
 }
 
 val ScreenPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)
+
+// Square on/off toggle (Material's Switch is a pill).
+@Composable
+fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) {
+    Box(Modifier.size(width = 44.dp, height = 24.dp).background(if (on) HColors.accent else HColors.surface2).border(1.dp, HColors.border).clickable { onChange(!on) }) {
+        Box(Modifier.padding(3.dp).size(18.dp).align(if (on) Alignment.CenterEnd else Alignment.CenterStart).background(if (on) Color.White else HColors.muted))
+    }
+}

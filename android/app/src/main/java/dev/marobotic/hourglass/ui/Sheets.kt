@@ -1,5 +1,7 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,7 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -32,6 +33,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -90,8 +92,8 @@ private fun <T> Segmented(options: List<Pair<String, T>>, value: T, onChange: (T
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for ((label, v) in options) {
             val on = v == value
-            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(if (on) HColors.surface2 else Color.Transparent)
-                .border(1.dp, if (on) HColors.faint else HColors.border, RoundedCornerShape(6.dp)).clickable { onChange(v) }.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Box(Modifier.clip(RectangleShape).background(if (on) HColors.surface2 else Color.Transparent)
+                .border(1.dp, if (on) HColors.faint else HColors.border, RectangleShape).clickable { onChange(v) }.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 T(label, 13, if (on) HColors.fg else HColors.muted)
             }
         }
@@ -178,8 +180,8 @@ private fun CourseSheet(nav: Nav, c: JSONObject?, onDismiss: () -> Unit) {
         Field(teacher, { teacher = it }, "Lecturer", Modifier.fillMaxWidth())
         T("COLOUR", 11, HColors.muted, spacing = 0.6)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (p in PALETTE) Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(hex(p))
-                .border(2.dp, if (p == color) HColors.fg else Color.Transparent, RoundedCornerShape(6.dp)).clickable { color = p })
+            for (p in PALETTE) Box(Modifier.size(32.dp).clip(RectangleShape).background(hex(p))
+                .border(2.dp, if (p == color) HColors.fg else Color.Transparent, RectangleShape).clickable { color = p })
         }
         if (c == null) {
             T("WEEKLY TIMES", 11, HColors.muted, spacing = 0.6)
@@ -287,24 +289,33 @@ private fun AlarmSheet(nav: Nav, onDismiss: () -> Unit) {
 
 // ------------------------------------------------------------------ settings
 
+// Preferences for this phone. The sync server is built in; nothing to type.
 @Composable
 private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
     val repo = nav.repo
-    var server by remember { mutableStateOf(repo.store.meta("server") ?: "") }
-    var token by remember { mutableStateOf(repo.store.meta("token") ?: "") }
+    var tick by remember { mutableStateOf(0) }
+    fun set(k: String, v: String) { repo.setPref(k, v); tick++ }
     val sync = repo.sync.value
-    Sheet("Sync", onDismiss, "Everything works offline. Connect a server to share with your computer and AIs.") {
-        Field(server, { server = it }, "Server URL", Modifier.fillMaxWidth(), placeholder = "https://marobotic.dev/hourglass")
-        Field(token, { token = it }, "Token", Modifier.fillMaxWidth())
-        T(when (sync.state) {
-            "synced" -> "Synced ${Dates.clock(sync.lastOk, repo.zone)}"
-            "offline" -> "Offline: ${sync.error ?: "server unreachable"}. Changes are saved on the phone."
-            else -> "Not connected. Data stays on this phone."
-        }, 12, HColors.muted)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            HButton("Sync now") { repo.syncNow() }
-            Spacer(Modifier.weight(1f))
-            HButton("Save", primary = true) { repo.configure(server, token); onDismiss() }
+    key(tick) {
+        Sheet("Settings", onDismiss) {
+            T("CLOCK", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("12-hour" to false, "24-hour" to true), repo.h24) { set("time_format", if (it) "24h" else "12h") }
+            T("WEEK STARTS ON", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("Saturday" to 6, "Sunday" to 7, "Monday" to 1), repo.firstDay) { set("week_start", it.toString()) }
+            T("LECTURE REMINDERS", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("Off" to 0, "10 min" to 10, "15 min" to 15, "30 min" to 30, "60 min" to 60), repo.reminderMin) { repo.setLectureReminders(it); tick++ }
+            T("Rings before every lecture, on all your devices, even with the app closed.", 12, HColors.faint)
+            Row(verticalAlignment = Alignment.CenterVertically) { T("Alarm sound", 15, modifier = Modifier.weight(1f)); Toggle(repo.sound) { set("sound", it.toString()) } }
+            Row(verticalAlignment = Alignment.CenterVertically) { T("Vibrate", 15, modifier = Modifier.weight(1f)); Toggle(repo.vibrate) { set("vibrate", it.toString()) } }
+            Section("Sync")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                T(when (sync.state) {
+                    "synced" -> "Synced with marobotic.dev · ${Dates.clock(sync.lastOk, repo.zone)}"
+                    "offline" -> "Offline. Changes are kept on the phone and sent later."
+                    else -> "Not connected"
+                }, 13, HColors.muted, modifier = Modifier.weight(1f))
+                HButton("Sync now") { repo.syncNow() }
+            }
         }
     }
 }

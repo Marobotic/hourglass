@@ -1,6 +1,7 @@
 package dev.marobotic.hourglass.data
 
 import android.content.Context
+import dev.marobotic.hourglass.BuildConfig
 import dev.marobotic.hourglass.alarm.Scheduler
 import dev.marobotic.hourglass.core.Dates
 import dev.marobotic.hourglass.core.Now
@@ -43,12 +44,50 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     private val _sync = MutableStateFlow(SyncState())
     val sync: StateFlow<SyncState> = _sync
     private var pending: Job? = null
+    private var syncEnabled = true
+    private val token: String? by lazy { store.meta("token_sealed")?.let { Vault.open(it) } }
+
+    // --- device preferences (not synced) ---
+    val h24 get() = store.meta("time_format") == "24h"
+    val firstDay get() = store.meta("week_start")?.toIntOrNull() ?: 6
+    val sound get() = store.meta("sound") != "false"
+    val vibrate get() = store.meta("vibrate") != "false"
+    // Read from the synced lecture alarms, so every device shows the same value.
+    val reminderMin: Int get() {
+        val lectures = events().filter { it.optString("kind") == "lecture" }.map { it.id }.toSet()
+        return alarms().firstOrNull { it.str("lead_event_id") in lectures && it.optInt("enabled") == 1 }?.optInt("lead_minutes") ?: 0
+    }
+    fun setPref(key: String, value: String) = store.setMeta(key, value)
+
+    // One alarm per lecture, N minutes before (0 = off). Synced, so every
+    // device rings. Same rules as the server's set_lecture_reminders.
+    fun setLectureReminders(minutes: Int) {
+        val lectures = events().filter { it.optString("kind") == "lecture" }
+        val existing = alarms().filter { a -> lectures.any { it.id == a.str("lead_event_id") } }
+        for (ev in lectures) {
+            val c = course(ev.str("course_id"))
+            val room = (ev.str("location") ?: c?.str("location") ?: "").substringBefore(" · ")
+            val start = ev.optString("start_time")
+            val h = Dates.minutes(start) / 60
+            val label = listOf(c?.optString("name") ?: ev.optString("title"), "lecture ${(h + 11) % 12 + 1}:${start.takeLast(2)} ${if (h < 12) "AM" else "PM"}", room).filter { it.isNotBlank() }.joinToString(" · ")
+            val a = existing.firstOrNull { it.str("lead_event_id") == ev.id }
+            if (a != null) store.upsert("alarms", if (minutes > 0) mapOf("enabled" to 1, "lead_minutes" to minutes, "label" to label) else mapOf("enabled" to 0), a.id)
+            else if (minutes > 0) store.upsert("alarms", mapOf("label" to label, "lead_event_id" to ev.id, "lead_minutes" to minutes, "enabled" to 1, "days" to JSONArray()))
+        }
+        store.setMeta("lecture_reminder_min", minutes.toString())
+    }
 
     init {
-        if (autoConfigure && store.meta("server") == null && dev.marobotic.hourglass.BuildConfig.SERVER.isNotEmpty()) {
-            store.setMeta("server", dev.marobotic.hourglass.BuildConfig.SERVER)
-            store.setMeta("token", dev.marobotic.hourglass.BuildConfig.TOKEN)
+        if (autoConfigure) runCatching {
+            // Older builds kept the token in plain text; seal it and drop the copy.
+            store.meta("token")?.let { store.setMeta("token_sealed", Vault.seal(it)); store.setMeta("token", null) }
+            if (store.meta("token_sealed") == null) {
+                val t = Vault.unscramble(BuildConfig.TOKEN_X, BuildConfig.TOKEN_SALT)
+                if (t.isNotEmpty()) store.setMeta("token_sealed", Vault.seal(t))
+            }
+            store.setMeta("server", null)
         }
+        syncEnabled = autoConfigure
         store.onLocalChange = {
             Scheduler.reschedule(ctx, this)
             pending?.cancel()
@@ -157,13 +196,6 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     // --- sync ---
 
-    fun configure(server: String?, token: String?) {
-        store.setMeta("server", server?.trim()?.trimEnd('/')?.ifBlank { null })
-        store.setMeta("token", token?.trim()?.ifBlank { null })
-        store.setMeta("cursor", 0)
-        scope.launch { syncOnce() }
-    }
-
     fun startLoop() = scope.launch {
         while (true) {
             syncOnce()
@@ -175,8 +207,8 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     @Synchronized
     private fun syncOnce() {
-        val server = store.meta("server") ?: run { _sync.value = SyncState("local"); return }
-        val token = store.meta("token") ?: ""
+        val server = BuildConfig.SERVER.takeIf { syncEnabled && it.isNotEmpty() } ?: run { _sync.value = SyncState("local"); return }
+        val token = token ?: run { _sync.value = SyncState("offline", "no sign-in token"); return }
         try {
             val dirty = store.dirty()
             if (dirty.values.any { it.isNotEmpty() }) {

@@ -1,5 +1,7 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -15,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -80,7 +81,7 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
                 items(options.size) { i ->
                     val (label, cid) = options[i]
                     val on = cid == live.str("course_id")
-                    T(label, 13, if (on) HColors.fg else HColors.muted, bold = on, modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                    T(label, 13, if (on) HColors.fg else HColors.muted, bold = on, modifier = Modifier.clip(RectangleShape)
                         .background(if (on) HColors.surface2 else androidx.compose.ui.graphics.Color.Transparent)
                         .clickable { save(); repo.updateNote(id, mapOf("course_id" to cid)) }.padding(horizontal = 10.dp, vertical = 6.dp))
                 }

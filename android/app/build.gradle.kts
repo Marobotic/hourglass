@@ -22,7 +22,12 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "SERVER", "\"${local.getProperty("hourglass.server", "")}\"")
-        buildConfigField("String", "TOKEN", "\"${local.getProperty("hourglass.token", "")}\"")
+        // Scrambled, not plain text; decoded once on first run and sealed with the Keystore.
+        val salt = "dev.marobotic.hourglass"
+        val tok = local.getProperty("hourglass.token", "").toByteArray()
+        val scrambled = tok.mapIndexed { i, b -> "%02x".format((b.toInt() xor salt[i % salt.length].code) and 0xff) }.joinToString("")
+        buildConfigField("String", "TOKEN_X", "\"$scrambled\"")
+        buildConfigField("String", "TOKEN_SALT", "\"$salt\"")
     }
 
     buildTypes {
