@@ -1,0 +1,145 @@
+// SQLite store shared by the server (source of truth) and the Linux sidecar
+// (local replica). Node-only: uses the built-in node:sqlite.
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { TABLES, TABLE_NAMES, normalize } from "../model.js";
+
+const sqlType = { text: "TEXT", int: "INTEGER", bool: "INTEGER", json: "TEXT" };
+
+export class Store {
+  // replica: a client copy. Local changes keep the server rev and are marked
+  // dirty until pushed, instead of taking a new rev.
+  constructor(path, { replica = false } = {}) {
+    this.replica = replica;
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    this.db = new DatabaseSync(path);
+    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
+    this.db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+    for (const t of TABLE_NAMES) {
+      const cols = TABLES[t].map(([n, type]) => `${n} ${sqlType[type]}`).join(", ");
+      this.db.exec(
+        `CREATE TABLE IF NOT EXISTS ${t} (id TEXT PRIMARY KEY, ${cols}, updated_at INTEGER NOT NULL,
+         deleted INTEGER NOT NULL DEFAULT 0, rev INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0)`,
+      );
+      this.db.exec(`CREATE INDEX IF NOT EXISTS ${t}_rev ON ${t}(rev)`);
+    }
+    this.listeners = new Set();
+  }
+
+  meta(key, fallback = null) {
+    const r = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
+    return r ? JSON.parse(r.value) : fallback;
+  }
+
+  setMeta(key, value) {
+    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, JSON.stringify(value));
+  }
+
+  nextRev() {
+    const rev = this.meta("rev", 0) + 1;
+    this.setMeta("rev", rev);
+    return rev;
+  }
+
+  decode(table, r) {
+    if (!r) return null;
+    const out = { ...r };
+    for (const [n, type] of TABLES[table]) if (type === "json" && out[n] != null) out[n] = JSON.parse(out[n]);
+    return out;
+  }
+
+  get(table, id) {
+    return this.decode(table, this.db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id));
+  }
+
+  all(table, { withDeleted = false } = {}) {
+    const sql = `SELECT * FROM ${table}${withDeleted ? "" : " WHERE deleted = 0"}`;
+    return this.db.prepare(sql).all().map((r) => this.decode(table, r));
+  }
+
+  snapshot() {
+    return Object.fromEntries(TABLE_NAMES.map((t) => [t, this.all(t)]));
+  }
+
+  // Write a full, normalized row. Last write wins on updated_at.
+  // mode "local": a change made here (marks dirty on replicas).
+  // mode "remote": a row pulled from the server (keeps its rev, never dirty).
+  write(table, row, { mode = "local", assignRev = !this.replica } = {}) {
+    const existing = this.get(table, row.id);
+    if (existing && existing.updated_at > row.updated_at) return { row: existing, applied: false };
+    const cols = [...TABLES[table].map(([n]) => n), "updated_at", "deleted"];
+    const vals = cols.map((c) => {
+      const type = TABLES[table].find(([n]) => n === c)?.[1];
+      const v = row[c];
+      return type === "json" && v != null ? JSON.stringify(v) : v ?? null;
+    });
+    const rev = mode === "remote" ? row.rev ?? 0 : assignRev ? this.nextRev() : existing?.rev ?? 0;
+    const dirty = mode === "local" && !assignRev ? 1 : 0;
+    const all = ["id", ...cols, "rev", "dirty"];
+    this.db
+      .prepare(`INSERT INTO ${table} (${all.join(", ")}) VALUES (${all.map(() => "?").join(", ")})
+        ON CONFLICT(id) DO UPDATE SET ${all.slice(1).map((c) => `${c} = excluded.${c}`).join(", ")}`)
+      .run(row.id, ...vals, rev, dirty);
+    const saved = this.get(table, row.id);
+    for (const fn of this.listeners) fn(table, saved);
+    return { row: saved, applied: true };
+  }
+
+  // Create or patch through normalize (validates the merged result).
+  upsert(table, patch, opts) {
+    const existing = patch.id ? this.get(table, patch.id) : null;
+    const merged = normalize(table, { ...(existing ?? {}), ...patch, updated_at: Math.max(Date.now(), (existing?.updated_at ?? 0) + 1) });
+    return this.write(table, merged, opts).row;
+  }
+
+  remove(table, id, opts) {
+    const existing = this.get(table, id);
+    if (!existing) return null;
+    return this.write(table, { ...existing, deleted: 1, updated_at: Math.max(Date.now(), existing.updated_at + 1) }, opts).row;
+  }
+
+  changesSince(rev) {
+    const out = {};
+    for (const t of TABLE_NAMES) out[t] = this.db.prepare(`SELECT * FROM ${t} WHERE rev > ? ORDER BY rev`).all(rev).map((r) => this.decode(t, r));
+    return { rev: this.meta("rev", 0), changes: out };
+  }
+
+  dirtyRows() {
+    const out = {};
+    for (const t of TABLE_NAMES) out[t] = this.db.prepare(`SELECT * FROM ${t} WHERE dirty = 1`).all().map((r) => this.decode(t, r));
+    return out;
+  }
+
+  clearDirty(table, id, updatedAt) {
+    this.db.prepare(`UPDATE ${table} SET dirty = 0 WHERE id = ? AND updated_at = ?`).run(id, updatedAt);
+  }
+
+  onChange(fn) {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+}
+
+// Server side of sync: apply rows pushed by a client. A note whose body both
+// sides changed since the client last saw it is kept as a conflict copy.
+export function applyPush(store, changes) {
+  const result = { applied: 0, conflicts: 0 };
+  for (const t of TABLE_NAMES) {
+    for (const incoming of changes?.[t] ?? []) {
+      const row = normalize(t, incoming);
+      const existing = store.get(t, row.id);
+      const baseRev = Number(incoming.base_rev ?? incoming.rev ?? 0);
+      if (t === "notes" && existing && !existing.deleted && !row.deleted && existing.rev > baseRev && existing.body !== row.body) {
+        const loser = existing.updated_at > row.updated_at ? row : existing;
+        const winner = loser === row ? existing : row;
+        if (winner === row) store.write(t, row);
+        store.write(t, normalize(t, { ...loser, id: undefined, title: `${loser.title || "Note"} (conflict copy)`, updated_at: Date.now() }));
+        result.conflicts++;
+        continue;
+      }
+      if (store.write(t, row).applied) result.applied++;
+    }
+  }
+  return result;
+}
