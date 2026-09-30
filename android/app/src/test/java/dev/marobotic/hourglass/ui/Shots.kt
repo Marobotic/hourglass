@@ -20,7 +20,7 @@ class Shots {
 
     private fun demo(): Repo {
         File(paparazzi.context.filesDir, "hourglass.json").delete()
-        val repo = Repo(paparazzi.context)
+        val repo = Repo(paparazzi.context, autoConfigure = false)
         val today = LocalDate.now()
         val h = LocalTime.now().hour
         val live = Slot(Dates.iso(today), "%02d:00".format(maxOf(0, h - 1)), "%02d:00".format(minOf(23, h + 1)))
@@ -37,7 +37,7 @@ class Shots {
 
     @Test fun now() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 0) } }
     @Test fun week() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 1) } }
-    @Test fun courses() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 2) } }
+    @Test fun notes() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 2) } }
     @Test fun time() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 3) } }
     @Test fun course() {
         val repo = demo()

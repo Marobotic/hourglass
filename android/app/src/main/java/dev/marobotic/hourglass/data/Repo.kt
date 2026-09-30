@@ -34,7 +34,9 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 
 // Everything the UI and alarm code touch: the store, the domain operations
 // (same semantics as core/node/service.js) and the sync loop.
-class Repo(private val ctx: Context) {
+// autoConfigure: point a fresh install at the build-time server. Tests pass false
+// so demo data never reaches the real account.
+class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val store = Store(File(ctx.filesDir, "hourglass.json"))
     val zone: ZoneId get() = ZoneId.systemDefault()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -43,6 +45,10 @@ class Repo(private val ctx: Context) {
     private var pending: Job? = null
 
     init {
+        if (autoConfigure && store.meta("server") == null && dev.marobotic.hourglass.BuildConfig.SERVER.isNotEmpty()) {
+            store.setMeta("server", dev.marobotic.hourglass.BuildConfig.SERVER)
+            store.setMeta("token", dev.marobotic.hourglass.BuildConfig.TOKEN)
+        }
         store.onLocalChange = {
             Scheduler.reschedule(ctx, this)
             pending?.cancel()

@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.StickyNote2
@@ -74,13 +75,14 @@ import java.time.LocalDate
 fun kindLabel(k: String) = k.replaceFirstChar { it.uppercase() }
 
 @Composable
-fun NoteRow(n: JSONObject, onClick: () -> Unit) {
+fun NoteRow(n: JSONObject, course: JSONObject? = null, onClick: () -> Unit) {
     HCard(Modifier.fillMaxWidth(), onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(if (n.optInt("pinned") == 1) Icons.Outlined.PushPin else Icons.Outlined.StickyNote2, null,
                 tint = if (n.optInt("pinned") == 1) HColors.gold else HColors.muted, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(8.dp))
-            T(n.optString("title").ifBlank { "Untitled" }, 15, bold = true, maxLines = 1)
+            T(n.optString("title").ifBlank { "Untitled" }, 15, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
+            if (course != null) T(course.str("code") ?: course.optString("name"), 12, hex(course.optString("color")), maxLines = 1)
         }
         val preview = n.optString("body").replace(Regex("[#>*_`\\[\\]-]"), "").replace(Regex("\\s+"), " ").trim()
         if (preview.isNotEmpty()) { Spacer(Modifier.height(4.dp)); T(preview, 13, HColors.muted, maxLines = 2) }
@@ -174,6 +176,13 @@ private fun Hero(nav: Nav, f: Occ, session: List<JSONObject>, clock: Long) {
                 if (f.courseCode != null) T(f.courseCode, 13, HColors.faint)
             }
         }
+        if (f.teacher != null) {
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(Icons.Outlined.Person, null, tint = HColors.muted, modifier = Modifier.size(14.dp).padding(top = 2.dp)); Spacer(Modifier.width(4.dp))
+                T(f.teacher, 13, HColors.muted)
+            }
+        }
         Spacer(Modifier.height(12.dp))
         Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(HColors.surface2)) {
             Box(Modifier.fillMaxWidth(if (live) f.progress(clock) else 0f).fillMaxHeight().clip(RoundedCornerShape(3.dp)).background(color))
@@ -207,7 +216,7 @@ fun TimelineRow(o: Occ, clock: Long, onClick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             T(o.title, 14, maxLines = 1)
-            T(kindLabel(o.kind) + (o.location?.let { " · $it" } ?: ""), 11, HColors.muted, maxLines = 1)
+            T(listOfNotNull(o.location?.substringBefore(" · "), kindLabel(o.kind), o.courseCode).joinToString(" · "), 12, HColors.muted, maxLines = 1)
         }
         if (live) Box(Modifier.size(8.dp).clip(CircleShape).background(HColors.accent))
     }
@@ -290,109 +299,6 @@ fun WeekScreen(nav: Nav, version: Int, clock: Long) {
         }
         FloatingActionButton({ nav.sheets.event = null to mapOf("date" to selected) }, Modifier.align(Alignment.BottomEnd).padding(18.dp), containerColor = HColors.accent) {
             Icon(Icons.Outlined.Add, "Add event", tint = Color.White)
-        }
-    }
-}
-
-// ------------------------------------------------------------------ Courses
-
-@Composable
-fun CoursesScreen(nav: Nav, version: Int) {
-    val repo = nav.repo
-    var query by rememberSaveable { mutableStateOf("") }
-    val courses = remember(version) { repo.courses() }
-    val today = LocalDate.now(repo.zone)
-    val upcoming = remember(version) { repo.occurrences(today, today.plusDays(13)) }
-    val now = System.currentTimeMillis()
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { T("Courses", 24, bold = true) }
-            item { Field(query, { query = it }, "Search all notes", Modifier.fillMaxWidth()) }
-            if (query.isNotBlank()) {
-                val words = query.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
-                val hits = repo.notes().filter { n -> val h = (n.optString("title") + "\n" + n.optString("body")).lowercase(); words.all { it in h } }
-                item { Section("${hits.size} result${if (hits.size == 1) "" else "s"}") }
-                items(hits, key = { "q" + it.id }) { NoteRow(it) { nav.openNote(it) } }
-            } else {
-                if (courses.isEmpty()) item { T("No courses yet. A course is a folder: its weekly sessions and every note you take in them.", 13, HColors.muted) }
-                items(courses, key = { it.id }) { c ->
-                    val next = upcoming.firstOrNull { it.courseId == c.id && it.endMs > now }
-                    val count = repo.notesFor(c.id).size
-                    HCard(Modifier.fillMaxWidth(), stripe = hex(c.optString("color")), onClick = { nav.push(Route.CourseR(c.id)) }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                T(c.optString("name"), 16, bold = true, maxLines = 1)
-                                T(next?.let { "${Dates.WEEKDAYS[Dates.iso(it.date) - 1]} ${it.startTime}" + (it.location?.let { l -> " · $l" } ?: "") } ?: "No upcoming sessions", 12, HColors.muted, maxLines = 1)
-                            }
-                            T("$count", 13, HColors.faint)
-                        }
-                    }
-                }
-            }
-            item { Spacer(Modifier.height(72.dp)) }
-        }
-        FloatingActionButton({ nav.sheets.course = true to null }, Modifier.align(Alignment.BottomEnd).padding(18.dp), containerColor = HColors.accent) {
-            Icon(Icons.Outlined.Add, "Add course", tint = Color.White)
-        }
-    }
-}
-
-@Composable
-fun CourseScreen(nav: Nav, id: String, version: Int, clock: Long) {
-    val repo = nav.repo
-    val c = remember(version) { repo.course(id) } ?: run { nav.pop(); return }
-    val events = remember(version) { repo.events().filter { it.str("course_id") == id } }
-    val notes = remember(version) { repo.notesFor(id) }
-    val color = hex(c.optString("color"))
-    val groups = remember(notes) {
-        val pinned = notes.filter { it.optInt("pinned") == 1 }
-        val byDate = notes.filter { it.optInt("pinned") != 1 }.groupBy { it.str("session_date") ?: "" }.toSortedMap(compareByDescending { it })
-        buildList {
-            if (pinned.isNotEmpty()) add("Pinned" to pinned)
-            for ((k, v) in byDate) add((if (k.isEmpty()) "Course notes" else Dates.short(k)) to v)
-        }
-    }
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton({ nav.pop() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = HColors.fg) }
-            Grow()
-            IconButton({ nav.sheets.course = false to c }) { Icon(Icons.Outlined.Edit, "Edit", tint = HColors.muted) }
-        }
-        LazyColumn(Modifier.fillMaxSize().navigationBarsPadding(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item {
-                Row {
-                    Box(Modifier.width(5.dp).height(52.dp).clip(RoundedCornerShape(3.dp)).background(color))
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        T(c.optString("name"), 24, bold = true)
-                        val meta = listOfNotNull(c.str("code"), c.str("location"), c.str("teacher")).filter { it.isNotBlank() }.joinToString("  ·  ")
-                        if (meta.isNotEmpty()) T(meta, 13, HColors.muted)
-                    }
-                }
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HButton("New note", Modifier.weight(1f), primary = true, icon = Icons.Outlined.EditNote) { nav.openNote(repo.addNote(id, null, null)) }
-                    HButton("Add time", icon = Icons.Outlined.Add) { nav.sheets.event = null to mapOf("course" to id, "weekly" to true) }
-                }
-            }
-            item { Section("Schedule") }
-            items(events, key = { "e" + it.id }) { e ->
-                HCard(Modifier.fillMaxWidth(), onClick = { nav.sheets.event = e to emptyMap() }) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Chip(kindLabel(e.optString("kind")), color)
-                        Spacer(Modifier.width(10.dp))
-                        T("${e.optString("start_time")}–${e.optString("end_time")}", 14, bold = true)
-                        Spacer(Modifier.width(10.dp))
-                        T(repeatText(e), 12, HColors.muted, maxLines = 1, modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-            for ((label, list) in groups) {
-                item(key = "g$label") { Section(label, "${list.size} note${if (list.size == 1) "" else "s"}") }
-                items(list, key = { "n" + it.id }) { NoteRow(it) { nav.openNote(it) } }
-            }
-            if (notes.isEmpty()) item { T("No notes yet. Notes you take during a session land here, grouped by date.", 12, HColors.faint) }
         }
     }
 }

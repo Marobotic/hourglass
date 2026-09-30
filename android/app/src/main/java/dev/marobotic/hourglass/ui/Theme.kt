@@ -103,7 +103,7 @@ fun HourglassTheme(content: @Composable () -> Unit) {
 
 @Composable
 fun T(text: String, size: Int = 14, color: Color = HColors.fg, bold: Boolean = false, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE, spacing: Double = 0.0) =
-    Text(text, modifier, color = color, fontFamily = Mono, fontSize = size.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+    Text(text, modifier, color = color, fontFamily = Mono, fontSize = (if (size <= 12) size + 1 else size).sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
         maxLines = maxLines, letterSpacing = spacing.sp, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
 
 @Composable

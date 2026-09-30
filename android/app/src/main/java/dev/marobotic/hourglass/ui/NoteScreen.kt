@@ -1,6 +1,7 @@
 package dev.marobotic.hourglass.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -73,14 +74,19 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
             }) { Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted) }
         }
         Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (course != null) {
-                    Box(Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(hex(course.optString("color"))))
-                    Spacer(Modifier.width(8.dp))
-                    T(course.optString("name"), 13, maxLines = 1)
+            // Which course and day this note belongs to; changes save at once.
+            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+                val options = listOf<Pair<String, String?>>("No course" to null) + repo.courses().map { (it.str("code") ?: it.optString("name")) to it.optString("id") }
+                items(options.size) { i ->
+                    val (label, cid) = options[i]
+                    val on = cid == live.str("course_id")
+                    T(label, 13, if (on) HColors.fg else HColors.muted, bold = on, modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                        .background(if (on) HColors.surface2 else androidx.compose.ui.graphics.Color.Transparent)
+                        .clickable { save(); repo.updateNote(id, mapOf("course_id" to cid)) }.padding(horizontal = 10.dp, vertical = 6.dp))
                 }
-                T(initial.str("session_date")?.let { (if (course != null) "  ·  " else "") + "session " + Dates.short(it) } ?: if (course == null) "Inbox" else "  ·  course note", 13, HColors.muted, maxLines = 1)
             }
+            Spacer(Modifier.height(8.dp))
+            DateField(live.str("session_date"), { save(); repo.updateNote(id, mapOf("session_date" to it)) }, "DATE", Modifier.fillMaxWidth(), clearable = true)
             BasicTextField(
                 title, { title = it; dirty = true }, Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 26.sp),

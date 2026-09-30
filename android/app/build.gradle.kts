@@ -1,3 +1,9 @@
+import java.util.Properties
+
+// Sync server and token come from local.properties (never committed), so a
+// fresh install syncs with the droplet without typing a token on the phone.
+val local = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,6 +21,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "SERVER", "\"${local.getProperty("hourglass.server", "")}\"")
+        buildConfigField("String", "TOKEN", "\"${local.getProperty("hourglass.token", "")}\"")
     }
 
     buildTypes {
@@ -39,6 +47,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

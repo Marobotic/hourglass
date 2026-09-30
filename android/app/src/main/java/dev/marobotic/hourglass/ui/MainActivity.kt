@@ -22,7 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.StickyNote2
 import androidx.compose.material.icons.outlined.HourglassBottom
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
@@ -109,7 +109,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
         val top = nav.stack.lastOrNull()
         when (top) {
             is Route.NoteR -> NoteScreen(nav, top.id, version)
-            is Route.CourseR -> CourseScreen(nav, top.id, version, clock)
+            is Route.CourseR -> Box(Modifier.statusBarsPadding()) { NotesScreen(nav, version, top.id) }
             null -> Column(Modifier.fillMaxSize()) {
                 // Header
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 6.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -124,12 +124,12 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                     when (nav.tab) {
                         0 -> NowScreen(nav, version, clock)
                         1 -> WeekScreen(nav, version, clock)
-                        2 -> CoursesScreen(nav, version)
+                        2 -> NotesScreen(nav, version)
                         else -> TimeScreen(nav, version, clock)
                     }
                 }
                 NavigationBar(containerColor = HColors.surface, tonalElevation = 0.dp) {
-                    val items = listOf("Now" to Icons.Outlined.Schedule, "Week" to Icons.Outlined.CalendarMonth, "Courses" to Icons.Outlined.Folder, "Time" to Icons.Outlined.HourglassBottom)
+                    val items = listOf("Now" to Icons.Outlined.Schedule, "Week" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Time" to Icons.Outlined.HourglassBottom)
                     for ((i, it) in items.withIndex()) NavigationBarItem(
                         selected = nav.tab == i, onClick = { nav.tab = i },
                         icon = { Icon(it.second, it.first) }, label = { T(it.first, 11) },
