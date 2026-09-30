@@ -28,6 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.StickyNote2
 import androidx.compose.material.icons.outlined.HourglassBottom
+import androidx.compose.material.icons.outlined.Alarm
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
@@ -128,17 +130,28 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                     Box(Modifier.size(8.dp).clip(RectangleShape).background(when (sync.state) { "synced" -> HColors.teal; "offline" -> HColors.orange; else -> HColors.faint }))
                     IconButton({ nav.sheets.settings = true }) { Icon(Icons.Outlined.Settings, "Settings", tint = HColors.muted) }
                 }
+                // Alarms can only take over the screen with this permission (Android 14+).
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val fsiOk = remember(clock / 5000) {
+                    Build.VERSION.SDK_INT < 34 || ctx.getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent()
+                }
+                if (!fsiOk) Row(
+                    Modifier.fillMaxWidth().background(HColors.accent.copy(alpha = 0.2f)).clickable {
+                        ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse("package:" + ctx.packageName)))
+                    }.padding(horizontal = 18.dp, vertical = 10.dp),
+                ) { T("Allow full-screen alarms so they show over the lock screen  →", 13) }
                 Box(Modifier.weight(1f)) {
                     when (nav.tab) {
                         0 -> NowScreen(nav, version, clock)
                         1 -> ScheduleScreen(nav, version, clock)
                         2 -> NotesScreen(nav, version)
-                        else -> TimeScreen(nav, version, clock)
+                        3 -> TimeScreen(nav, version, clock)
+                        else -> ClockScreen(nav, version, clock)
                     }
                 }
                 // Square tab bar (Material's has a pill indicator).
                 Row(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
-                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Time" to Icons.Outlined.HourglassBottom)
+                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Alarms" to Icons.Outlined.Alarm, "Clock" to Icons.Outlined.Public)
                     for ((i, it) in items.withIndex()) {
                         val on = nav.tab == i
                         Column(

@@ -47,51 +47,28 @@ import dev.marobotic.hourglass.ui.PixelLogo
 import kotlinx.coroutines.delay
 
 // Full-screen ringing UI, shown over the lock screen.
+// Full-screen ringing UI over the lock screen. The sound lives in RingService;
+// this screen only shows what is ringing and sends Stop or Snooze.
 class RingActivity : ComponentActivity() {
-    private var player: MediaPlayer? = null
+    companion object { const val CLOSE = "dev.marobotic.hourglass.RING_CLOSED" }
+
+    private val closer = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context, i: android.content.Intent) = finish()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val label = intent.getStringExtra("label") ?: "Alarm"
-        val kind = intent.getStringExtra("kind") ?: "alarm"
-        val id = intent.getStringExtra("id") ?: ""
-        startSound()
+        val (label, kind, _) = RingService.ringing ?: run { finish(); return }
+        registerReceiver(closer, android.content.IntentFilter(CLOSE), android.content.Context.RECEIVER_NOT_EXPORTED)
         setContent {
             HourglassTheme {
-                RingScreen(label, kind,
-                    onSnooze = { App.repo(this).startTimer(5 * 60, "$label (snoozed)"); finishRing(id) },
-                    onDismiss = { finishRing(id) })
+                RingScreen(label, kind, onSnooze = { RingService.snooze(this) }, onDismiss = { RingService.stop(this) })
             }
         }
     }
 
-    private fun startSound() {
-        val repo = App.repo(this)
-        if (repo.vibrate) getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 400), 0))
-        if (!repo.sound) return
-        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        player = runCatching {
-            MediaPlayer().apply {
-                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-                setDataSource(this@RingActivity, uri)
-                isLooping = true
-                prepare()
-                start()
-            }
-        }.getOrNull()
-    }
-
-    private fun finishRing(id: String) {
-        player?.run { stop(); release() }
-        player = null
-        getSystemService(Vibrator::class.java)?.cancel()
-        getSystemService(NotificationManager::class.java).cancel(id.hashCode())
-        finish()
-    }
-
     override fun onDestroy() {
-        player?.release()
-        getSystemService(Vibrator::class.java)?.cancel()
+        runCatching { unregisterReceiver(closer) }
         super.onDestroy()
     }
 }
@@ -104,7 +81,7 @@ private fun RingScreen(label: String, kind: String, onSnooze: () -> Unit, onDism
         while (true) {
             delay(1000)
             now = System.currentTimeMillis()
-            if (now - start > 60_000) onDismiss() // stop ringing after a minute
+            if (now - start > 61_000) onDismiss() // the service gives up after a minute too
         }
     }
     val wobble by rememberInfiniteTransition(label = "wobble").animateFloat(-8f, 8f, infiniteRepeatable(tween(180), RepeatMode.Reverse), label = "r")

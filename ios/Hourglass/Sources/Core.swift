@@ -76,6 +76,7 @@ struct Clock: Codable, Identifiable, Hashable {
     var zone: String = ""
     var label: String = ""
     var position: Int = 0
+    var home: Int? = 0
     var updated_at: Int64 = 0
     var deleted: Int = 0
     var rev: Int64? = 0
@@ -112,7 +113,9 @@ enum Dates {
         c.timeZone = TimeZone(identifier: "UTC")!
         return c
     }()
-    static var local: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = .current; return c }
+    // The app's time zone: the synced home clock, else the phone's zone.
+    static var zone: TimeZone = .current
+    static var local: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = zone; return c }
 
     static func parts(_ s: String) -> (Int, Int, Int) {
         let p = s.split(separator: "-").compactMap { Int($0) }

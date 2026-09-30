@@ -36,6 +36,7 @@ jobs:
           Push-Location server; npm ci --omit=dev --no-audit --no-fund; Pop-Location
           Copy-Item core "$d\core" -Recurse
           Copy-Item server "$d\server" -Recurse
+          Copy-Item assets "$d\assets" -Recurse
           Remove-Item "$d\core\test", "$d\server\test" -Recurse -Force
           Copy-Item linux\sidecar "$d\linux\sidecar" -Recurse
           Copy-Item linux\app\* "$d\linux\app" -Recurse

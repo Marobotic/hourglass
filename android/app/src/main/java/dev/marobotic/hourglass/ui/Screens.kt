@@ -91,64 +91,88 @@ fun NoteRow(n: JSONObject, course: JSONObject? = null, onClick: () -> Unit) {
 
 // ------------------------------------------------------------------ Now
 
+// An overview, not a dashboard: the one thing on or next, the few after it,
+// and one line for the next alarm and any running timer.
 @Composable
 fun NowScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
-    val minute = clock / 60_000
-    val st = remember(version, minute) { repo.now(clock) }
-    val timers = remember(version) { repo.timers() }
     val zone = repo.zone
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val today = remember(clock / 60_000) { java.time.LocalDate.now(zone) }
+    val blocks = remember(version, today) { dev.marobotic.hourglass.core.merge(repo.occurrences(today, today.plusDays(7))) }
+    val current = blocks.firstOrNull { it.endMs > clock }
+    val after = if (current != null) blocks.filter { it.startMs > current.startMs }.take(3) else emptyList()
+    val alarm = remember(version, clock / 60_000) {
+        val cs = repo.store.all("courses"); val es = repo.events()
+        repo.alarms().mapNotNull { a -> dev.marobotic.hourglass.core.Alarms.next(a, cs, es, clock, zone)?.let { a to it } }.minByOrNull { it.second }
+    }
+    val timer = remember(version) { repo.timers().firstOrNull() }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item {
             Column {
-                T(Dates.long(st.today), 13, HColors.muted)
-                T(Dates.clock(clock, zone), 40, bold = true)
+                T(Dates.long(today), 14, HColors.muted)
+                T(Dates.clock(clock, zone), 42, bold = true)
             }
         }
         item {
-            val f = st.focus
-            if (f != null) Hero(nav, f, st.notes.session, clock)
-            else HCard(Modifier.fillMaxWidth()) {
-                T(if (repo.courses().isEmpty()) "Welcome to Hourglass" else "Nothing on right now", 20, bold = true)
-                Spacer(Modifier.height(6.dp))
-                val nx = st.next
-                T(when {
-                    nx != null -> "Next: ${nx.title}, ${Dates.short(nx.date)} at ${Dates.t(nx.startTime)} (${Dates.relative((nx.startMs - clock) / 60_000)})"
-                    repo.courses().isEmpty() -> "Add your courses and their weekly times. During each lecture its notes open right here."
-                    else -> "Nothing scheduled in the next 7 days."
-                }, 13, HColors.muted)
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (repo.courses().isEmpty()) HButton("Add a course", primary = true, icon = Icons.Outlined.Add) { nav.sheets.course = true to null }
-                    else if (nx != null) HButton("Open next session", icon = Icons.Outlined.FolderOpen) { nav.sheets.session = nx }
+            val live = current != null && clock >= current.startMs
+            HCard(Modifier.fillMaxWidth(), stripe = current?.let { hex(it.first.color) } ?: HColors.border) {
+                T(when { current == null -> "NOTHING SCHEDULED"; live -> "NOW"; current.first.date == today -> "NEXT"; else -> "NEXT · " + Dates.short(current.first.date).uppercase() },
+                    12, if (live) HColors.accent else HColors.muted, bold = true, spacing = 2.0)
+                Spacer(Modifier.height(8.dp))
+                T(current?.first?.title ?: "Your week is clear.", 26, bold = true)
+                if (current != null) {
+                    Spacer(Modifier.height(6.dp))
+                    T(Dates.range(current.startTime, current.endTime) + (current.first.location?.let { "   $it" } ?: ""), 18, bold = true)
+                    current.first.teacher?.let { T(it.substringBefore(","), 14, HColors.muted) }
+                    Spacer(Modifier.height(4.dp))
+                    T(if (live) Dates.left((current.endMs - clock + 59_999) / 60_000) else "Starts " + Dates.relative((current.startMs - clock + 59_999) / 60_000), 14, if (live) HColors.accent else HColors.muted)
+                    if (current.first.courseId != null) {
+                        Spacer(Modifier.height(12.dp))
+                        HButton("Notes for this class", primary = true, icon = Icons.Outlined.EditNote) {
+                            val existing = if (live) repo.now(clock).notes.session else emptyList()
+                            nav.sessionNote(current.first, existing)
+                        }
+                    }
+                } else if (repo.courses().isEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    HButton("Add a course", primary = true, icon = Icons.Outlined.Add) { nav.sheets.course = true to null }
                 }
             }
         }
-        if (st.focus != null) {
-            item { Section("This session", Dates.short(st.focus!!.date)) }
-            if (st.notes.session.isEmpty()) item { T("No notes yet for this session.", 12, HColors.faint) }
-            items(st.notes.session, key = { "s" + it.id }) { NoteRow(it) { nav.openNote(it) } }
-            if (st.notes.pinned.isNotEmpty()) {
-                item { Section("Pinned") }
-                items(st.notes.pinned, key = { "p" + it.id }) { NoteRow(it) { nav.openNote(it) } }
-            }
-            if (st.notes.last.isNotEmpty()) {
-                item { Section("Last time", st.notes.lastDate?.let { Dates.short(it) }) }
-                items(st.notes.last, key = { "l" + it.id }) { NoteRow(it) { nav.openNote(it) } }
-            }
-        }
-        item { Section("Today") }
-        if (st.todayList.isEmpty()) item { T("Nothing scheduled today.", 12, HColors.faint) }
-        items(dev.marobotic.hourglass.core.merge(st.todayList), key = { "t" + it.first.eventId }) { b -> BlockCard(b, clock) { nav.sheets.session = b.first } }
-        item { Section("Timers") }
-        items(timers, key = { "tm" + it.id }) { TimerCard(nav, it, clock) }
-        item {
-            @OptIn(ExperimentalLayoutApi::class)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (m in listOf(5, 10, 25, 50)) HButton("$m min") { repo.startTimer(m * 60, if (st.active?.state(clock) == "live") st.active!!.title else "") }
+        if (after.isNotEmpty()) item {
+            Column {
+                T("AFTER THAT", 12, HColors.muted, bold = true, spacing = 2.0)
+                Spacer(Modifier.height(6.dp))
+                for (b in after) {
+                    Row(Modifier.fillMaxWidth().clickable { nav.sheets.session = b.first }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(4.dp).height(22.dp).background(hex(b.first.color)))
+                        Spacer(Modifier.width(12.dp))
+                        T((if (b.first.date == today) "" else Dates.WEEKDAYS[Dates.iso(b.first.date) - 1] + " ") + Dates.t(b.startTime), 15, bold = true, modifier = Modifier.width(118.dp))
+                        T(b.first.title, 15, maxLines = 1, modifier = Modifier.weight(1f))
+                        b.first.location?.let { T(it, 14, HColors.muted) }
+                    }
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+                }
             }
         }
-        item { Spacer(Modifier.height(8.dp)) }
+        if (alarm != null || timer != null) item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                alarm?.let { (a, at) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Alarm, null, tint = HColors.muted, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
+                        T(Dates.clock(at, zone) + if (Dates.local(at, zone).toLocalDate() != today) " " + Dates.WEEKDAYS[Dates.iso(Dates.local(at, zone).toLocalDate()) - 1] else "", 14, bold = true)
+                        Spacer(Modifier.width(8.dp)); T(a.optString("label"), 13, HColors.muted, maxLines = 1)
+                    }
+                }
+                timer?.let { t ->
+                    val remain = if (t.optString("state") == "running") (t.optLong("ends_at") - clock + 999) / 1000 else t.optLong("remaining_s")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Pause, null, tint = HColors.accent, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
+                        T(Dates.countdown(remain) + "  " + t.optString("label"), 14)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -267,7 +291,6 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { WorldClock(nav, version, clock) }
             item { T("Timers", 24, bold = true) }
             item {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -305,50 +328,51 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     }
 }
 
-// Cities side by side: time, day and difference from this phone's zone.
+// World clock tab: cities, and which one is the app's time zone (synced).
 @Composable
-fun WorldClock(nav: Nav, version: Int, clock: Long) {
+fun ClockScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
     val clocks = remember(version) { repo.clocks() }
     var query by rememberSaveable { mutableStateOf("") }
-    var adding by rememberSaveable { mutableStateOf(false) }
     val now = java.time.Instant.ofEpochMilli(clock)
     val home = repo.zone
     val homeDate = now.atZone(home).toLocalDate()
     val homeOff = home.rules.getOffset(now).totalSeconds / 60
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            T("World clock", 24, bold = true, modifier = Modifier.weight(1f))
-            IconButton({ adding = !adding; query = "" }) { Icon(if (adding) Icons.Outlined.Close else Icons.Outlined.Add, "Add city", tint = HColors.muted) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Column {
+                T("World clock", 24, bold = true)
+                T("Hourglass runs on ${home.id.substringAfterLast('/').replace('_', ' ')} time", 13, HColors.muted)
+            }
         }
-        if (adding) {
-            Field(query, { query = it }, "City, e.g. Tokyo", Modifier.fillMaxWidth())
-            val q = query.trim().lowercase().replace(' ', '_')
-            if (q.isNotEmpty()) {
-                val hits = remember(q) { java.time.ZoneId.getAvailableZoneIds().filter { it.contains('/') && it.lowercase().contains(q) }.sorted().take(8) }
-                for (z in hits) {
-                    val t = now.atZone(java.time.ZoneId.of(z))
-                    Row(Modifier.fillMaxWidth().clickable { repo.addClock(z); adding = false; query = "" }.padding(vertical = 8.dp)) {
-                        T(z.substringAfterLast('/').replace('_', ' '), 15, modifier = Modifier.weight(1f))
-                        T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 15, HColors.muted)
-                    }
+        item { Field(query, { query = it }, "Add a city, e.g. Tokyo", Modifier.fillMaxWidth()) }
+        val q = query.trim().lowercase().replace(' ', '_')
+        if (q.isNotEmpty()) {
+            val hits = java.time.ZoneId.getAvailableZoneIds().filter { it.contains('/') && it.lowercase().contains(q) }.sorted().take(8)
+            items(hits, key = { "z$it" }) { z ->
+                val t = now.atZone(java.time.ZoneId.of(z))
+                Row(Modifier.fillMaxWidth().clickable { repo.addClock(z); query = "" }.padding(vertical = 10.dp)) {
+                    T(z.substringAfterLast('/').replace('_', ' '), 15, modifier = Modifier.weight(1f))
+                    T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 15, HColors.muted)
                 }
             }
         }
-        for (c in clocks) {
-            val z = runCatching { java.time.ZoneId.of(c.optString("zone")) }.getOrNull() ?: continue
+        items(clocks, key = { it.optString("id") }) { c ->
+            val z = runCatching { java.time.ZoneId.of(c.optString("zone")) }.getOrNull() ?: return@items
             val t = now.atZone(z)
-            val isHome = z.rules.getOffset(now) == home.rules.getOffset(now) && c.optString("zone") == home.id
+            val isHome = z.id == home.id
             val diff = z.rules.getOffset(now).totalSeconds / 60 - homeOff
             val day = when { t.toLocalDate() == homeDate -> "Today"; t.toLocalDate().isAfter(homeDate) -> "Tomorrow"; else -> "Yesterday" }
             HCard(Modifier.fillMaxWidth(), stripe = if (isHome) HColors.accent else null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        T(c.optString("label"), 15, bold = true)
-                        T(day + if (isHome) "  ·  this phone" else "  ·  " + (if (diff == 0) "same time" else (if (diff > 0) "+" else "−") + "${kotlin.math.abs(diff) / 60}" + (if (kotlin.math.abs(diff) % 60 != 0) ":%02d".format(kotlin.math.abs(diff) % 60) else "") + " h"), 13, HColors.muted)
-                    }
-                    T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 28, bold = true)
-                    if (!isHome) IconButton({ repo.removeClock(c.optString("id")) }) { Icon(Icons.Outlined.Close, "Remove", tint = HColors.faint) }
+                    T(c.optString("label"), 16, bold = true, modifier = Modifier.weight(1f))
+                    if (isHome) Chip("App time", HColors.accent) else IconButton({ repo.removeClock(c.optString("id")) }) { Icon(Icons.Outlined.Close, "Remove", tint = HColors.faint) }
+                }
+                T(Dates.t("%02d:%02d".format(t.hour, t.minute)), 34, bold = true)
+                T(day + if (isHome) "" else "  ·  " + (if (diff == 0) "same time" else (if (diff > 0) "+" else "−") + "${kotlin.math.abs(diff) / 60}" + (if (kotlin.math.abs(diff) % 60 != 0) ":%02d".format(kotlin.math.abs(diff) % 60) else "") + " h"), 14, HColors.muted)
+                if (!isHome) {
+                    Spacer(Modifier.height(8.dp))
+                    HButton("Use as app time") { repo.setHomeClock(c.optString("id")) }
                 }
             }
         }

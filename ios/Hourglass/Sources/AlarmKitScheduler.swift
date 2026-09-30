@@ -63,9 +63,21 @@ enum AlarmKitScheduler {
         let attributes = AlarmAttributes<Meta>(presentation: AlarmPresentation(alert: alert), tintColor: Color(red: 0.69, green: 0.26, blue: 0.26))
         let config = AlarmManager.AlarmConfiguration<Meta>.alarm(
             schedule: .fixed(Date(timeIntervalSince1970: Double(ms) / 1000)),
-            attributes: attributes
+            attributes: attributes,
+            sound: .named(Ringtones.file)
         )
         _ = try? await AlarmManager.shared.schedule(id: UUID(), configuration: config)
     }
     #endif
+}
+
+// Ringtones ship in Resources/Sounds (ring_<name>.wav). Sound off uses a
+// silent file, so the alarm still shows but makes no noise.
+enum Ringtones {
+    static let all = ["classic", "klaxon", "siren", "digital", "rising", "bell"]
+    static var file: String {
+        if UserDefaults.standard.object(forKey: "sound") as? Bool == false { return "ring_silent.wav" }
+        let name = UserDefaults.standard.string(forKey: "ringtone") ?? "classic"
+        return "ring_\(all.contains(name) ? name : "classic").wav"
+    }
 }

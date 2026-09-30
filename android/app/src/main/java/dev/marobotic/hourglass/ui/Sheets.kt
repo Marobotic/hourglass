@@ -305,6 +305,8 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
             T("LECTURE REMINDERS", 11, HColors.muted, spacing = 0.6)
             Segmented(listOf("Off" to 0, "10 min" to 10, "15 min" to 15, "30 min" to 30, "60 min" to 60), repo.reminderMin) { repo.setLectureReminders(it); tick++ }
             T("Rings before every lecture, on all your devices, even with the app closed.", 12, HColors.faint)
+            T("RINGTONE", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("Classic" to "classic", "Klaxon" to "klaxon", "Siren" to "siren", "Digital" to "digital", "Rising" to "rising", "Bell" to "bell"), repo.ringtone) { set("ringtone", it) }
             Row(verticalAlignment = Alignment.CenterVertically) { T("Alarm sound", 15, modifier = Modifier.weight(1f)); Toggle(repo.sound) { set("sound", it.toString()) } }
             Row(verticalAlignment = Alignment.CenterVertically) { T("Vibrate", 15, modifier = Modifier.weight(1f)); Toggle(repo.vibrate) { set("vibrate", it.toString()) } }
             Section("Sync")

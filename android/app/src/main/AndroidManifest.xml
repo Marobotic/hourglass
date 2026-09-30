@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The ringing runs in a foreground service started by the exact alarm, so it
+         sounds even when Android does not let the full-screen alarm open. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
         android:name=".App"
@@ -43,6 +47,7 @@
             android:taskAffinity="dev.marobotic.hourglass.ring" />
 
         <receiver android:name=".alarm.AlarmReceiver" android:exported="false" />
+        <service android:name=".alarm.RingService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
         <receiver android:name=".alarm.BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

@@ -43,7 +43,8 @@ struct RootView: View {
                 NowView(path: $path).tabItem { Label("Now", systemImage: "clock") }.tag(0)
                 ScheduleView().tabItem { Label("Schedule", systemImage: "calendar") }.tag(1)
                 NotesView(path: $path).tabItem { Label("Notes", systemImage: "note.text") }.tag(2)
-                TimeView().tabItem { Label("Time", systemImage: "hourglass") }.tag(3)
+                TimeView().tabItem { Label("Alarms", systemImage: "alarm") }.tag(3)
+                ClockView().tabItem { Label("Clock", systemImage: "globe") }.tag(4)
             }
             .tint(H.fg)
             .toolbar {

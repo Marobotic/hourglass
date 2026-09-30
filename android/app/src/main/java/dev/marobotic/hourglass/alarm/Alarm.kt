@@ -73,24 +73,18 @@ class AlarmReceiver : BroadcastReceiver() {
         Scheduler.reschedule(ctx, repo)
     }
 
+    // The first due item rings (sound + full-screen); the rest only notify.
     private fun ring(ctx: Context, d: Due, n: Int) {
+        if (n == 0) { RingService.start(ctx, d.label, d.kind, d.id); return }
         Scheduler.ensureChannel(ctx)
-        val open = Intent(ctx, RingActivity::class.java)
-            .putExtra("label", d.label).putExtra("kind", d.kind).putExtra("id", d.id)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-        val pi = PendingIntent.getActivity(ctx, d.id.hashCode(), open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notif = NotificationCompat.Builder(ctx, Scheduler.CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(if (d.kind == "timer") "Timer done" else "Alarm")
             .setContentText(d.label)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setFullScreenIntent(pi, true)
-            .setContentIntent(pi)
-            .setOngoing(true)
             .build()
         ctx.getSystemService(NotificationManager::class.java).notify(d.id.hashCode(), notif)
-        if (n == 0) runCatching { ctx.startActivity(open) } // allowed while the full-screen intent is showing; harmless if not
     }
 }
 

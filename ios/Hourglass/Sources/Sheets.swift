@@ -281,6 +281,7 @@ struct SettingsSheet: View {
     @AppStorage("time_format") private var timeFormat = "12h"
     @AppStorage("week_start") private var weekStart = 6
     @AppStorage("sound") private var sound = true
+    @AppStorage("ringtone") private var ringtone = "classic"
 
     var body: some View {
         SheetFrame(title: "Settings") {
@@ -292,6 +293,8 @@ struct SettingsSheet: View {
             Segmented(options: [("Off", 0), ("10 min", 10), ("15 min", 15), ("30 min", 30), ("60 min", 60)],
                       value: Binding(get: { store.reminderMin }, set: { store.setLectureReminders($0) }))
             T(AlarmKitScheduler.active ? "Rings like an alarm before every lecture, even with the app closed." : "Rings before every lecture, even with the app closed. Allow Alarms for Hourglass in Settings to ring through silent mode.", 12, H.faint)
+            T("RINGTONE", 11, H.muted)
+            Segmented(options: Ringtones.all.map { ($0.capitalized, $0) }, value: Binding(get: { ringtone }, set: { ringtone = $0; Notifications.reschedule(store) }))
             HStack { T("Alarm sound", 15); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
             SectionLabel(text: "Sync")
             HStack {

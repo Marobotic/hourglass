@@ -37,11 +37,13 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 // (same semantics as core/node/service.js) and the sync loop.
 // autoConfigure: point a fresh install at the build-time server. Tests pass false
 // so demo data never reaches the real account.
-const val SCHEMA = "2" // bump when a table is added
+const val SCHEMA = "3" // bump when a table or column is added
 
 class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val store = Store(File(ctx.filesDir, "hourglass.json"))
-    val zone: ZoneId get() = ZoneId.systemDefault()
+    // The home clock (synced) is the app's time zone on every device.
+    val zone: ZoneId get() = store.all("clocks").firstOrNull { it.optInt("home") == 1 }?.optString("zone")
+        ?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneId.systemDefault()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _sync = MutableStateFlow(SyncState())
     val sync: StateFlow<SyncState> = _sync
@@ -54,6 +56,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val firstDay get() = store.meta("week_start")?.toIntOrNull() ?: 6
     val sound get() = store.meta("sound") != "false"
     val vibrate get() = store.meta("vibrate") != "false"
+    val ringtone get() = store.meta("ringtone") ?: "classic"
     // Read from the synced lecture alarms, so every device shows the same value.
     val reminderMin: Int get() {
         val lectures = events().filter { it.optString("kind") == "lecture" }.map { it.id }.toSet()
@@ -168,8 +171,14 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         }
         return store.upsert("notes", mapOf(
             "course_id" to courseId, "event_id" to ev, "session_date" to session?.toString(),
-            "title" to (title ?: session?.let { Dates.short(it) } ?: "Untitled"), "body" to body, "pinned" to if (pinned) 1 else 0,
+            "title" to (title ?: nextUntitled()), "body" to body, "pinned" to if (pinned) 1 else 0,
         ))
+    }
+
+    // "Untitled 01", "Untitled 02", ... (same rule as the server).
+    fun nextUntitled(): String {
+        val taken = notes().map { it.optString("title") }.toSet()
+        return generateSequence(1) { it + 1 }.map { "Untitled %02d".format(it) }.first { it !in taken }
     }
 
     fun updateNote(id: String, fields: Map<String, Any?>) = store.upsert("notes", fields, id)
@@ -191,6 +200,12 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         store.upsert("clocks", mapOf("zone" to zone, "label" to zone.substringAfterLast('/').replace('_', ' '), "position" to (clocks().maxOfOrNull { it.optInt("position") } ?: -1) + 1))
     }
     fun removeClock(id: String) = store.remove("clocks", id)
+    fun setHomeClock(id: String) {
+        for (c in clocks()) {
+            val want = if (c.optString("id") == id) 1 else 0
+            if (c.optInt("home") != want) store.upsert("clocks", mapOf("home" to want), c.optString("id"))
+        }
+    }
 
     fun setAlarmEnabled(id: String, on: Boolean) = store.upsert("alarms", mapOf("enabled" to if (on) 1 else 0), id)
     fun removeAlarm(id: String) = store.remove("alarms", id)
@@ -227,8 +242,12 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             if (dirty.values.any { it.isNotEmpty() }) {
                 val changes = JSONObject()
                 for ((t, rows) in dirty) changes.put(t, JSONArray(rows.map { JSONObject(it.toString()).put("base_rev", it.optLong("rev")) }))
-                http("POST", "$server/api/sync", token, JSONObject().put("changes", changes).toString())
-                for ((t, rows) in dirty) for (r in rows) store.clearDirty(t, r.id, r.optLong("updated_at"))
+                val res = JSONObject(http("POST", "$server/api/sync", token, JSONObject().put("changes", changes).toString()))
+                val revs = res.optJSONObject("revs")
+                for ((t, rows) in dirty) for (r in rows) {
+                    revs?.optJSONObject(t)?.let { if (it.has(r.id)) store.setRev(t, r.id, it.getLong(r.id)) }
+                    store.clearDirty(t, r.id, r.optLong("updated_at"))
+                }
             }
             val res = JSONObject(http("GET", "$server/api/sync?since=${store.metaLong("cursor")}", token, null))
             val changes = res.getJSONObject("changes")

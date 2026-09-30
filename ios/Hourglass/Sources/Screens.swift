@@ -2,6 +2,8 @@ import SwiftUI
 
 // MARK: - Now
 
+// An overview, not a dashboard: the one thing on or next, the few after it,
+// and one line for the next alarm and any running timer.
 struct NowView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var sheets: Sheets
@@ -9,103 +11,78 @@ struct NowView: View {
 
     var body: some View {
         Ticking { clock in
-            let st = store.now(clock)
+            let today = Dates.dayOf(clock)
+            let blocks = merge(store.occurrences(today, Dates.add(today, 7)))
+            let current = blocks.first { $0.endMs > clock }
+            let after = current.map { c in Array(blocks.filter { $0.startMs > c.startMs }.prefix(3)) } ?? []
+            let alarm = store.alarms.compactMap { a in Alarms.next(a, store.db.courses, store.db.events, clock).map { (a, $0) } }.min { $0.1 < $1.1 }
+            let timer = store.timers.first
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 0) {
-                        T(Dates.long(st.today), 13, H.muted)
-                        T(Dates.clock(clock), 40, bold: true)
+                        T(Dates.long(today), 14, H.muted)
+                        T(Dates.clock(clock), 42, bold: true)
                     }
-                    if let f = st.focus { hero(f, st.notes.session, clock) } else { idleCard(st, clock) }
-                    if st.focus != nil {
-                        SectionLabel(text: "This session", detail: Dates.short(st.focus!.date))
-                        if st.notes.session.isEmpty { T("No notes yet for this session.", 12, H.faint) }
-                        ForEach(st.notes.session) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                        if !st.notes.pinned.isEmpty {
-                            SectionLabel(text: "Pinned")
-                            ForEach(st.notes.pinned) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                        }
-                        if !st.notes.last.isEmpty {
-                            SectionLabel(text: "Last time", detail: st.notes.lastDate.map(Dates.short))
-                            ForEach(st.notes.last) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
+                    hero(current, today, clock)
+                    if !after.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("AFTER THAT").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted).padding(.bottom, 6)
+                            ForEach(after) { b in
+                                HStack(spacing: 12) {
+                                    Rectangle().fill(Color(hex: b.first.color)).frame(width: 4, height: 22)
+                                    T((b.first.date == today ? "" : Dates.weekdays[Dates.iso(b.first.date) - 1] + " ") + Dates.t(b.start), 15, bold: true).frame(width: 118, alignment: .leading)
+                                    T(b.first.title, 15, lines: 1)
+                                    Spacer()
+                                    if let l = b.first.location { T(l, 14, H.muted) }
+                                }
+                                .padding(.vertical, 12)
+                                .contentShape(Rectangle())
+                                .onTapGesture { sheets.session = b.first }
+                                Rectangle().fill(H.border).frame(height: 1)
+                            }
                         }
                     }
-                    SectionLabel(text: "Today")
-                    if st.todayList.isEmpty { T("Nothing scheduled today.", 12, H.faint) }
-                    ForEach(merge(st.todayList)) { b in BlockCard(b: b, clock: clock).onTapGesture { sheets.session = b.first } }
-                    SectionLabel(text: "Timers")
-                    ForEach(store.timers) { t in TimerCard(t: t, clock: clock) }
-                    HStack(spacing: 8) {
-                        ForEach([5, 10, 25, 50], id: \.self) { m in
-                            HButton("\(m) min") { store.startTimer(seconds: m * 60, label: st.active?.state(clock) == "live" ? st.active!.title : "") }
+                    if let al = alarm {
+                        let a = al.0, at = al.1
+                        HStack(spacing: 8) {
+                            Image(systemName: "alarm").foregroundStyle(H.muted)
+                            T(Dates.clock(at) + (Dates.dayOf(at) == today ? "" : " " + Dates.weekdays[Dates.iso(Dates.dayOf(at)) - 1]), 14, bold: true)
+                            T(a.label, 13, H.muted, lines: 1)
                         }
+                    }
+                    if let t = timer {
+                        let remain = t.state == "running" ? ((t.ends_at ?? 0) - clock + 999) / 1000 : Int64(t.remaining_s ?? 0)
+                        HStack(spacing: 8) { Image(systemName: "timer").foregroundStyle(H.accent); T(Dates.countdown(remain) + "  " + t.label, 14) }
                     }
                 }
-                .padding(.horizontal, 18).padding(.vertical, 12)
+                .padding(20)
             }
             .background(H.bg)
         }
     }
 
-    private func hero(_ f: Occ, _ session: [Note], _ clock: Int64) -> some View {
-        let state = f.state(clock)
-        let color = Color(hex: f.color)
-        return Card(stripe: color) {
-            HStack(spacing: 8) {
-                if state == "live" { Rectangle().fill(H.accent).frame(width: 8, height: 8) }
-                Text(state == "live" ? "LIVE NOW" : state == "ended" ? "JUST ENDED" : "UP NEXT").font(H.mono(11, bold: true)).tracking(1.6)
-                    .foregroundStyle(state == "live" ? H.accent : H.muted)
-                Chip(text: kindLabel(f.kind), tint: color)
-                Spacer()
-                T(Dates.range(f.start_time, f.end_time), 14, H.muted)
-            }
-            T(f.title, 28, bold: true).padding(.top, 8)
-            HStack(spacing: 14) {
-                if let l = f.location { Label { T(l, 13, H.muted) } icon: { Image(systemName: "mappin").foregroundStyle(H.muted) } }
-                if let c = f.code { T(c, 13, H.faint) }
-            }
-            .padding(.top, 4)
-            if let t = f.teacher {
-                Label { T(t, 13, H.muted) } icon: { Image(systemName: "person").foregroundStyle(H.muted) }.padding(.top, 4)
-            }
-            GeometryReader { g in
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(H.surface2)
-                    Rectangle().fill(color).frame(width: g.size.width * (state == "live" ? f.progress(clock) : 0))
+    @ViewBuilder
+    private func hero(_ b: Block?, _ today: String, _ clock: Int64) -> some View {
+        let live = b.map { clock >= $0.startMs } ?? false
+        Card(stripe: b.map { Color(hex: $0.first.color) } ?? H.border) {
+            Text(b == nil ? "NOTHING SCHEDULED" : live ? "NOW" : b!.first.date == today ? "NEXT" : "NEXT · " + Dates.short(b!.first.date).uppercased())
+                .font(H.mono(12, bold: true)).tracking(2).foregroundStyle(live ? H.accent : H.muted)
+            T(b?.first.title ?? "Your week is clear.", 26, bold: true).padding(.top, 8)
+            if let b {
+                T(Dates.range(b.start, b.end) + (b.first.location.map { "   \($0)" } ?? ""), 18, bold: true).padding(.top, 6)
+                if let t = b.first.teacher { T(String(t.split(separator: ",").first ?? ""), 14, H.muted) }
+                T(live ? Dates.left((b.endMs - clock + 59_999) / 60_000) : "Starts " + Dates.relative((b.startMs - clock + 59_999) / 60_000), 14, live ? H.accent : H.muted).padding(.top, 4)
+                if b.first.course_id != nil {
+                    HButton("Notes for this class", icon: "square.and.pencil", primary: true) {
+                        let existing = live ? store.now(clock).notes.session : []
+                        if let n = existing.first { path.append(.note(n.id)) }
+                        else { path.append(.note(store.addNote(course: b.first.course_id, date: b.first.date, event: b.first.event_id).id)) }
+                    }
+                    .padding(.top, 12)
                 }
+            } else if store.courses.isEmpty {
+                HButton("Add a course", icon: "plus", primary: true) { sheets.course = CourseDraft() }.padding(.top, 12)
             }
-            .frame(height: 6).padding(.top, 12)
-            T(state == "live" ? Dates.left((f.end_ms - clock + 59_999) / 60_000) : state == "ended" ? "Ended \(Dates.t(f.end_time)). Good time to tidy your notes." : "Starts " + Dates.relative((f.start_ms - clock + 59_999) / 60_000), 12, H.muted)
-                .padding(.top, 6)
-            HStack(spacing: 8) {
-                HButton(session.isEmpty ? "Start today's note" : "Open today's note", icon: "square.and.pencil", primary: true) {
-                    if let n = session.first { path.append(.note(n.id)) }
-                    else { path.append(.note(store.addNote(course: f.course_id, date: f.date, event: f.event_id).id)) }
-                }
-                HButton("", icon: "folder") { sheets.session = f }
-            }
-            .padding(.top, 12)
-        }
-    }
-
-    private func idleCard(_ st: NowState, _ clock: Int64) -> some View {
-        Card {
-            T(store.courses.isEmpty ? "Welcome to Hourglass" : "Nothing on right now", 20, bold: true)
-            Group {
-                if let nx = st.next {
-                    T("Next: \(nx.title), \(Dates.short(nx.date)) at \(Dates.t(nx.start_time)) (\(Dates.relative((nx.start_ms - clock) / 60_000)))", 13, H.muted)
-                } else if store.courses.isEmpty {
-                    T("Add your courses and their weekly times. During each lecture its notes open right here.", 13, H.muted)
-                } else {
-                    T("Nothing scheduled in the next 7 days.", 13, H.muted)
-                }
-            }
-            .padding(.top, 6)
-            HStack {
-                if store.courses.isEmpty { HButton("Add a course", icon: "plus", primary: true) { sheets.course = CourseDraft() } }
-                else if let nx = st.next { HButton("Open next session", icon: "folder") { sheets.session = nx } }
-            }
-            .padding(.top, 12)
         }
     }
 }
@@ -274,6 +251,8 @@ struct Fab: View {
 
 // Every note in one place: All, No course, or one course (with its lecturers
 // and weekly times), grouped by the day each note belongs to.
+// Notes like Google Keep: course chips, a "Take a note" bar, and a two-column
+// staggered grid of cards tinted with the course colour.
 struct NotesView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var sheets: Sheets
@@ -281,77 +260,91 @@ struct NotesView: View {
     @State var sel = "all"
     @State private var query = ""
     @State private var searching = false
-    @State private var info = false
 
-    // Notes first: one line of controls, folder chips, then the notes. Course
-    // details fold away behind the info button; + writes a note dated today.
     var body: some View {
         let course = store.courses.first { $0.id == sel }
-        let list = store.notes.filter { sel == "all" ? true : sel == "inbox" ? $0.course_id == nil : $0.course_id == sel }.sorted { $0.updated_at > $1.updated_at }
-        let pinned = list.filter { $0.pinned == 1 }
-        let dates = Array(Set(list.filter { $0.pinned == 0 }.compactMap(\.session_date))).sorted(by: >)
-        let undated = list.filter { $0.pinned == 0 && $0.session_date == nil }
-        ZStack(alignment: .bottomTrailing) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        T(course?.name ?? (sel == "inbox" ? "No course" : "Notes"), 20, bold: true, lines: 1)
-                        Spacer()
-                        if course != nil { Button { info.toggle() } label: { Image(systemName: "info.circle").foregroundStyle(info ? H.fg : H.muted).frame(width: 36, height: 36) } }
-                        Button { searching.toggle(); if !searching { query = "" } } label: { Image(systemName: searching ? "xmark" : "magnifyingglass").foregroundStyle(H.muted).frame(width: 36, height: 36) }
-                    }
-                    if searching { Field(label: "Search all notes", text: $query) }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            folder("All", nil, "all")
-                            ForEach(store.courses) { c in folder(c.code ?? c.name, Color(hex: c.color), c.id) }
-                            folder("No course", nil, "inbox")
-                            Button { sheets.course = CourseDraft() } label: { T("+ Course", 14, H.muted).padding(.horizontal, 12).padding(.vertical, 8).overlay(Rectangle().stroke(H.border, lineWidth: 1)) }.buttonStyle(.plain)
-                        }
-                    }
-                    if let c = course, info { details(c) }
-                    if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty {
-                        let words = query.lowercased().split(separator: " ").map(String.init)
-                        let hits = store.notes.filter { n in let h = (n.title + "\n" + n.body).lowercased(); return words.allSatisfy { h.contains($0) } }
-                        SectionLabel(text: "\(hits.count) result\(hits.count == 1 ? "" : "s")")
-                        ForEach(hits) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                    } else {
-                        if !pinned.isEmpty {
-                            SectionLabel(text: "Pinned")
-                            ForEach(pinned) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                        }
-                        ForEach(dates, id: \.self) { d in
-                            SectionLabel(text: (d == Dates.today() ? "Today · " : "") + Dates.short(d))
-                            ForEach(list.filter { $0.pinned == 0 && $0.session_date == d }) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                        }
-                        if !undated.isEmpty {
-                            SectionLabel(text: "No date")
-                            ForEach(undated) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                        }
-                        if list.isEmpty { T("No notes yet. Tap + to write one.", 14, H.faint).padding(.top, 12) }
-                    }
-                    Spacer(minLength: 80)
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        let list = store.notes
+            .filter { sel == "all" ? true : sel == "inbox" ? $0.course_id == nil : $0.course_id == sel }
+            .filter { n in words.isEmpty || words.allSatisfy { (n.title + "\n" + n.body).lowercased().contains($0) } }
+            .sorted { ($0.pinned, $0.updated_at) > ($1.pinned, $1.updated_at) }
+        let cols = columns(list)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    T("Notes", 22, bold: true)
+                    Spacer()
+                    Button { searching.toggle(); if !searching { query = "" } } label: { Image(systemName: searching ? "xmark" : "magnifyingglass").foregroundStyle(H.muted).frame(width: 36, height: 36) }
                 }
-                .padding(.horizontal, 16).padding(.vertical, 8)
+                if searching { Field(label: "Search", text: $query) }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        folder("All", nil, "all")
+                        ForEach(store.courses) { c in folder(c.code ?? c.name, Color(hex: c.color), c.id) }
+                        folder("No course", nil, "inbox")
+                        Button { sheets.course = CourseDraft() } label: { T("+ Course", 14, H.muted).padding(.horizontal, 12).padding(.vertical, 8).overlay(Rectangle().stroke(H.border, lineWidth: 1)) }.buttonStyle(.plain)
+                    }
+                }
+                if let c = course {
+                    T([c.name, c.location, c.teacher.map { String($0.split(separator: ",").first ?? "") }].compactMap { $0 }.joined(separator: "  ·  "), 13, H.muted, lines: 2)
+                        .onTapGesture { sheets.course = CourseDraft(course: c) }
+                }
+                Button { path.append(.note(store.addNote(course: course?.id, date: Dates.today(), event: nil).id)) } label: {
+                    HStack {
+                        T(course.map { "Take a note for \($0.code ?? $0.name)…" } ?? "Take a note…", 15, H.muted)
+                        Spacer()
+                        Image(systemName: "square.and.pencil").foregroundStyle(H.muted)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 14)
+                    .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                HStack(alignment: .top, spacing: 8) {
+                    ForEach(0..<2, id: \.self) { k in
+                        VStack(spacing: 8) { ForEach(cols[k]) { n in keepCard(n) } }.frame(maxWidth: .infinity, alignment: .top)
+                    }
+                }
+                if list.isEmpty { T(query.isEmpty ? "Notes you take will show up here." : "No notes match.", 14, H.faint).padding(.top, 16) }
             }
-            Fab(icon: "square.and.pencil") { path.append(.note(store.addNote(course: course?.id, date: Dates.today(), event: nil).id)) }
+            .padding(.horizontal, 12).padding(.vertical, 8)
         }
         .background(H.bg)
     }
 
-    private func details(_ c: Course) -> some View {
-        Card(stripe: Color(hex: c.color)) {
-            HStack {
-                T([c.code, c.location].compactMap { $0 }.joined(separator: "  ·  "), 14, bold: true)
-                Spacer()
-                Button { sheets.course = CourseDraft(course: c) } label: { Image(systemName: "pencil").foregroundStyle(H.muted) }
-            }
-            ForEach((c.teacher ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }, id: \.self) { t in T(t, 13, H.muted) }
-            ForEach(store.events.filter { $0.course_id == c.id }) { e in
-                T("\(kindLabel(e.kind))  \(Dates.range(e.start_time, e.end_time))  \(repeatText(e))", 13, lines: 1)
-                    .padding(.vertical, 3).onTapGesture { sheets.event = EventDraft(event: e) }
-            }
+    // Two columns; each card goes to the currently shorter one.
+    private func columns(_ list: [Note]) -> [[Note]] {
+        var c: [[Note]] = [[], []]
+        var h = [0, 0]
+        for n in list {
+            let k = h[0] <= h[1] ? 0 : 1
+            c[k].append(n)
+            h[k] += 60 + min(10, n.body.count / 22 + 1) * 18
         }
+        return c
+    }
+
+    private func keepCard(_ n: Note) -> some View {
+        let c = store.course(n.course_id)
+        let tint = c.map { Color(hex: $0.color) }
+        let foot = [sel == "all" ? c.map { $0.code ?? $0.name } : nil, n.session_date.map(Dates.short)].compactMap { $0 }
+        return VStack(alignment: .leading, spacing: 6) {
+            if !n.title.isEmpty {
+                HStack(alignment: .top) {
+                    T(n.title, 15, bold: true)
+                    Spacer(minLength: 0)
+                    if n.pinned == 1 { Image(systemName: "pin.fill").font(.system(size: 11)).foregroundStyle(H.gold) }
+                }
+            }
+            if !n.body.isEmpty { Text(n.body).font(.system(size: 14)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(10) }
+            if !foot.isEmpty { Text(foot.joined(separator: "  ·  ")).font(H.mono(11, bold: true)).foregroundStyle(tint ?? H.muted) }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.map { $0.opacity(0.14) } ?? H.surface)
+        .background(H.bg)
+        .overlay(Rectangle().stroke(tint?.opacity(0.45) ?? H.border, lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture { path.append(.note(n.id)) }
     }
 
     private func folder(_ label: String, _ swatch: Color?, _ key: String) -> some View {
@@ -362,12 +355,11 @@ struct NotesView: View {
                 T(label, 14, on ? H.fg : H.muted, bold: on)
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(on ? H.surface2 : .clear).clipShape(Rectangle())
+            .background(on ? H.surface2 : .clear)
             .overlay(Rectangle().stroke(on ? H.faint : H.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
-
 }
 
 func repeatText(_ e: Event) -> String {
@@ -388,7 +380,6 @@ struct TimeView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        WorldClock(clock: clock)
                         T("Timers", 24, bold: true)
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) { ForEach([1, 5, 10, 15, 25, 45, 50, 90], id: \.self) { m in HButton("\(m) min") { store.startTimer(seconds: m * 60, label: "") } } }
@@ -488,59 +479,56 @@ struct NoteView: View {
     }
 }
 
-// Cities: time, day and difference from this phone's zone. Synced.
-struct WorldClock: View {
+// World clock tab: cities, and which one is the app's time zone (synced).
+struct ClockView: View {
     @EnvironmentObject var store: Store
-    let clock: Int64
-    @State private var adding = false
     @State private var query = ""
 
     var body: some View {
-        let now = Date(timeIntervalSince1970: Double(clock) / 1000)
-        let home = TimeZone.current
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                T("World clock", 24, bold: true)
-                Spacer()
-                Button { adding.toggle(); query = "" } label: { Image(systemName: adding ? "xmark" : "plus").foregroundStyle(H.muted).frame(width: 36, height: 36) }
-            }
-            if adding {
-                Field(label: "City", text: $query, placeholder: "e.g. Tokyo")
-                let q = query.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: " ", with: "_")
-                if !q.isEmpty {
-                    ForEach(TimeZone.knownTimeZoneIdentifiers.filter { $0.contains("/") && $0.lowercased().contains(q) }.prefix(8), id: \.self) { z in
-                        Button { store.addClock(z); adding = false; query = "" } label: {
-                            HStack {
-                                T(z.components(separatedBy: "/").last!.replacingOccurrences(of: "_", with: " "), 15)
-                                Spacer()
-                                T(time(now, TimeZone(identifier: z)!), 15, H.muted)
-                            }
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.plain)
+        Ticking { clock in
+            let now = Date(timeIntervalSince1970: Double(clock) / 1000)
+            let home = Dates.zone
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        T("World clock", 24, bold: true)
+                        T("Hourglass runs on \(city(home.identifier)) time", 13, H.muted)
                     }
-                }
-            }
-            ForEach(store.clocks) { c in
-                if let z = TimeZone(identifier: c.zone) {
-                    let isHome = z.identifier == home.identifier
-                    let diff = (z.secondsFromGMT(for: now) - home.secondsFromGMT(for: now)) / 60
-                    Card(stripe: isHome ? H.accent : nil) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                T(c.label, 15, bold: true)
-                                T(day(now, z, home) + (isHome ? "  ·  this phone" : "  ·  " + diffText(diff)), 13, H.muted)
+                    Field(label: "Add a city", text: $query, placeholder: "e.g. Tokyo")
+                    let q = query.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: " ", with: "_")
+                    if !q.isEmpty {
+                        ForEach(Array(TimeZone.knownTimeZoneIdentifiers.filter { $0.contains("/") && $0.lowercased().contains(q) }.prefix(8)), id: \.self) { z in
+                            Button { store.addClock(z); query = "" } label: {
+                                HStack { T(city(z), 15); Spacer(); T(time(now, TimeZone(identifier: z)!), 15, H.muted) }.padding(.vertical, 10)
                             }
-                            Spacer()
-                            T(time(now, z), 28, bold: true)
-                            if !isHome { Button { store.removeClock(c) } label: { Image(systemName: "xmark").foregroundStyle(H.faint).frame(width: 32, height: 32) } }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    ForEach(store.clocks) { c in
+                        if let z = TimeZone(identifier: c.zone) {
+                            let isHome = z.identifier == home.identifier
+                            let diff = (z.secondsFromGMT(for: now) - home.secondsFromGMT(for: now)) / 60
+                            Card(stripe: isHome ? H.accent : nil) {
+                                HStack {
+                                    T(c.label, 16, bold: true)
+                                    Spacer()
+                                    if isHome { Chip(text: "App time", tint: H.accent) }
+                                    else { Button { store.removeClock(c) } label: { Image(systemName: "xmark").foregroundStyle(H.faint).frame(width: 32, height: 32) } }
+                                }
+                                T(time(now, z), 34, bold: true)
+                                T(day(now, z, home) + (isHome ? "" : "  ·  " + diffText(diff)), 14, H.muted)
+                                if !isHome { HButton("Use as app time") { store.setHome(c) }.padding(.top, 8) }
+                            }
                         }
                     }
                 }
+                .padding(16)
             }
+            .background(H.bg)
         }
     }
 
+    private func city(_ z: String) -> String { z.components(separatedBy: "/").last!.replacingOccurrences(of: "_", with: " ") }
     private func time(_ now: Date, _ z: TimeZone) -> String {
         var cal = Calendar(identifier: .gregorian); cal.timeZone = z
         let c = cal.dateComponents([.hour, .minute], from: now)

@@ -56,11 +56,12 @@ final class Store: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "token")
         UserDefaults.standard.removeObject(forKey: "server")
         // New table since the last run: pull everything once.
-        if UserDefaults.standard.integer(forKey: "schema") != 2 {
+        if UserDefaults.standard.integer(forKey: "schema") != 3 {
             UserDefaults.standard.set(0, forKey: "cursor")
-            UserDefaults.standard.set(2, forKey: "schema")
+            UserDefaults.standard.set(3, forKey: "schema")
         }
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
+        applyZone()
     }
 
     // MARK: reads
@@ -81,7 +82,28 @@ final class Store: ObservableObject {
 
     private func stamp(_ old: Int64) -> Int64 { max(nowMs(), old + 1) }
 
+    func applyZone() {
+        Dates.zone = db.clocks.first { $0.deleted == 0 && $0.home == 1 }.flatMap { TimeZone(identifier: $0.zone) } ?? .current
+    }
+
+    func setHome(_ k: Clock) {
+        for c in clocks {
+            var c = c
+            let want = c.id == k.id ? 1 : 0
+            if (c.home ?? 0) != want { c.home = want; save(c) }
+        }
+    }
+
+    // "Untitled 01", "Untitled 02", ... (same rule as the server).
+    func nextUntitled() -> String {
+        let taken = Set(notes.map(\.title))
+        var i = 1
+        while taken.contains(String(format: "Untitled %02ld", i)) { i += 1 }
+        return String(format: "Untitled %02ld", i)
+    }
+
     private func changed() {
+        applyZone()
         if let data = try? JSONEncoder().encode(db) { try? data.write(to: file, options: .atomic) }
         Notifications.reschedule(self)
         syncTask?.cancel()
@@ -168,7 +190,7 @@ final class Store: ObservableObject {
             let today = Dates.today()
             if let o = occurrences(today, today).first(where: { $0.course_id == course }) { session = today; ev = ev ?? o.event_id }
         }
-        return save(Note(course_id: course, event_id: ev, session_date: session, title: title ?? session.map(Dates.short) ?? "Untitled", body: body, pinned: pinned ? 1 : 0))
+        return save(Note(course_id: course, event_id: ev, session_date: session, title: title ?? nextUntitled(), body: body, pinned: pinned ? 1 : 0))
     }
 
     func deleteNote(_ id: String) {
@@ -217,6 +239,16 @@ final class Store: ObservableObject {
     }
 
     private struct Pull: Decodable { let rev: Int64; let changes: DB }
+    private struct PushResult: Decodable { let revs: [String: [String: Int64]]? }
+
+    private func applyRevs(_ revs: [String: [String: Int64]]) {
+        for (id, r) in revs["courses"] ?? [:] { if let i = db.courses.firstIndex(where: { $0.id == id }) { db.courses[i].rev = r } }
+        for (id, r) in revs["events"] ?? [:] { if let i = db.events.firstIndex(where: { $0.id == id }) { db.events[i].rev = r } }
+        for (id, r) in revs["notes"] ?? [:] { if let i = db.notes.firstIndex(where: { $0.id == id }) { db.notes[i].rev = r } }
+        for (id, r) in revs["alarms"] ?? [:] { if let i = db.alarms.firstIndex(where: { $0.id == id }) { db.alarms[i].rev = r } }
+        for (id, r) in revs["clocks"] ?? [:] { if let i = db.clocks.firstIndex(where: { $0.id == id }) { db.clocks[i].rev = r } }
+        for (id, r) in revs["timers"] ?? [:] { if let i = db.timers.firstIndex(where: { $0.id == id }) { db.timers[i].rev = r } }
+    }
 
     func sync() async {
         guard !server.isEmpty, !token.isEmpty, let base = URL(string: server) else { syncState = "local"; return }
@@ -234,8 +266,11 @@ final class Store: ObservableObject {
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.httpBody = try JSONEncoder().encode(["changes": dirty])
-                try await check(URLSession.shared.data(for: req))
+                let (pd, pr) = try await URLSession.shared.data(for: req)
+                try check((pd, pr))
                 clean(pushed)
+                // Record the rev each pushed row got: the base for the next edit.
+                if let res = try? JSONDecoder().decode(PushResult.self, from: pd) { applyRevs(res.revs ?? [:]) }
             }
             var comps = URLComponents(url: base.appendingPathComponent("api/sync"), resolvingAgainstBaseURL: false)!
             comps.queryItems = [URLQueryItem(name: "since", value: String(cursor))]
@@ -243,6 +278,7 @@ final class Store: ObservableObject {
             try check((data, res))
             let pull = try JSONDecoder().decode(Pull.self, from: data)
             merge(pull.changes)
+            applyZone()
             cursor = pull.rev
             if let d = try? JSONEncoder().encode(db) { try? d.write(to: file, options: .atomic) }
             Notifications.reschedule(self)
@@ -324,7 +360,7 @@ enum Notifications {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.sound = UserDefaults.standard.object(forKey: "sound") as? Bool == false ? nil : .default
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(Ringtones.file))
             content.interruptionLevel = .timeSensitive
             let date = Date(timeIntervalSince1970: Double(at) / 1000)
             let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
