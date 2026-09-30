@@ -34,6 +34,9 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         # Talks to a sync server you run yourself, which may be plain http on a LAN.
+        # Filled from CI secrets (XcodeGen expands env vars); empty locally.
+        HourglassServer: ${HOURGLASS_SERVER}
+        HourglassToken: ${HOURGLASS_TOKEN}
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         # Resource groups are flattened into the bundle root.

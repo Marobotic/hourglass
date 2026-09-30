@@ -65,6 +65,9 @@ struct NowView: View {
                 if let c = f.code { T(c, 13, H.faint) }
             }
             .padding(.top, 4)
+            if let t = f.teacher {
+                Label { T(t, 13, H.muted) } icon: { Image(systemName: "person").foregroundStyle(H.muted) }.padding(.top, 4)
+            }
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     Capsule().fill(H.surface2)
@@ -119,7 +122,7 @@ struct TimelineRow: View {
             RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 3, height: 34)
             VStack(alignment: .leading, spacing: 1) {
                 T(o.title, 14, lines: 1)
-                T(kindLabel(o.kind) + (o.location.map { " · \($0)" } ?? ""), 11, H.muted, lines: 1)
+                T([o.location.map { String($0.components(separatedBy: " · ")[0]) }, kindLabel(o.kind), o.code].compactMap { $0 }.joined(separator: " · "), 12, H.muted, lines: 1)
             }
             Spacer()
             if live { Circle().fill(H.accent).frame(width: 8, height: 8) }
@@ -230,44 +233,68 @@ struct Fab: View {
     }
 }
 
-// MARK: - Courses
+// MARK: - Notes
 
-struct CoursesView: View {
+// Every note in one place: All, No course, or one course (with its lecturers
+// and weekly times), grouped by the day each note belongs to.
+struct NotesView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var sheets: Sheets
     @Binding var path: [Route]
+    @State var sel = "all"
     @State private var query = ""
+    @State private var newDate: String? = Dates.today()
 
     var body: some View {
-        let today = Dates.today()
-        let upcoming = store.occurrences(today, Dates.add(today, 13))
-        let now = nowMs()
+        let course = store.courses.first { $0.id == sel }
+        let list = store.notes.filter { sel == "all" ? true : sel == "inbox" ? $0.course_id == nil : $0.course_id == sel }.sorted { $0.updated_at > $1.updated_at }
+        let pinned = list.filter { $0.pinned == 1 }
+        let dates = Array(Set(list.filter { $0.pinned == 0 }.compactMap(\.session_date))).sorted(by: >)
+        let undated = list.filter { $0.pinned == 0 && $0.session_date == nil }
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    T("Courses", 24, bold: true)
+                    T("Notes", 26, bold: true)
                     Field(label: "Search all notes", text: $query)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            folder("All", nil, "all")
+                            folder("No course", nil, "inbox")
+                            ForEach(store.courses) { c in folder(c.code ?? c.name, Color(hex: c.color), c.id) }
+                        }
+                    }
                     if !query.trimmingCharacters(in: .whitespaces).isEmpty {
                         let words = query.lowercased().split(separator: " ").map(String.init)
                         let hits = store.notes.filter { n in let h = (n.title + "\n" + n.body).lowercased(); return words.allSatisfy { h.contains($0) } }
                         SectionLabel(text: "\(hits.count) result\(hits.count == 1 ? "" : "s")")
                         ForEach(hits) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
                     } else {
-                        if store.courses.isEmpty { T("No courses yet. A course is a folder: its weekly sessions and every note you take in them.", 13, H.muted) }
-                        ForEach(store.courses) { c in
-                            let next = upcoming.first { $0.course_id == c.id && $0.end_ms > now }
-                            Card(stripe: Color(hex: c.color)) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        T(c.name, 16, bold: true, lines: 1)
-                                        T(next.map { "\(Dates.weekdays[Dates.iso($0.date) - 1]) \($0.start_time)" + ($0.location.map { " · \($0)" } ?? "") } ?? "No upcoming sessions", 12, H.muted, lines: 1)
-                                    }
-                                    Spacer()
-                                    T("\(store.courseNotes(c.id).count)", 13, H.faint)
+                        if let c = course { header(c) }
+                        Card {
+                            T(course.map { "New note for \($0.code ?? $0.name)" } ?? "New note", 14, H.muted)
+                            HStack(alignment: .bottom) {
+                                DateField(label: "Date", value: $newDate)
+                                Spacer()
+                                HButton("Write", icon: "square.and.pencil", primary: true) {
+                                    path.append(.note(store.addNote(course: course?.id, date: newDate ?? Dates.today(), event: nil).id))
                                 }
                             }
-                            .onTapGesture { path.append(.course(c.id)) }
+                            .padding(.top, 8)
                         }
+                        if !pinned.isEmpty {
+                            SectionLabel(text: "Pinned", detail: "\(pinned.count)")
+                            ForEach(pinned) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
+                        }
+                        ForEach(dates, id: \.self) { d in
+                            let day = list.filter { $0.pinned == 0 && $0.session_date == d }
+                            SectionLabel(text: (d == Dates.today() ? "Today · " : "") + Dates.long(d), detail: "\(day.count) note\(day.count == 1 ? "" : "s")")
+                            ForEach(day) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
+                        }
+                        if !undated.isEmpty {
+                            SectionLabel(text: "No date", detail: "\(undated.count)")
+                            ForEach(undated) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
+                        }
+                        if list.isEmpty { T("No notes yet.", 13, H.faint) }
                     }
                     Spacer(minLength: 72)
                 }
@@ -277,63 +304,47 @@ struct CoursesView: View {
         }
         .background(H.bg)
     }
-}
 
-struct CourseDetail: View {
-    @EnvironmentObject var store: Store
-    @EnvironmentObject var sheets: Sheets
-    let id: String
-    @Binding var path: [Route]
-
-    var body: some View {
-        if let c = store.course(id) {
-            let color = Color(hex: c.color)
-            let events = store.events.filter { $0.course_id == id }
-            let notes = store.courseNotes(id)
-            let pinned = notes.filter { $0.pinned == 1 }
-            let dates = Array(Set(notes.filter { $0.pinned == 0 }.map { $0.session_date ?? "" })).sorted(by: >)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 12) {
-                        RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 5, height: 52)
-                        VStack(alignment: .leading, spacing: 2) {
-                            T(c.name, 24, bold: true)
-                            let meta = [c.code, c.location, c.teacher].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "  ·  ")
-                            if !meta.isEmpty { T(meta, 13, H.muted) }
-                        }
-                    }
-                    HStack(spacing: 8) {
-                        HButton("New note", icon: "square.and.pencil", primary: true) { path.append(.note(store.addNote(course: id, date: nil, event: nil).id)) }
-                        HButton("Add time", icon: "plus") { sheets.event = EventDraft(course: id, weekly: true) }
-                    }
-                    SectionLabel(text: "Schedule")
-                    ForEach(events) { e in
-                        Card {
-                            HStack(spacing: 10) {
-                                Chip(text: kindLabel(e.kind), tint: color)
-                                T("\(e.start_time)–\(e.end_time)", 14, bold: true)
-                                T(repeatText(e), 12, H.muted, lines: 1)
-                            }
-                        }
-                        .onTapGesture { sheets.event = EventDraft(event: e) }
-                    }
-                    if !pinned.isEmpty {
-                        SectionLabel(text: "Pinned", detail: "\(pinned.count)")
-                        ForEach(pinned) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                    }
-                    ForEach(dates, id: \.self) { d in
-                        let list = notes.filter { $0.pinned == 0 && ($0.session_date ?? "") == d }
-                        SectionLabel(text: d.isEmpty ? "Course notes" : Dates.short(d), detail: "\(list.count) note\(list.count == 1 ? "" : "s")")
-                        ForEach(list) { n in NoteRow(note: n).onTapGesture { path.append(.note(n.id)) } }
-                    }
-                    if notes.isEmpty { T("No notes yet. Notes you take during a session land here, grouped by date.", 12, H.faint) }
-                }
-                .padding(.horizontal, 18).padding(.vertical, 12)
+    private func folder(_ label: String, _ swatch: Color?, _ key: String) -> some View {
+        let on = sel == key
+        return Button { sel = key } label: {
+            HStack(spacing: 8) {
+                if let swatch { RoundedRectangle(cornerRadius: 2).fill(swatch).frame(width: 10, height: 10) }
+                T(label, 14, on ? H.fg : H.muted, bold: on)
             }
-            .background(H.bg)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { sheets.course = CourseDraft(course: c) } label: { Image(systemName: "pencil").foregroundStyle(H.muted) } } }
-        } else {
-            Color.clear.onAppear { if !path.isEmpty { path.removeLast() } }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(on ? H.surface2 : .clear).clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? H.faint : H.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func header(_ c: Course) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 3).fill(Color(hex: c.color)).frame(width: 5, height: 48)
+            VStack(alignment: .leading, spacing: 2) {
+                T(c.name, 22, bold: true)
+                T([c.code, c.location].compactMap { $0 }.joined(separator: "  ·  "), 14, H.muted)
+            }
+            Spacer()
+            Button { sheets.course = CourseDraft(course: c) } label: { Image(systemName: "pencil").foregroundStyle(H.muted) }
+        }
+        let teachers = (c.teacher ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if !teachers.isEmpty {
+            SectionLabel(text: "Lecturers")
+            ForEach(teachers, id: \.self) { t in Label { T(t, 14) } icon: { Image(systemName: "person").foregroundStyle(H.muted) } }
+        }
+        SectionLabel(text: "Weekly times")
+        ForEach(store.events.filter { $0.course_id == c.id }) { e in
+            Card {
+                HStack(spacing: 10) {
+                    Chip(text: kindLabel(e.kind), tint: Color(hex: c.color))
+                    T("\(e.start_time)–\(e.end_time)", 15, bold: true)
+                    T(repeatText(e), 13, H.muted, lines: 1)
+                }
+            }
+            .onTapGesture { sheets.event = EventDraft(event: e) }
         }
     }
 }
@@ -414,12 +425,11 @@ struct NoteView: View {
 
     var body: some View {
         let note = store.notes.first { $0.id == id }
-        let course = store.course(note?.course_id)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                if let course { RoundedRectangle(cornerRadius: 2).fill(Color(hex: course.color)).frame(width: 10, height: 10); T(course.name, 13, lines: 1) }
-                T(note?.session_date.map { (course != nil ? "  ·  " : "") + "session " + Dates.short($0) } ?? (course == nil ? "Inbox" : "  ·  course note"), 13, H.muted, lines: 1)
-            }
+            // Which course and day this note belongs to; changes save at once.
+            Segmented(options: [("No course", String?.none)] + store.courses.map { ($0.code ?? $0.name, Optional($0.id)) },
+                      value: Binding(get: { note?.course_id }, set: { v in if var n = note { save(); n = store.notes.first { $0.id == id } ?? n; n.course_id = v; store.save(n) } }))
+            DateField(label: "Date", value: Binding(get: { note?.session_date }, set: { v in if var n = note { save(); n = store.notes.first { $0.id == id } ?? n; n.session_date = v; store.save(n) } }), clearable: true)
             TextField("", text: $title, prompt: Text("Title").foregroundStyle(H.faint))
                 .font(H.mono(26, bold: true)).foregroundStyle(H.fg).tint(H.accent)
                 .onChange(of: title) { _, _ in if loaded { dirty = true } }

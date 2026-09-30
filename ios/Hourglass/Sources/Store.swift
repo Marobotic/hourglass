@@ -31,6 +31,13 @@ final class Store: ObservableObject {
     private var syncTask: Task<Void, Never>?
 
     init() {
+        // A fresh install points at the server baked in at build time (CI secret).
+        if server.isEmpty, let s = Bundle.main.object(forInfoDictionaryKey: "HourglassServer") as? String, s.hasPrefix("http") {
+            server = s
+            token = Bundle.main.object(forInfoDictionaryKey: "HourglassToken") as? String ?? ""
+            UserDefaults.standard.set(server, forKey: "server")
+            UserDefaults.standard.set(token, forKey: "token")
+        }
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
     }
 

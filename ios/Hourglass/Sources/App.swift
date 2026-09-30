@@ -42,7 +42,7 @@ struct RootView: View {
             TabView(selection: $tab) {
                 NowView(path: $path).tabItem { Label("Now", systemImage: "clock") }.tag(0)
                 WeekView().tabItem { Label("Week", systemImage: "calendar") }.tag(1)
-                CoursesView(path: $path).tabItem { Label("Courses", systemImage: "folder") }.tag(2)
+                NotesView(path: $path).tabItem { Label("Notes", systemImage: "note.text") }.tag(2)
                 TimeView().tabItem { Label("Time", systemImage: "hourglass") }.tag(3)
             }
             .tint(H.fg)
@@ -63,7 +63,7 @@ struct RootView: View {
             .navigationDestination(for: Route.self) { r in
                 switch r {
                 case .note(let id): NoteView(id: id)
-                case .course(let id): CourseDetail(id: id, path: $path)
+                case .course(let id): NotesView(path: $path, sel: id)
                 }
             }
             .background(H.bg)
