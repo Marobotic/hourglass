@@ -336,105 +336,75 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     }
 }
 
-// Timers tab: the one that ends first, big; the others under it; a quick way
-// to start or schedule one; saved timers to start again. Every device rings.
+// Timers: one big number with Start / Stop. Tap the number to change the
+// length; + schedules one for later, listed under the buttons.
 @Composable
 fun TimersScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
     val all = remember(version) { repo.timers() }
-    val active = all.filter { it.optString("state") == "running" || it.optString("state") == "paused" }
-        .sortedWith(compareBy<JSONObject> { it.optString("state") == "paused" }.thenBy { it.optLong("ends_at") })
-    val saved = all.filter { it.optString("state") == "idle" }
-    var focus by rememberSaveable { mutableStateOf<String?>(null) }
-    val hero = active.firstOrNull { it.id == focus } ?: active.firstOrNull()
-    var minutes by rememberSaveable { mutableStateOf("") }
-    var label by rememberSaveable { mutableStateOf("") }
-    var at by rememberSaveable { mutableStateOf<String?>(null) }
-    var keep by rememberSaveable { mutableStateOf(false) }
-    fun start(m: Double) {
-        val startAt = at?.let {
-            val now = java.time.ZonedDateTime.now(repo.zone)
-            var d = now.toLocalDate().atTime(Dates.time(it)).atZone(repo.zone)
-            if (!d.isAfter(now)) d = d.plusDays(1)
-            d.toInstant().toEpochMilli()
-        }
-        repo.startTimer((m * 60).toInt(), label, keep, startAt)
-        label = ""; minutes = ""; at = null
-    }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { T("Timers", 24, bold = true) }
+    val current = all.filter { (it.optString("state") == "running" && it.optLong("start_at") <= clock) || it.optString("state") == "paused" }.minByOrNull { it.optLong("ends_at") }
+    val upcoming = all.filter { it.optString("state") == "running" && it.optLong("start_at") > clock }.sortedBy { it.optLong("start_at") }
+    var length by rememberSaveable { mutableStateOf(25) }
+    var dialog by remember { mutableStateOf<Boolean?>(null) } // false: length, true: for later
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, horizontalAlignment = Alignment.CenterHorizontally) {
+        item { Spacer(Modifier.height(48.dp)) }
+        item { T(current?.optString("label") ?: "Tap the time to change it", 14, HColors.muted) }
         item {
-            val running = hero?.optString("state") == "running"
-            val waiting = running && hero!!.optLong("start_at") > clock
-            val left = hero?.let { repo.timerLeft(it, clock) } ?: 0L
-            HCard(Modifier.fillMaxWidth(), stripe = if (hero == null) HColors.border else if (running) HColors.accent else HColors.gold) {
-                Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    T(when { hero == null -> "NO TIMER RUNNING"; waiting -> "STARTS AT " + Dates.clock(hero!!.optLong("start_at"), repo.zone).uppercase(); running -> "RUNNING"; else -> "PAUSED" },
-                        12, if (running && !waiting) HColors.accent else HColors.muted, bold = true, spacing = 2.0)
-                    T(Dates.countdown(left), 64, if (running) HColors.fg else HColors.muted, bold = true)
-                    if (hero != null) {
-                        T(hero.optString("label"), 15, HColors.muted, maxLines = 1)
-                        Spacer(Modifier.height(12.dp))
-                        val frac = (left.toFloat() / maxOf(1, hero.optInt("duration_s"))).coerceIn(0f, 1f)
-                        Box(Modifier.fillMaxWidth().height(6.dp).background(HColors.surface2)) {
-                            Box(Modifier.fillMaxWidth(frac).fillMaxHeight().background(if (running) HColors.accent else HColors.gold))
-                        }
-                        Spacer(Modifier.height(14.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            HButton(if (running) "Pause" else "Resume", primary = true) { if (running) repo.pauseTimer(hero) else repo.resumeTimer(hero) }
-                            HButton("+1 min") { repo.addMinute(hero) }
-                            HButton(if (hero.optInt("persistent") == 1) "Reset" else "Stop") { repo.resetTimer(hero) }
-                        }
-                    } else T("Start one below, or ask an AI for one.", 13, HColors.faint)
-                }
-            }
-        }
-        val others = active.filter { it.id != hero?.id }
-        if (others.isNotEmpty()) item { Section("Also running") }
-        items(others, key = { "o" + it.id }) { t ->
-            val running = t.optString("state") == "running"
-            Row(Modifier.fillMaxWidth().clickable { focus = t.id }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                T(Dates.countdown(repo.timerLeft(t, clock)), 20, if (running) HColors.fg else HColors.muted, bold = true, modifier = Modifier.width(110.dp))
-                T(t.optString("label") + when { t.optLong("start_at") > clock -> "  ·  starts " + Dates.clock(t.optLong("start_at"), repo.zone); !running -> "  ·  paused"; else -> "" }, 13, HColors.muted, maxLines = 1, modifier = Modifier.weight(1f))
-                IconButton({ if (running) repo.pauseTimer(t) else repo.resumeTimer(t) }) { Icon(if (running) Icons.Outlined.Pause else Icons.Outlined.PlayArrow, null, tint = HColors.fg) }
-                IconButton({ repo.resetTimer(t) }) { Icon(Icons.Outlined.Close, null, tint = HColors.muted) }
-            }
-        }
-        item { Section("New timer") }
-        item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (m in listOf(1, 5, 10, 15, 20, 25, 30, 45, 60, 90)) HButton(if (m < 60) "$m min" else "${m / 60} h" + if (m % 60 > 0) " ${m % 60}" else "") { start(m.toDouble()) }
-            }
+            T(Dates.countdown(current?.let { repo.timerLeft(it, clock) } ?: length * 60L), 76, if (current != null) HColors.fg else HColors.muted, bold = true,
+                modifier = Modifier.clickable(enabled = current == null) { dialog = false }.padding(vertical = 8.dp))
         }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Field(minutes, { minutes = it.filter { c -> c.isDigit() || c == '.' }.take(5) }, "Minutes", Modifier.weight(1f))
-                    Field(label, { label = it }, "Label", Modifier.weight(2f))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                HButton(if (current != null) "Stop timer" else "Start timer", Modifier.width(200.dp), primary = true, icon = if (current != null) Icons.Outlined.Close else Icons.Outlined.PlayArrow) {
+                    if (current != null) repo.stopTimer(current.id) else repo.startTimer(length * 60, "")
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (at == null) HButton("Start later…") { at = "%02d:00".format((java.time.LocalTime.now(repo.zone).hour + 1) % 24) }
-                    else { TimeField(at!!, { at = it }, "START AT", Modifier.weight(1f)); IconButton({ at = null }) { Icon(Icons.Outlined.Close, null, tint = HColors.muted) } }
-                    if (at == null) Grow()
-                    HButton(if (at != null) "Schedule" else "Start", primary = true, enabled = (minutes.toDoubleOrNull() ?: 0.0) > 0) { start(minutes.toDouble()) }
-                }
-                Row(Modifier.clickable { keep = !keep }, verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(16.dp).background(if (keep) HColors.accent else Color.Transparent).border(1.dp, if (keep) HColors.accent else HColors.faint))
-                    Spacer(Modifier.width(10.dp))
-                    T("Keep it as a saved timer to use again", 13, HColors.muted)
-                }
+                HButton("", icon = Icons.Outlined.Add) { dialog = true }
             }
         }
-        if (saved.isNotEmpty()) item { Section("Saved timers") }
-        items(saved, key = { "s" + it.id }) { t ->
+        if (upcoming.isNotEmpty()) item { Spacer(Modifier.height(28.dp)); Section("Upcoming", modifier = Modifier.fillMaxWidth()) }
+        items(upcoming, key = { it.id }) { t ->
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                T(Dates.countdown(t.optLong("duration_s")), 20, bold = true, modifier = Modifier.width(110.dp))
+                T(Dates.clock(t.optLong("start_at"), repo.zone), 16, bold = true, modifier = Modifier.width(110.dp))
                 T(t.optString("label"), 13, HColors.muted, maxLines = 1, modifier = Modifier.weight(1f))
-                HButton("Start", primary = true) { focus = t.id; repo.restartTimer(t) }
-                IconButton({ nav.sheets.confirm = Triple("Delete ${t.optString("label")}?", "The saved timer is removed from every device.") { repo.stopTimer(t.id) } }) { Icon(Icons.Outlined.Delete, null, tint = HColors.muted) }
+                IconButton({ repo.stopTimer(t.id) }) { Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted) }
             }
         }
-        item { Spacer(Modifier.height(24.dp)) }
+    }
+    dialog?.let { later ->
+        var mins by remember { mutableStateOf(length.toString()) }
+        var at by remember { mutableStateOf("%02d:00".format((java.time.LocalTime.now(repo.zone).hour + 1) % 24)) }
+        var label by remember { mutableStateOf("") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { dialog = null },
+            containerColor = HColors.surface,
+            shape = RectangleShape,
+            title = { T(if (later) "Timer for later" else "Timer length", 18, bold = true) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Field(mins, { mins = it.filter { c -> c.isDigit() }.take(4) }, "Minutes", Modifier.fillMaxWidth())
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (m in listOf(5, 10, 15, 25, 30, 45, 60)) HButton("$m") { mins = m.toString() }
+                    }
+                    if (later) {
+                        TimeField(at, { at = it }, "STARTS AT", Modifier.fillMaxWidth())
+                        Field(label, { label = it }, "Label (optional)", Modifier.fillMaxWidth())
+                    }
+                }
+            },
+            confirmButton = {
+                HButton(if (later) "Schedule" else "Set", primary = true, enabled = (mins.toIntOrNull() ?: 0) > 0) {
+                    val m = mins.toInt()
+                    if (later) {
+                        val now = java.time.ZonedDateTime.now(repo.zone)
+                        var d = now.toLocalDate().atTime(Dates.time(at)).atZone(repo.zone)
+                        if (!d.isAfter(now)) d = d.plusDays(1)
+                        repo.startTimer(m * 60, label, startAt = d.toInstant().toEpochMilli())
+                    } else length = m
+                    dialog = null
+                }
+            },
+            dismissButton = { HButton("Cancel") { dialog = null } },
+        )
     }
 }
 

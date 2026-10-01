@@ -438,139 +438,82 @@ struct TimeView: View {
 
 // MARK: - Timers
 
-// The one that ends first, big; the others under it; a quick way to start or
-// schedule one; saved timers to start again. Every device rings.
+// One big number with Start / Stop. Tap the number to change the length;
+// + schedules one for later, listed under the buttons.
 struct TimersView: View {
     @EnvironmentObject var store: Store
-    @State private var focus: String?
-    @State private var minutes = ""
+    @AppStorage("timer_length") private var length = 25
+    @State private var dialog: Bool? // false: length, true: for later
+    @State private var mins = ""
     @State private var label = ""
-    @State private var later = false
     @State private var at = Date().addingTimeInterval(3600)
-    @State private var keep = false
-    @State private var confirm: HTimer?
 
     var body: some View {
         Ticking { clock in
-            let active = store.timers.filter { $0.state == "running" || $0.state == "paused" }
-                .sorted { ($0.state == "paused" ? 1 : 0, $0.ends_at ?? 0) < ($1.state == "paused" ? 1 : 0, $1.ends_at ?? 0) }
-            let saved = store.timers.filter { $0.state == "idle" }
-            let hero = active.first { $0.id == focus } ?? active.first
+            let current = store.timers.filter { ($0.state == "running" && ($0.start_at ?? 0) <= clock) || $0.state == "paused" }.min { ($0.ends_at ?? 0) < ($1.ends_at ?? 0) }
+            let upcoming = store.timers.filter { $0.state == "running" && ($0.start_at ?? 0) > clock }.sorted { ($0.start_at ?? 0) < ($1.start_at ?? 0) }
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    T("Timers", 24, bold: true)
-                    heroCard(hero, clock)
-                    let others = active.filter { $0.id != hero?.id }
-                    if !others.isEmpty { SectionLabel(text: "Also running") }
-                    ForEach(others) { t in
-                        let running = t.state == "running"
-                        HStack {
-                            T(Dates.countdown(store.timerLeft(t, clock)), 20, running ? H.fg : H.muted, bold: true).frame(width: 110, alignment: .leading)
-                            T(t.label + ((t.start_at ?? 0) > clock ? "  ·  starts " + Dates.clock(t.start_at!) : running ? "" : "  ·  paused"), 13, H.muted, lines: 1)
-                            Spacer()
-                            Button { running ? store.pause(t) : store.resume(t) } label: { Image(systemName: running ? "pause.fill" : "play.fill").foregroundStyle(H.fg).frame(width: 36, height: 36) }
-                            Button { store.reset(t) } label: { Image(systemName: "xmark").foregroundStyle(H.muted).frame(width: 36, height: 36) }
+                VStack(spacing: 14) {
+                    T(current?.label ?? "Tap the time to change it", 14, H.muted).padding(.top, 48)
+                    T(Dates.countdown(current.map { store.timerLeft($0, clock) } ?? Int64(length * 60)), 72, current == nil ? H.muted : H.fg, bold: true)
+                        .onTapGesture { if current == nil { open(false) } }
+                    HStack(spacing: 10) {
+                        HButton(current == nil ? "Start timer" : "Stop timer", icon: current == nil ? "play.fill" : "stop.fill", primary: true) {
+                            if let c = current { store.stop(c) } else { store.startTimer(seconds: length * 60, label: "") }
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture { focus = t.id }
+                        .frame(width: 200)
+                        HButton("", icon: "plus") { open(true) }
                     }
-                    SectionLabel(text: "New timer")
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach([1, 5, 10, 15, 20, 25, 30, 45, 60, 90], id: \.self) { m in
-                                HButton(m < 60 ? "\(m) min" : "\(m / 60) h" + (m % 60 > 0 ? " \(m % 60)" : "")) { start(Double(m)) }
+                    if !upcoming.isEmpty {
+                        SectionLabel(text: "Upcoming").padding(.top, 20)
+                        ForEach(upcoming) { t in
+                            HStack {
+                                T(Dates.clock(t.start_at ?? 0), 16, bold: true).frame(width: 110, alignment: .leading)
+                                T(t.label, 13, H.muted, lines: 1)
+                                Spacer()
+                                Button { store.stop(t) } label: { Image(systemName: "trash").foregroundStyle(H.muted).frame(width: 36, height: 36) }
                             }
                         }
                     }
-                    HStack(spacing: 8) {
-                        Field(label: "Minutes", text: $minutes).keyboardType(.decimalPad).frame(width: 110)
-                        Field(label: "Label", text: $label)
-                    }
-                    HStack {
-                        if later {
-                            DatePicker("", selection: $at, displayedComponents: .hourAndMinute).labelsHidden().colorScheme(.dark)
-                            Button { later = false } label: { Image(systemName: "xmark").foregroundStyle(H.muted).frame(width: 32, height: 32) }
-                        } else {
-                            HButton("Start later…") { later = true }
-                        }
-                        Spacer()
-                        HButton(later ? "Schedule" : "Start", primary: true, enabled: (Double(minutes) ?? 0) > 0) { start(Double(minutes) ?? 0) }
-                    }
-                    HStack(spacing: 10) {
-                        Rectangle().fill(keep ? H.accent : .clear).frame(width: 16, height: 16).overlay(Rectangle().stroke(keep ? H.accent : H.faint, lineWidth: 1))
-                        T("Keep it as a saved timer to use again", 13, H.muted)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { keep.toggle() }
-                    if !saved.isEmpty { SectionLabel(text: "Saved timers") }
-                    ForEach(saved) { t in
-                        HStack {
-                            T(Dates.countdown(Int64(t.duration_s)), 20, bold: true).frame(width: 110, alignment: .leading)
-                            T(t.label, 13, H.muted, lines: 1)
-                            Spacer()
-                            HButton("Start", primary: true) { focus = t.id; store.restart(t) }
-                            Button { confirm = t } label: { Image(systemName: "trash").foregroundStyle(H.muted).frame(width: 36, height: 36) }
-                        }
-                    }
-                    Spacer(minLength: 24)
                 }
-                .padding(.horizontal, 18).padding(.vertical, 12)
+                .padding(.horizontal, 18)
             }
             .background(H.bg)
         }
         .onAppear { store.sweepTimers() }
-        .confirmationDialog("Delete \(confirm?.label ?? "")?", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { if let t = confirm { store.stop(t) }; confirm = nil }
-        } message: { Text("The saved timer is removed from every device.") }
+        .sheet(isPresented: Binding(get: { dialog != nil }, set: { if !$0 { dialog = nil } })) {
+            let later = dialog ?? false
+            SheetFrame(title: later ? "Timer for later" : "Timer length") {
+                Field(label: "Minutes", text: $mins).keyboardType(.numberPad)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) { ForEach([5, 10, 15, 25, 30, 45, 60], id: \.self) { m in HButton("\(m)") { mins = String(m) } } }
+                }
+                if later {
+                    HStack { T("STARTS AT", 11, H.muted); Spacer(); DatePicker("", selection: $at, displayedComponents: .hourAndMinute).labelsHidden().colorScheme(.dark) }
+                    Field(label: "Label (optional)", text: $label)
+                }
+                HButton(later ? "Schedule" : "Set", primary: true, enabled: (Int(mins) ?? 0) > 0) { submit(later) }
+            }
+            .presentationDetents([.medium])
+        }
     }
 
-    private func start(_ m: Double) {
-        guard m > 0 else { return }
-        var startAt: Int64?
+    private func open(_ later: Bool) {
+        mins = String(length); label = ""; at = Date().addingTimeInterval(3600)
+        dialog = later
+    }
+
+    private func submit(_ later: Bool) {
+        guard let m = Int(mins), m > 0 else { return }
         if later {
             var cal = Calendar(identifier: .gregorian); cal.timeZone = Dates.zone
             let hm = Calendar.current.dateComponents([.hour, .minute], from: at)
             if var d = cal.date(bySettingHour: hm.hour ?? 0, minute: hm.minute ?? 0, second: 0, of: Date()) {
                 if d <= Date() { d = d.addingTimeInterval(86400) }
-                startAt = Int64(d.timeIntervalSince1970 * 1000)
+                store.startTimer(seconds: m * 60, label: label, startAt: Int64(d.timeIntervalSince1970 * 1000))
             }
-        }
-        store.startTimer(seconds: Int(m * 60), label: label, persistent: keep, startAt: startAt)
-        label = ""; minutes = ""; later = false
-    }
-
-    @ViewBuilder
-    private func heroCard(_ hero: HTimer?, _ clock: Int64) -> some View {
-        let running = hero?.state == "running"
-        let waiting = running && (hero?.start_at ?? 0) > clock
-        let left = hero.map { store.timerLeft($0, clock) } ?? 0
-        Card(stripe: hero == nil ? H.border : running ? H.accent : H.gold) {
-            VStack(spacing: 6) {
-                Text(hero == nil ? "NO TIMER RUNNING" : waiting ? "STARTS AT " + Dates.clock(hero!.start_at!).uppercased() : running ? "RUNNING" : "PAUSED")
-                    .font(H.mono(12, bold: true)).tracking(2).foregroundStyle(running && !waiting ? H.accent : H.muted)
-                T(Dates.countdown(left), 64, running ? H.fg : H.muted, bold: true)
-                if let h = hero {
-                    T(h.label, 15, H.muted, lines: 1)
-                    GeometryReader { g in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(H.surface2)
-                            Rectangle().fill(running ? H.accent : H.gold).frame(width: g.size.width * min(1, max(0, Double(left) / Double(max(1, h.duration_s)))))
-                        }
-                    }
-                    .frame(height: 6).padding(.top, 8)
-                    HStack(spacing: 8) {
-                        HButton(running ? "Pause" : "Resume", primary: true) { running ? store.pause(h) : store.resume(h) }
-                        HButton("+1 min") { store.addMinute(h) }
-                        HButton(h.persistent == 1 ? "Reset" : "Stop") { store.reset(h) }
-                    }
-                    .padding(.top, 8)
-                } else {
-                    T("Start one below, or ask an AI for one.", 13, H.faint)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-        }
+        } else { length = m }
+        dialog = nil
     }
 }
 
