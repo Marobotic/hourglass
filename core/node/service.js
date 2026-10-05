@@ -180,20 +180,48 @@ export class Service {
 
   // --- drive -------------------------------------------------------------------
 
-  // One folder's contents (null = the top), with the path down to it.
-  listDrive({ folder_id = null } = {}) {
+  // One folder's contents (null = the top), with the path down to it. Every
+  // course has its own folder (course_id) holding the files put there; the
+  // top lists the courses and the files and folders that are in none.
+  listDrive({ folder_id = null, course_id = null } = {}) {
     const folders = this.store.all("folders");
-    const files = this.store.all("files");
+    const courses = this.store.all("courses").filter((c) => !c.archived);
+    const known = new Set(courses.map((c) => c.id));
+    const files = this.store.all("files").map((f) => (f.course_id && !known.has(f.course_id) ? { ...f, course_id: null } : f));
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    if (course_id) {
+      const c = this.course(course_id);
+      return { course_id: c.id, folder_id: null, path: [{ id: c.id, name: c.name, course: true }], folders: [], courses: [],
+        files: files.filter((f) => f.course_id === c.id).sort(byName) };
+    }
     const path = [];
     for (let f = folder_id ? this.row("folders", folder_id) : null; f; f = f.parent_id ? folders.find((x) => x.id === f.parent_id) : null) path.unshift({ id: f.id, name: f.name });
-    const byName = (a, b) => a.name.localeCompare(b.name);
+    const top = !folder_id;
     return {
       folder_id: folder_id ?? null,
+      course_id: null,
+      courses: top ? courses.sort(byName).map((c) => ({ id: c.id, name: c.name, color: c.color, items: files.filter((f) => f.course_id === c.id).length })) : [],
       path,
       folders: folders.filter((f) => (f.parent_id ?? null) === (folder_id ?? null)).sort(byName)
         .map((f) => ({ ...f, items: folders.filter((x) => x.parent_id === f.id).length + files.filter((x) => x.folder_id === f.id).length })),
-      files: files.filter((f) => (f.folder_id ?? null) === (folder_id ?? null)).sort(byName),
+      files: files.filter((f) => !f.course_id && (f.folder_id ?? null) === (folder_id ?? null)).sort(byName),
     };
+  }
+
+  // Put a file in a course's folder (or take it out with course: null).
+  moveFile({ file_id, course, folder_id }) {
+    const f = this.row("files", file_id);
+    const patch = { id: f.id };
+    if (course !== undefined) {
+      patch.course_id = course ? this.course(course).id : null;
+      if (patch.course_id) patch.folder_id = null;
+    }
+    if (folder_id !== undefined) {
+      if (folder_id) this.row("folders", folder_id);
+      patch.folder_id = folder_id || null;
+      if (folder_id) patch.course_id = null;
+    }
+    return this.store.upsert("files", patch);
   }
 
   addFolder({ name, parent_id = null }) {

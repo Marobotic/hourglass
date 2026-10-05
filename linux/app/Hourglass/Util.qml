@@ -76,6 +76,8 @@ QtObject {
         }
         return out;
     }
+    // "  ✓ attended" etc. after a session's title; "" when not marked.
+    function markTag(m) { return m === "attended" ? "  ✓ attended" : m === "absent" ? "  ✗ absent" : m === "off" ? "  – off" : ""; }
     function partsText(m) {
         return m.parts.map(p => kindLabel(p.kind) + " " + t(p.start_time)).join("  ·  ");
     }

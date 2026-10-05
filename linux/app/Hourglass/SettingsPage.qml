@@ -168,6 +168,12 @@ Item {
                             ? page.app.confirm("Make a new link?", "The old link stops working; AIs using it need the new one.", "New link", () => page.aiLoad(true))
                             : page.aiLoad(true)
                     }
+                    Btn {
+                        visible: !!(page.ai && page.ai.mcp_url)
+                        kind: "danger"; icon: "trash"; text: "Delete link"
+                        onClicked: page.app.confirm("Delete the AI link?", "AIs using it lose access at once. You can make a new link any time.", "Delete",
+                            () => Api.request("DELETE", "/api/ai", null, (d, err) => { if (d) { page.ai = d; page.aiNote = "Link deleted."; } else page.aiNote = err || ""; }, true))
+                    }
                     Text { text: page.aiNote; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                 }
 

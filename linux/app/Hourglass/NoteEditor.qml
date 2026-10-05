@@ -86,11 +86,11 @@ Rectangle {
     function attach(urls) {
         if (!urls.length) return;
         flush();
-        const go = folder => {
+        const go = (folder, course) => {
             let left = urls.length;
             ed.uploading = left > 1 ? "Uploading " + left + " files…" : "Uploading…";
             for (const u of urls) {
-                Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, note: ed.loadedId }, (f, err) => {
+                Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, course: course || null, note: ed.loadedId }, (f, err) => {
                     if (f) {
                         const img = /^image\//.test(f.mime);
                         const line = (img ? "![" + f.name + "]" : "[" + f.name + "]") + "(hgfile:" + f.id + ")";
@@ -103,6 +103,7 @@ Rectangle {
                 }, true);
             }
         };
+        if (ed.note && ed.note.course_id) return go(null, ed.note.course_id);
         Api.action("list_drive", {}, d => {
             const f = d && d.folders.find(x => x.name === "Note attachments");
             if (f) go(f.id);

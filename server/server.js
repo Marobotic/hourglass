@@ -263,8 +263,31 @@ async function driveRoutes(t, req, res, url, path) {
       return send(res, 400, { error: "empty file" }), true;
     }
     renameSync(tmp, drivePath(t, id));
-    const row = t.store.upsert("files", { id, name, folder_id: folder, size, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
+    const course = url.searchParams.get("course") || null;
+    const row = t.store.upsert("files", { id, name, folder_id: course ? null : folder, course_id: course, size, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
     return send(res, 201, row), true;
+  }
+  // New contents for an existing file (it was edited on a device).
+  const put = /^\/api\/files\/([0-9a-f-]{36})\/raw$/.exec(path);
+  if (put && m === "PUT") {
+    const row = t.store.get("files", put[1]);
+    if (!row || row.deleted) return send(res, 404, { error: "not found" }), true;
+    const tmp = drivePath(t, row.id) + ".put";
+    let size = 0;
+    try {
+      await pipeline(req, async function* (src) {
+        for await (const c of src) {
+          size += c.length;
+          if (size > MAX_FILE) throw Object.assign(new Error("That file is over 2 GB."), { status: 413 });
+          yield c;
+        }
+      }, createWriteStream(tmp));
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw Object.assign(e, { status: e.status || 400 });
+    }
+    renameSync(tmp, drivePath(t, row.id));
+    return send(res, 200, t.store.upsert("files", { id: row.id, size })), true;
   }
   const raw = /^\/api\/files\/([0-9a-f-]{36})\/raw$/.exec(path);
   if (raw && m === "GET") {
@@ -372,6 +395,13 @@ createServer(async (req, res) => {
     if (path === "/api/ai" && req.method === "GET") return send(res, 200, aiInfo(t, base));
     if (path === "/api/ai" && req.method === "POST") {
       newAiKey(t);
+      return send(res, 200, aiInfo(t, base));
+    }
+    // Delete the link: the key stops working until a new one is made.
+    if (path === "/api/ai" && req.method === "DELETE") {
+      if (t.aiKey) aiKeys.delete(t.aiKey);
+      t.aiKey = "";
+      rmSync(join(t.dir, "ai_key"), { force: true });
       return send(res, 200, aiInfo(t, base));
     }
     return t.handler(req, res);

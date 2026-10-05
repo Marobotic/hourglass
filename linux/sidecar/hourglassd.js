@@ -12,7 +12,7 @@ import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSyn
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, TABLE_NAMES, dueBetween, isSpent, localParts, parseDate } from "../../core/index.js";
@@ -238,7 +238,6 @@ async function syncOnce() {
     const { rev, changes } = await r.json();
     for (const t of TABLE_NAMES) for (const row of changes[t] ?? []) store.write(t, row, { mode: "remote" });
     store.setMeta("cursor", rev);
-    sweepDrive();
     Object.assign(sync, { state: "synced", last_ok: Date.now(), error: null, pending: 0 });
     if (!store.meta("account", null)) store.setMeta("account", (await remote("/api/account")).email);
     await fetchSounds();
@@ -376,46 +375,136 @@ const json = (res, status, body) => {
 };
 
 // --- drive -------------------------------------------------------------------------
+//
+// Files live on the server; this computer keeps a copy of every file it has
+// uploaded or opened, as DRIVE_DIR/<id>/<its real name> so the system opens
+// it with the right app (Photos for .jpg, Illustrator for .ai). index.json
+// records what each copy was: the row's updated_at and the copy's mtime/size.
+// Every few seconds the copies are checked:
+//   * edited here (newer mtime, size settled): uploaded again (PUT .../raw);
+//   * changed on another device (row updated_at moved on): downloaded again;
+//   * deleted anywhere: removed.
 
 const fetching = new Map(); // id -> promise, so one file is downloaded once
+const INDEX = join(DRIVE_DIR, "index.json");
+let index = {};
+try { index = JSON.parse(readFileSync(INDEX, "utf8")); } catch {}
+// Copies from before files kept their names were plain DRIVE_DIR/<id>: drop
+// them (they come back on demand, named).
+try {
+  for (const n of readdirSync(DRIVE_DIR)) if (/^[0-9a-f-]{36}$/.test(n) && statSync(join(DRIVE_DIR, n)).isFile()) rmSync(join(DRIVE_DIR, n), { force: true });
+} catch {}
+const saveIndex = () => { mkdirSync(DRIVE_DIR, { recursive: true }); writeFileSync(INDEX, JSON.stringify(index)); };
+const safeName = (n) => String(n || "file").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/, "") || "file";
+const copyPath = (row) => join(DRIVE_DIR, row.id, safeName(row.name));
+
+function remember(row, path) {
+  const st = statSync(path);
+  index[row.id] = { name: row.name, path, updated_at: row.updated_at, mtime: st.mtimeMs, size: st.size };
+  saveIndex();
+}
+
+async function download(row) {
+  const { server, token } = config();
+  if (!server) throw Object.assign(new Error("sign in to open files"), { status: 401 });
+  const r = await fetch(`${server}/api/files/${row.id}/raw`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3600000) });
+  if (!r.ok) throw Object.assign(new Error(`could not download (${r.status})`), { status: 502 });
+  const f = copyPath(row);
+  mkdirSync(dirname(f), { recursive: true });
+  const tmp = join(DRIVE_DIR, row.id + ".part");
+  await pipeline(Readable.fromWeb(r.body), createWriteStream(tmp));
+  // A renamed file: drop the copy under the old name.
+  const old = index[row.id]?.path;
+  if (old && old !== f) rmSync(old, { force: true });
+  renameSync(tmp, f);
+  remember(row, f);
+  return f;
+}
 
 // The file's bytes on this computer, downloaded from the server when needed.
 async function localFile(id) {
   if (!/^[0-9a-f-]{36}$/.test(id)) throw Object.assign(new Error("bad id"), { status: 400 });
   const row = store.get("files", id);
   if (!row || row.deleted) throw Object.assign(new Error("no such file"), { status: 404 });
-  const f = join(DRIVE_DIR, id);
-  if (existsSync(f)) return { row, path: f };
-  if (!fetching.has(id)) {
-    fetching.set(id, (async () => {
-      const { server, token } = config();
-      if (!server) throw Object.assign(new Error("sign in to open files"), { status: 401 });
-      const r = await fetch(`${server}/api/files/${id}/raw`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(600000) });
-      if (!r.ok) throw Object.assign(new Error(`could not download (${r.status})`), { status: 502 });
-      mkdirSync(DRIVE_DIR, { recursive: true });
-      const tmp = f + ".part";
-      await pipeline(Readable.fromWeb(r.body), createWriteStream(tmp));
-      renameSync(tmp, f);
-    })().finally(() => fetching.delete(id)));
+  const have = index[id];
+  if (have && existsSync(have.path) && (have.updated_at >= row.updated_at || edited(have))) return { row, path: have.path };
+  if (!fetching.has(id)) fetching.set(id, download(row).finally(() => fetching.delete(id)));
+  return { row, path: await fetching.get(id) };
+}
+
+const edited = (have) => { try { return statSync(have.path).mtimeMs > have.mtime + 1; } catch { return false; } };
+
+const settling = new Map(); // id -> size seen last tick, for edits still being written
+let watching = false;
+async function watchDrive() {
+  if (watching) return;
+  watching = true;
+  try {
+    for (const [id, have] of Object.entries(index)) {
+      const row = store.get("files", id);
+      if (!row || row.deleted) {
+        rmSync(join(DRIVE_DIR, id), { recursive: true, force: true });
+        delete index[id];
+        saveIndex();
+        continue;
+      }
+      let st;
+      try { st = statSync(have.path); } catch { delete index[id]; saveIndex(); continue; }
+      if (st.mtimeMs > have.mtime + 1) {
+        // Edited here. Wait until the size holds still for one tick (apps
+        // write big files in several goes), then send it.
+        if (settling.get(id) !== st.size) { settling.set(id, st.size); continue; }
+        settling.delete(id);
+        const { server, token } = config();
+        if (!server) continue;
+        try {
+          const r = await fetch(`${server}/api/files/${id}/raw`, {
+            method: "PUT",
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(st.size) },
+            body: createReadStream(have.path),
+            duplex: "half",
+            signal: AbortSignal.timeout(3600000),
+          });
+          if (!r.ok) throw new Error(`upload ${r.status}`);
+          const out = await r.json();
+          store.write("files", out, { mode: "remote" });
+          remember(out, have.path);
+          log("uploaded edited file", row.name);
+        } catch (e) {
+          log("could not upload edited", row.name, e.message); // tried again next tick (the file is still newer)
+        }
+      } else if (row.updated_at > have.updated_at && row.name !== have.name) {
+        // Renamed elsewhere: same bytes, new name on disk.
+        const f = copyPath(row);
+        try { renameSync(have.path, f); remember(row, f); } catch {}
+      } else if (row.updated_at > have.updated_at && !fetching.has(id)) {
+        // Changed on another device: fetch the new contents.
+        fetching.set(id, download(row).catch((e) => log("refresh failed", row.name, e.message)).finally(() => fetching.delete(id)));
+      }
+    }
+  } finally {
+    watching = false;
   }
-  await fetching.get(id);
-  return { row, path: f };
 }
+setInterval(() => watchDrive().catch((e) => log("drive watch:", e.message)), 3000);
 
-// Files deleted elsewhere leave this computer too.
-function sweepDrive() {
-  if (!existsSync(DRIVE_DIR)) return;
-  const live = new Set(store.all("files").map((f) => f.id));
-  for (const name of readdirSync(DRIVE_DIR)) if (!live.has(name.replace(/\.part$/, ""))) rmSync(join(DRIVE_DIR, name), { force: true });
-}
-
-// GET /files/<id>?k=<FILE_KEY>: the bytes, for <img> in notes. No API token.
+// GET /files/<id>?k=<FILE_KEY>: the bytes, for pictures and videos in the
+// window (with Range, so a video can seek). No API token.
 async function serveFile(req, res, url) {
   const m = /^\/files\/([0-9a-f-]{36})$/.exec(url.pathname);
   if (!m || url.searchParams.get("k") !== FILE_KEY) return json(res, 403, { error: "forbidden" });
   try {
     const { row, path } = await localFile(m[1]);
-    res.writeHead(200, { "content-type": row.mime || "application/octet-stream", "content-length": statSync(path).size, "cache-control": "private, max-age=86400" });
+    const size = statSync(path).size;
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
+    const head = { "content-type": row.mime || "application/octet-stream", "accept-ranges": "bytes", "cache-control": "private, max-age=60" };
+    if (range && size) {
+      const start = range[1] ? +range[1] : size - +range[2];
+      const end = range[1] && range[2] ? Math.min(+range[2], size - 1) : size - 1;
+      res.writeHead(206, { ...head, "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 });
+      return createReadStream(path, { start, end }).pipe(res);
+    }
+    res.writeHead(200, { ...head, "content-length": size });
     createReadStream(path).pipe(res);
   } catch (e) {
     json(res, e.status || 500, { error: e.message });
@@ -426,7 +515,7 @@ async function driveRoutes(req, res, url, path) {
   const m = req.method;
   if (path === "/api/drive/info" && m === "GET") return json(res, 200, { file_base: `http://127.0.0.1:${PORT}/files/`, key: FILE_KEY }), true;
   if (path === "/api/drive/usage" && m === "GET") return json(res, 200, await remote("/api/drive/usage")), true;
-  // Upload a file from this computer: { path, folder, note }. Streams to the server.
+  // Upload a file from this computer: { path, folder, course, note }. Streams to the server.
   if (path === "/api/files/upload" && m === "POST") {
     const b = await readBody(req);
     const file = decodeURIComponent(String(b.path || "").replace(/^file:\/\/\/?/, WIN ? "" : "/"));
@@ -438,6 +527,7 @@ async function driveRoutes(req, res, url, path) {
     const name = file.split(/[\\/]/).pop();
     const q = new URLSearchParams({ name });
     if (b.folder) q.set("folder", b.folder);
+    if (b.course) q.set("course", b.course);
     if (b.note) q.set("note", b.note);
     const r = await fetch(`${server}/api/files/upload?${q}`, {
       method: "POST",
@@ -448,18 +538,30 @@ async function driveRoutes(req, res, url, path) {
     });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) return json(res, r.status, { error: out.error || `upload failed (${r.status})` }), true;
-    // Keep a copy here so it opens at once, then bring the row down.
-    mkdirSync(DRIVE_DIR, { recursive: true });
-    copyFileSync(file, join(DRIVE_DIR, out.id));
+    // This computer keeps a copy, so it opens at once and edits sync back.
+    const f = copyPath(out);
+    mkdirSync(dirname(f), { recursive: true });
+    copyFileSync(file, f);
+    remember(out, f);
     await syncOnce();
     return json(res, 200, out), true;
   }
-  // Download (if needed) and give the local path, to open with the system app.
+  // Download (if needed) and give the local copy, to open with its app.
   const loc = /^\/api\/files\/([0-9a-f-]{36})\/local$/.exec(path);
   if (loc && m === "GET") {
     const { path: f } = await localFile(loc[1]);
-    return json(res, 200, { path: f, url: "file:///" + f.replace(/\\/g, "/").replace(/^\//, "") }), true;
+    const u = (p) => "file:///" + p.replace(/\\/g, "/").replace(/^\//, "");
+    return json(res, 200, { path: f, url: u(f), folder: u(dirname(f)) }), true;
   }
+  // Show the copy selected in Explorer (Finder / the file manager elsewhere).
+  const rev = /^\/api\/files\/([0-9a-f-]{36})\/reveal$/.exec(path);
+  if (rev && m === "POST") {
+    const { path: f } = await localFile(rev[1]);
+    if (WIN) spawn("explorer.exe", ["/select,", f], { detached: true, stdio: "ignore" }).unref();
+    else spawn("xdg-open", [dirname(f)], { detached: true, stdio: "ignore" }).unref();
+    return json(res, 200, { path: f }), true;
+  }
+  if (path === "/api/ai" && m === "DELETE") return json(res, 200, await remote("/api/ai", { method: "DELETE" })), true;
   return false;
 }
 

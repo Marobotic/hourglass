@@ -2,29 +2,39 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtMultimedia
 
-// Files on the server, in folders. Upload with the button or by dropping
-// files on the page; click a file to open it. The bar on top is the
-// server's disk, live, so you know how much still fits.
+// Files on the server, in folders. Every course has its own folder, holding
+// the files put there (its notes and times live in the other tabs). Upload
+// with the button or by dropping files on the page. Click a file to open it
+// with its app; right-click for more. The bar on top is the server's disk,
+// live, so you know how much still fits.
+//
+// Opened files stay on this computer and are watched: save an edit in its
+// app (Illustrator, Photoshop, Word...) and it is uploaded again.
 Item {
     id: page
     property var app
     property string folder: "" // "" = the top
-    property var drive: ({ path: [], folders: [], files: [] })
+    property string course: "" // a course's folder
+    property var drive: ({ path: [], folders: [], files: [], courses: [] })
     property var usage: null
     property string busy: ""
     property string problem: ""
+    property var info: null // { file_base, key } for previews
 
     function load() {
-        Api.action("list_drive", folder ? { folder_id: folder } : {}, d => { if (d) page.drive = d; else page.folder = ""; });
+        const args = course ? { course_id: course } : folder ? { folder_id: folder } : {};
+        Api.action("list_drive", args, d => { if (d) page.drive = d; else { page.folder = ""; page.course = ""; } });
     }
     function loadUsage() { Api.get("/api/drive/usage", d => { if (d) page.usage = d; }); }
-    onFolderChanged: load()
-    Component.onCompleted: { load(); loadUsage(); }
+    function go(f, c) { page.folder = f || ""; page.course = c || ""; load(); }
+    Component.onCompleted: { load(); loadUsage(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
     onVisibleChanged: if (visible) { load(); loadUsage(); }
     Connections { target: Api; function onChanged() { if (page.visible) page.load(); } }
-    // Real time: the disk is read again every few seconds while you look.
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.loadUsage() }
+    // Real time: the disk is read again every few seconds while you look,
+    // and the list too (an edited file's new size, files from other devices).
+    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: { page.loadUsage(); page.load(); } }
 
     function size(n) {
         if (n === undefined || n === null) return "";
@@ -33,7 +43,10 @@ Item {
         while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
         return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + " " + u[i];
     }
-    function kindIcon(f) { return /^image\//.test(f.mime) ? "image" : "file"; }
+    function isImage(f) { return /^image\//.test(f.mime) && !/svg/.test(f.mime); }
+    function isVideo(f) { return /^video\//.test(f.mime) || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name); }
+    function kindIcon(f) { return isImage(f) ? "image" : isVideo(f) ? "play" : "file"; }
+    function src(f) { return page.info ? page.info.file_base + f.id + "?k=" + page.info.key + "&v=" + f.updated_at : ""; }
 
     function upload(urls) {
         if (!urls.length) return;
@@ -41,7 +54,7 @@ Item {
         page.problem = "";
         page.busy = "Uploading " + left + (left === 1 ? " file…" : " files…");
         for (const u of urls) {
-            Api.request("POST", "/api/files/upload", { path: u.toString(), folder: page.folder || null }, (f, err) => {
+            Api.request("POST", "/api/files/upload", { path: u.toString(), folder: page.folder || null, course: page.course || null }, (f, err) => {
                 if (err) page.problem = err;
                 left--;
                 page.busy = left ? "Uploading " + left + (left === 1 ? " file…" : " files…") : "";
@@ -51,10 +64,21 @@ Item {
     }
     function openFile(f) {
         page.busy = "Opening " + f.name + "…";
+        page.problem = "";
         Api.request("GET", "/api/files/" + f.id + "/local", null, (d, err) => {
             page.busy = "";
             if (d) Qt.openUrlExternally(d.url); else page.problem = err;
         }, true);
+    }
+    function reveal(f) { Api.request("POST", "/api/files/" + f.id + "/reveal", {}, (d, err) => { if (err) page.problem = err; }, true); }
+    function moveTo(f, courseId) { Api.action("move_file", { file_id: f.id, course: courseId }, () => page.load()); }
+    function remove(it) {
+        if (it.table === "folders")
+            page.app.confirm("Delete " + it.row.name + "?", "The folder and everything in it are deleted from the server.", "Delete",
+                () => Api.action("remove_folder", { folder_id: it.row.id }, () => page.loadUsage()));
+        else
+            page.app.confirm("Delete " + it.row.name + "?", "It is deleted from the server and every device" + (it.row.note_id ? ", and stops showing in its note." : "."), "Delete",
+                () => Api.del("/api/files/" + it.row.id, () => page.loadUsage()));
     }
 
     FileDialog {
@@ -86,6 +110,38 @@ Item {
         footer: [Item { Layout.fillWidth: true }, Btn { text: "Cancel"; onClicked: nameDlg.close() }, Btn { kind: "primary"; text: "Save"; onClicked: nameDlg.save() }]
     }
 
+    // Right-click menu for a file or folder.
+    Menu {
+        id: menu
+        property var it: null
+        readonly property bool isFile: !!(it && it.table === "files")
+        readonly property var f: it ? it.row : null
+        MenuItem { text: menu.isFile ? "Open" : "Open folder"; onTriggered: menu.isFile ? page.openFile(menu.f) : page.go(menu.f.id, "") }
+        MenuItem { text: "Preview"; visible: menu.isFile && (page.isImage(menu.f) || page.isVideo(menu.f)); height: visible ? implicitHeight : 0; onTriggered: preview.show(menu.f) }
+        MenuItem { text: "Show in folder"; visible: menu.isFile; height: visible ? implicitHeight : 0; onTriggered: page.reveal(menu.f) }
+        MenuSeparator {}
+        Menu {
+            id: courseMenu
+            title: "Set course"
+            enabled: menu.isFile
+            Instantiator {
+                model: page.app ? page.app.courses : []
+                MenuItem {
+                    required property var modelData
+                    text: (menu.f && menu.f.course_id === modelData.id ? "✓  " : "") + modelData.name
+                    onTriggered: page.moveTo(menu.f, modelData.id)
+                }
+                onObjectAdded: (i, o) => courseMenu.insertItem(i, o)
+                onObjectRemoved: (i, o) => courseMenu.removeItem(o)
+            }
+            MenuSeparator {}
+            MenuItem { text: "No course"; enabled: !!(menu.f && menu.f.course_id); onTriggered: page.moveTo(menu.f, null) }
+        }
+        MenuItem { text: "Rename"; onTriggered: nameDlg.ask(menu.it) }
+        MenuSeparator {}
+        MenuItem { text: "Delete"; onTriggered: page.remove(menu.it) }
+    }
+
     ScrollView {
         anchors.fill: parent
         contentWidth: availableWidth
@@ -104,7 +160,7 @@ Item {
                     Layout.fillWidth: true
                     spacing: 8
                     Text { Layout.fillWidth: true; text: "Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
-                    Btn { icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
+                    Btn { visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
                     Btn { kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
                 }
 
@@ -140,10 +196,11 @@ Item {
                     spacing: 6
                     Text {
                         text: "Drive"
-                        color: page.folder ? Theme.accent : Theme.fg
+                        color: page.folder || page.course ? Theme.accent : Theme.fg
                         font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.folder = "" }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.go("", "") }
                     }
+                    Text { visible: !!page.course; text: "/  Courses"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 15 }
                     Repeater {
                         model: page.drive.path
                         RowLayout {
@@ -155,7 +212,7 @@ Item {
                                 text: modelData.name
                                 color: index === page.drive.path.length - 1 ? Theme.fg : Theme.accent
                                 font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.folder = modelData.id }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: modelData.course ? page.go("", modelData.id) : page.go(modelData.id, "") }
                             }
                         }
                     }
@@ -164,10 +221,50 @@ Item {
                     Text { text: page.problem; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13 }
                 }
 
+                // Courses: one folder each (at the top only)
+                Text {
+                    visible: !!(page.drive.courses && page.drive.courses.length)
+                    text: "COURSES"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 2
+                }
+                Flow {
+                    visible: !!(page.drive.courses && page.drive.courses.length)
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Repeater {
+                        model: page.drive.courses || []
+                        Rectangle {
+                            id: ct
+                            required property var modelData
+                            width: 230; height: 64
+                            color: ctm.containsMouse ? Theme.surface2 : Theme.surface
+                            border.width: 1
+                            border.color: ctm.containsMouse ? Theme.alpha(modelData.color, 0.8) : Theme.border
+                            Rectangle { width: 4; height: parent.height; color: ct.modelData.color }
+                            ColumnLayout {
+                                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 16; rightMargin: 12 }
+                                spacing: 2
+                                RowLayout {
+                                    spacing: 8
+                                    Icon { name: "folder"; size: 14; color: ct.modelData.color }
+                                    Text { Layout.fillWidth: true; text: ct.modelData.name; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.Bold }
+                                }
+                                Text { text: ct.modelData.items + (ct.modelData.items === 1 ? " file" : " files"); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                            }
+                            MouseArea { id: ctm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.go("", ct.modelData.id) }
+                        }
+                    }
+                }
+                Text {
+                    visible: !page.course && !page.folder
+                    Layout.topMargin: 6
+                    text: "FILES"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 2
+                }
+
                 Text {
                     visible: !page.drive.folders.length && !page.drive.files.length
-                    Layout.topMargin: 20
-                    text: page.folder ? "This folder is empty. Upload files or drop them here." : "Nothing here yet. Make a folder, upload files, or drop them on this page."
+                    text: page.course ? "No files for this course yet. Upload or drop them here, or right-click any file > Set course."
+                        : page.folder ? "This folder is empty. Upload files or drop them here."
+                        : "Make a folder, upload files, or drop them on this page."
                     color: Theme.faint; font.family: Theme.mono; font.pixelSize: 14
                 }
 
@@ -178,8 +275,9 @@ Item {
                         id: item
                         required property var modelData
                         readonly property bool isFolder: modelData.table === "folders"
+                        readonly property var f: modelData.row
                         Layout.fillWidth: true
-                        height: 48
+                        height: 52
                         color: im.containsMouse ? Theme.surface2 : Theme.surface
                         border.width: 1
                         border.color: Theme.border
@@ -188,29 +286,50 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: item.isFolder ? page.folder = item.modelData.row.id : page.openFile(item.modelData.row)
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: e => {
+                                if (e.button === Qt.RightButton) { menu.it = item.modelData; menu.popup(); return; }
+                                if (item.isFolder) page.go(item.f.id, "");
+                                else if (page.isImage(item.f) || page.isVideo(item.f)) preview.show(item.f);
+                                else page.openFile(item.f);
+                            }
+                            onDoubleClicked: if (!item.isFolder) page.openFile(item.f)
                         }
                         RowLayout {
-                            anchors { fill: parent; leftMargin: 16; rightMargin: 8 }
-                            spacing: 14
-                            Icon { name: item.isFolder ? "folder" : page.kindIcon(item.modelData.row); size: 16; color: item.isFolder ? Theme.accent : Theme.muted }
-                            Text { Layout.fillWidth: true; text: item.modelData.row.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 15 }
+                            anchors { fill: parent; leftMargin: 10; rightMargin: 8 }
+                            spacing: 12
+                            // A small picture for images, else an icon.
+                            Item {
+                                width: 36; height: 36
+                                Image {
+                                    anchors.fill: parent
+                                    visible: !item.isFolder && page.isImage(item.f)
+                                    source: visible ? page.src(item.f) : ""
+                                    sourceSize: Qt.size(72, 72)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+                                Icon {
+                                    anchors.centerIn: parent
+                                    visible: item.isFolder || !page.isImage(item.f)
+                                    name: item.isFolder ? "folder" : page.kindIcon(item.f); size: 16
+                                    color: item.isFolder ? Theme.accent : Theme.muted
+                                }
+                            }
+                            Text { Layout.fillWidth: true; text: item.f.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 15 }
                             Text {
-                                text: item.isFolder ? item.modelData.row.items + (item.modelData.row.items === 1 ? " item" : " items")
-                                    : page.size(item.modelData.row.size) + "  ·  " + Util.shortDate(Util.dayOf(item.modelData.row.updated_at))
+                                text: item.isFolder ? item.f.items + (item.f.items === 1 ? " item" : " items")
+                                    : page.size(item.f.size) + "  ·  " + Util.shortDate(Util.dayOf(item.f.updated_at)) + " " + Util.clock(item.f.updated_at)
                                 color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
                             }
-                            Btn { compact: true; kind: "subtle"; icon: "edit"; tip: "Rename"; onClicked: nameDlg.ask(item.modelData) }
-                            Btn {
-                                compact: true; kind: "subtle"; icon: "trash"; tip: "Delete"
-                                onClicked: item.isFolder
-                                    ? page.app.confirm("Delete " + item.modelData.row.name + "?", "The folder and everything in it are deleted from the server.", "Delete",
-                                        () => Api.action("remove_folder", { folder_id: item.modelData.row.id }, () => page.loadUsage()))
-                                    : page.app.confirm("Delete " + item.modelData.row.name + "?", "It is deleted from the server" + (item.modelData.row.note_id ? " and stops showing in its note." : "."), "Delete",
-                                        () => Api.del("/api/files/" + item.modelData.row.id, () => page.loadUsage()))
-                            }
+                            Btn { compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: { menu.it = item.modelData; menu.popup(); } }
                         }
                     }
+                }
+                Text {
+                    visible: page.drive.files.length > 0
+                    text: "Click a picture or video to preview it, anything else opens in its app. Edits you save there are uploaded again by themselves."
+                    color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
                 }
             }
         }
@@ -223,5 +342,65 @@ Item {
         border.width: 2
         border.color: Theme.accent
         Text { anchors.centerIn: parent; text: "Drop to upload here"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 20; font.weight: Font.Bold }
+    }
+
+    // Preview: pictures and videos, over the page. Esc or click outside closes.
+    Rectangle {
+        id: preview
+        property var f: null
+        readonly property bool video: !!(f && page.isVideo(f))
+        anchors.fill: parent
+        visible: f !== null
+        color: Qt.rgba(0, 0, 0, 0.88)
+        z: 10
+        function show(file) { f = file; if (video) { player.source = page.src(file); player.play(); } forceActiveFocus(); }
+        function hide() { player.stop(); player.source = ""; f = null; }
+        Keys.onEscapePressed: hide()
+        Keys.onSpacePressed: if (video) player.playbackState === MediaPlayer.PlayingState ? player.pause() : player.play()
+        MouseArea { anchors.fill: parent; onClicked: preview.hide() }
+
+        Image {
+            anchors { fill: parent; margins: 60; bottomMargin: 90 }
+            visible: !!preview.f && !preview.video
+            source: visible ? page.src(preview.f) : ""
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            MouseArea { anchors.centerIn: parent; width: parent.paintedWidth; height: parent.paintedHeight } // clicks on the picture keep it open
+        }
+        MediaPlayer {
+            id: player
+            videoOutput: vo
+            audioOutput: AudioOutput {}
+        }
+        VideoOutput {
+            id: vo
+            anchors { fill: parent; margins: 60; bottomMargin: 120 }
+            visible: preview.video
+            MouseArea { anchors.fill: parent; onClicked: player.playbackState === MediaPlayer.PlayingState ? player.pause() : player.play() }
+        }
+        // Video controls
+        RowLayout {
+            visible: preview.video
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 60; bottomMargin: 76 }
+            spacing: 14
+            Btn { compact: true; icon: player.playbackState === MediaPlayer.PlayingState ? "pause" : "play"; onClicked: player.playbackState === MediaPlayer.PlayingState ? player.pause() : player.play() }
+            Slider {
+                Layout.fillWidth: true
+                from: 0; to: Math.max(1, player.duration)
+                value: player.position
+                onMoved: player.position = value
+            }
+            Text {
+                text: Util.countdown(player.position / 1000) + " / " + Util.countdown(player.duration / 1000)
+                color: "white"; font.family: Theme.mono; font.pixelSize: 13
+            }
+        }
+        RowLayout {
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 24 }
+            spacing: 10
+            Text { Layout.fillWidth: true; text: preview.f ? preview.f.name + "   " + page.size(preview.f.size) : ""; color: "white"; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 15 }
+            Btn { text: "Open in its app"; icon: "folder-open"; onClicked: { const f = preview.f; preview.hide(); page.openFile(f); } }
+            Btn { text: "Close"; icon: "close"; onClicked: preview.hide() }
+        }
     }
 }

@@ -123,7 +123,7 @@ Item {
                                         Text { Layout.fillWidth: true; text: Util.range(modelData.start_time, modelData.end_time); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Bold }
                                         Text { text: modelData.location || ""; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Bold }
                                     }
-                                    Text { Layout.fillWidth: true; text: modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15 }
+                                    Text { Layout.fillWidth: true; text: modelData.title + Util.markTag(modelData.mark); color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15; opacity: modelData.mark === "off" ? 0.6 : 1 }
                                     Text { Layout.fillWidth: true; text: [Util.partsText(modelData), Util.lead(modelData.teacher)].filter(x => x).join("   ·   "); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
                                 }
                             }
@@ -242,7 +242,7 @@ Item {
                                         }
                                         Text {
                                             Layout.fillWidth: true; visible: card.height > 44
-                                            text: Util.range(card.o.start_time, card.o.end_time)
+                                            text: Util.range(card.o.start_time, card.o.end_time) + Util.markTag(card.o.mark)
                                             color: Theme.fg; wrapMode: Text.Wrap; maximumLineCount: card.height > 110 ? 2 : 1; elide: Text.ElideRight
                                             font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.DemiBold
                                         }

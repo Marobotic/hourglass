@@ -107,6 +107,7 @@ export const TABLES = {
     ["size", "int", 0],
     ["mime", "text", "application/octet-stream"],
     ["note_id", "text", null],
+    ["course_id", "text", null], // in that course's Drive folder
   ],
   // Synced preferences, one row per key (id = key). "ringtone": a built-in
   // name or a ringtones row id.
