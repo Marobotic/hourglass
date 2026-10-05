@@ -8,7 +8,9 @@
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../../core/node/store.js";
@@ -26,6 +28,11 @@ const THEME = join(HOME, ".local/state/omarchy/current/theme/colors.toml");
 // Uploads and songs are synced rows whose audio is downloaded to data/sounds.
 const SOUNDS_DIR = join(import.meta.dirname, "../../assets/sounds");
 const CUSTOM_DIR = join(DATA_DIR, "sounds");
+// Drive files opened or shown on this computer, by id.
+const DRIVE_DIR = join(DATA_DIR, "drive");
+// Images in notes are plain URLs the window loads itself: this key (not the
+// API token) opens GET /files/<id>, and only that.
+const FILE_KEY = randomBytes(18).toString("base64url");
 const customFile = (id) => join(CUSTOM_DIR, `${id}.wav`);
 const soundFile = (name) => {
   if (BUILTIN_RINGTONES.includes(name)) return join(SOUNDS_DIR, `${name}.wav`);
@@ -113,7 +120,7 @@ const config = () => {
 };
 
 adoptToken();
-const SCHEMA = 4; // bump when a table is added: forces one full pull
+const SCHEMA = 5; // bump when a table is added: forces one full pull
 const store = new Store(join(DATA_DIR, "hourglass.db"), { replica: true });
 const service = new Service(store);
 const TOKEN = token();
@@ -231,6 +238,7 @@ async function syncOnce() {
     const { rev, changes } = await r.json();
     for (const t of TABLE_NAMES) for (const row of changes[t] ?? []) store.write(t, row, { mode: "remote" });
     store.setMeta("cursor", rev);
+    sweepDrive();
     Object.assign(sync, { state: "synced", last_ok: Date.now(), error: null, pending: 0 });
     if (!store.meta("account", null)) store.setMeta("account", (await remote("/api/account")).email);
     await fetchSounds();
@@ -367,7 +375,96 @@ const json = (res, status, body) => {
   res.end(JSON.stringify(body));
 };
 
+// --- drive -------------------------------------------------------------------------
+
+const fetching = new Map(); // id -> promise, so one file is downloaded once
+
+// The file's bytes on this computer, downloaded from the server when needed.
+async function localFile(id) {
+  if (!/^[0-9a-f-]{36}$/.test(id)) throw Object.assign(new Error("bad id"), { status: 400 });
+  const row = store.get("files", id);
+  if (!row || row.deleted) throw Object.assign(new Error("no such file"), { status: 404 });
+  const f = join(DRIVE_DIR, id);
+  if (existsSync(f)) return { row, path: f };
+  if (!fetching.has(id)) {
+    fetching.set(id, (async () => {
+      const { server, token } = config();
+      if (!server) throw Object.assign(new Error("sign in to open files"), { status: 401 });
+      const r = await fetch(`${server}/api/files/${id}/raw`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(600000) });
+      if (!r.ok) throw Object.assign(new Error(`could not download (${r.status})`), { status: 502 });
+      mkdirSync(DRIVE_DIR, { recursive: true });
+      const tmp = f + ".part";
+      await pipeline(Readable.fromWeb(r.body), createWriteStream(tmp));
+      renameSync(tmp, f);
+    })().finally(() => fetching.delete(id)));
+  }
+  await fetching.get(id);
+  return { row, path: f };
+}
+
+// Files deleted elsewhere leave this computer too.
+function sweepDrive() {
+  if (!existsSync(DRIVE_DIR)) return;
+  const live = new Set(store.all("files").map((f) => f.id));
+  for (const name of readdirSync(DRIVE_DIR)) if (!live.has(name.replace(/\.part$/, ""))) rmSync(join(DRIVE_DIR, name), { force: true });
+}
+
+// GET /files/<id>?k=<FILE_KEY>: the bytes, for <img> in notes. No API token.
+async function serveFile(req, res, url) {
+  const m = /^\/files\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (!m || url.searchParams.get("k") !== FILE_KEY) return json(res, 403, { error: "forbidden" });
+  try {
+    const { row, path } = await localFile(m[1]);
+    res.writeHead(200, { "content-type": row.mime || "application/octet-stream", "content-length": statSync(path).size, "cache-control": "private, max-age=86400" });
+    createReadStream(path).pipe(res);
+  } catch (e) {
+    json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function driveRoutes(req, res, url, path) {
+  const m = req.method;
+  if (path === "/api/drive/info" && m === "GET") return json(res, 200, { file_base: `http://127.0.0.1:${PORT}/files/`, key: FILE_KEY }), true;
+  if (path === "/api/drive/usage" && m === "GET") return json(res, 200, await remote("/api/drive/usage")), true;
+  // Upload a file from this computer: { path, folder, note }. Streams to the server.
+  if (path === "/api/files/upload" && m === "POST") {
+    const b = await readBody(req);
+    const file = decodeURIComponent(String(b.path || "").replace(/^file:\/\/\/?/, WIN ? "" : "/"));
+    if (!existsSync(file)) return json(res, 400, { error: "file not found" }), true;
+    const { server, token } = config();
+    if (!server) return json(res, 401, { error: "sign in to upload" }), true;
+    // A folder or note made a moment ago must reach the server first.
+    await syncOnce();
+    const name = file.split(/[\\/]/).pop();
+    const q = new URLSearchParams({ name });
+    if (b.folder) q.set("folder", b.folder);
+    if (b.note) q.set("note", b.note);
+    const r = await fetch(`${server}/api/files/upload?${q}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(statSync(file).size) },
+      body: createReadStream(file),
+      duplex: "half",
+      signal: AbortSignal.timeout(3600000),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) return json(res, r.status, { error: out.error || `upload failed (${r.status})` }), true;
+    // Keep a copy here so it opens at once, then bring the row down.
+    mkdirSync(DRIVE_DIR, { recursive: true });
+    copyFileSync(file, join(DRIVE_DIR, out.id));
+    await syncOnce();
+    return json(res, 200, out), true;
+  }
+  // Download (if needed) and give the local path, to open with the system app.
+  const loc = /^\/api\/files\/([0-9a-f-]{36})\/local$/.exec(path);
+  if (loc && m === "GET") {
+    const { path: f } = await localFile(loc[1]);
+    return json(res, 200, { path: f, url: "file:///" + f.replace(/\\/g, "/").replace(/^\//, "") }), true;
+  }
+  return false;
+}
+
 async function extra(req, res, url, path) {
+  if (await driveRoutes(req, res, url, path)) return true;
   if (path === "/api/app" && req.method === "GET") {
     return json(res, 200, {
       theme: theme(),
@@ -442,7 +539,11 @@ async function readBody(req) {
 }
 
 const handler = createHandler({ store, service, token: TOKEN, extra });
-createServer(handler).listen(PORT, "127.0.0.1", async () => {
+createServer((req, res) => {
+  const url = new URL(req.url, "http://local");
+  if (url.pathname.startsWith("/files/")) return serveFile(req, res, url);
+  return handler(req, res);
+}).listen(PORT, "127.0.0.1", async () => {
   log(`hourglassd on http://127.0.0.1:${PORT} (data ${DATA_DIR}, tz ${service.tz})`);
   config();
   await adoptMusicSession();

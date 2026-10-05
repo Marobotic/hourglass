@@ -178,6 +178,37 @@ export class Service {
     return this.store.remove("events", ev.id);
   }
 
+  // --- drive -------------------------------------------------------------------
+
+  // One folder's contents (null = the top), with the path down to it.
+  listDrive({ folder_id = null } = {}) {
+    const folders = this.store.all("folders");
+    const files = this.store.all("files");
+    const path = [];
+    for (let f = folder_id ? this.row("folders", folder_id) : null; f; f = f.parent_id ? folders.find((x) => x.id === f.parent_id) : null) path.unshift({ id: f.id, name: f.name });
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    return {
+      folder_id: folder_id ?? null,
+      path,
+      folders: folders.filter((f) => (f.parent_id ?? null) === (folder_id ?? null)).sort(byName)
+        .map((f) => ({ ...f, items: folders.filter((x) => x.parent_id === f.id).length + files.filter((x) => x.folder_id === f.id).length })),
+      files: files.filter((f) => (f.folder_id ?? null) === (folder_id ?? null)).sort(byName),
+    };
+  }
+
+  addFolder({ name, parent_id = null }) {
+    if (parent_id) this.row("folders", parent_id);
+    return this.store.upsert("folders", { name: String(name ?? "").trim(), parent_id });
+  }
+
+  // A folder goes with everything in it.
+  removeFolder({ folder_id }) {
+    const f = this.row("folders", folder_id);
+    for (const sub of this.store.all("folders").filter((x) => x.parent_id === f.id)) this.removeFolder({ folder_id: sub.id });
+    for (const file of this.store.all("files").filter((x) => x.folder_id === f.id)) this.store.remove("files", file.id);
+    return this.store.remove("folders", f.id);
+  }
+
   // --- attendance --------------------------------------------------------------
 
   // Mark one day of a course attended, absent or off; status "none" clears it.

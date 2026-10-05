@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 // Full-page Markdown editor. Autosaves 600 ms after the last keystroke.
 Rectangle {
@@ -41,6 +42,88 @@ Rectangle {
         Api.put("/api/notes/" + loadedId, patch, n => { if (n) { ed.app.editingNote = n; ed.status = "Saved"; } });
     }
     function edited() { if (loadedId) { status = "Edited"; saveTimer.restart(); } }
+
+    // --- formatting: the toolbar writes Markdown around the selection ---
+    readonly property var ta: body.area
+    function wrap(pre, post) {
+        if (ed.preview) return;
+        const a = ta.selectionStart, b = ta.selectionEnd;
+        const sel = ta.text.slice(a, b);
+        if (sel.startsWith(pre) && sel.endsWith(post) && sel.length >= pre.length + post.length) {
+            ta.remove(a, b);
+            ta.insert(a, sel.slice(pre.length, sel.length - post.length));
+            ta.select(a, b - pre.length - post.length);
+        } else {
+            ta.remove(a, b);
+            ta.insert(a, pre + sel + post);
+            if (sel) ta.select(a, a + pre.length + sel.length + post.length);
+            else ta.cursorPosition = a + pre.length;
+        }
+        ta.forceActiveFocus();
+        edited();
+    }
+    // Prefix every selected line: "- ", numbers, or "## ". Again removes it.
+    function lines(kind) {
+        if (ed.preview) return;
+        const t = ta.text;
+        const a = t.lastIndexOf("\n", ta.selectionStart - 1) + 1;
+        let b = t.indexOf("\n", Math.max(ta.selectionEnd - (ta.selectionEnd > ta.selectionStart ? 1 : 0), a));
+        if (b < 0) b = t.length;
+        const rows = t.slice(a, b).split("\n");
+        const re = kind === "ul" ? /^[-*] / : kind === "ol" ? /^\d+\. / : /^#{1,6} /;
+        const on = rows.every(r => re.test(r));
+        const out = rows.map((r, i) => on ? r.replace(re, "")
+            : (kind === "ul" ? "- " : kind === "ol" ? (i + 1) + ". " : "## ") + r.replace(/^([-*] |\d+\. |#{1,6} )/, ""));
+        ta.remove(a, b);
+        ta.insert(a, out.join("\n"));
+        ta.cursorPosition = a + out.join("\n").length;
+        ta.forceActiveFocus();
+        edited();
+    }
+
+    // --- attachments: uploaded to the Drive ("Note attachments"), then a line in the note ---
+    property string uploading: ""
+    function attach(urls) {
+        if (!urls.length) return;
+        flush();
+        const go = folder => {
+            let left = urls.length;
+            ed.uploading = left > 1 ? "Uploading " + left + " files…" : "Uploading…";
+            for (const u of urls) {
+                Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, note: ed.loadedId }, (f, err) => {
+                    if (f) {
+                        const img = /^image\//.test(f.mime);
+                        const line = (img ? "![" + f.name + "]" : "[" + f.name + "]") + "(hgfile:" + f.id + ")";
+                        const t = ta.text, pos = ed.preview ? t.length : ta.cursorPosition;
+                        const before = pos > 0 && t[pos - 1] !== "\n" ? "\n" : "";
+                        ta.insert(pos, before + line + "\n");
+                        ed.edited();
+                    }
+                    if (--left === 0) ed.uploading = err ? "" : "";
+                }, true);
+            }
+        };
+        Api.action("list_drive", {}, d => {
+            const f = d && d.folders.find(x => x.name === "Note attachments");
+            if (f) go(f.id);
+            else Api.action("add_folder", { name: "Note attachments" }, n => { if (n) go(n.id); });
+        });
+    }
+    FileDialog {
+        id: attachDialog
+        property bool images: false
+        title: images ? "Add pictures" : "Attach files"
+        fileMode: FileDialog.OpenFiles
+        nameFilters: images ? ["Pictures (*.png *.jpg *.jpeg *.gif *.webp *.bmp)", "All files (*)"] : ["All files (*)"]
+        onAccepted: ed.attach(selectedFiles)
+    }
+    DropArea {
+        anchors.fill: parent
+        onDropped: drop => { if (drop.hasUrls) ed.attach(drop.urls); }
+    }
+    Shortcut { sequences: ["Ctrl+B"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("**", "**") }
+    Shortcut { sequences: ["Ctrl+I"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("*", "*") }
+    Shortcut { sequences: ["Ctrl+U"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("<u>", "</u>") }
 
     // Older text of this note, newest first; click one to put it back.
     Modal {
@@ -162,35 +245,56 @@ Rectangle {
             onTextEdited: ed.edited()
             Keys.onReturnPressed: body.area.forceActiveFocus()
         }
-        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
-
-        Area {
-            id: body
-            visible: !ed.preview
+        // formatting toolbar
+        RowLayout {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            placeholderText: "Write in Markdown. # headings, - lists, **bold**, `code`."
-            fontSize: 15
-            area.onTextChanged: if (area.activeFocus) ed.edited()
+            spacing: 4
+            component Tool: Btn { compact: true; kind: "subtle"; enabled: !ed.preview }
+            Tool { icon: "bold"; tip: "Bold (Ctrl+B)"; onClicked: ed.wrap("**", "**") }
+            Tool { icon: "italic"; tip: "Italic (Ctrl+I)"; onClicked: ed.wrap("*", "*") }
+            Tool { icon: "underline"; tip: "Underline (Ctrl+U)"; onClicked: ed.wrap("<u>", "</u>") }
+            Tool { icon: "strike"; tip: "Strike through"; onClicked: ed.wrap("~~", "~~") }
+            Rectangle { width: 1; height: 22; color: Theme.border }
+            Tool { icon: "heading"; tip: "Heading"; onClicked: ed.lines("h") }
+            Tool { icon: "list-ul"; tip: "Bullet list"; onClicked: ed.lines("ul") }
+            Tool { icon: "list-ol"; tip: "Numbered list"; onClicked: ed.lines("ol") }
+            Rectangle { width: 1; height: 22; color: Theme.border }
+            Btn { compact: true; kind: "subtle"; icon: "image"; text: "Picture"; tip: "Add pictures (or drop them here)"; onClicked: { attachDialog.images = true; attachDialog.open(); } }
+            Btn { compact: true; kind: "subtle"; icon: "clip"; text: "File"; tip: "Attach files (or drop them here)"; onClicked: { attachDialog.images = false; attachDialog.open(); } }
+            Text { text: ed.uploading; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13 }
+            Item { Layout.fillWidth: true }
         }
 
-        ScrollView {
-            visible: ed.preview
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            contentWidth: availableWidth
-            clip: true
-            Text {
-                width: parent.width
-                text: body.text || "*Nothing written yet.*"
-                textFormat: Text.MarkdownText
-                wrapMode: Text.Wrap
-                color: Theme.fg
-                linkColor: Theme.accent
-                font.family: Theme.sans
-                font.pixelSize: 15
-                lineHeight: 1.25
-                onLinkActivated: link => Qt.openUrlExternally(link)
+            spacing: 24
+
+            Area {
+                id: body
+                visible: !ed.preview
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredWidth: 1
+                placeholderText: "Write here. Select text and use the buttons above for bold, lists and more."
+                fontSize: 15
+                smartLists: true
+                area.onTextChanged: if (area.activeFocus) ed.edited()
+            }
+
+            // How it reads: next to the editor on a wide window, alone in Preview.
+            ScrollView {
+                visible: ed.preview || ed.width > 1100
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredWidth: 1
+                contentWidth: availableWidth
+                clip: true
+                NoteView {
+                    width: parent.width
+                    app: ed.app
+                    text: body.text || "*Nothing written yet.*"
+                }
             }
         }
     }

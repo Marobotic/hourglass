@@ -14,7 +14,8 @@
 // <data>/owner keeps the top-level data, which the legacy token also opens.
 import { createServer } from "node:http";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { join, resolve } from "node:path";
 import { Store } from "../core/node/store.js";
 import { Service } from "../core/node/service.js";
@@ -27,6 +28,9 @@ const host = process.env.HOURGLASS_HOST || "127.0.0.1";
 const maroUrl = (process.env.MARO_ACCOUNT_URL || "http://127.0.0.1:8900").replace(/\/+$/, "");
 const maroDir = process.env.MARO_CACHE_DIR || "/var/lib/maro-cache";
 const MAX_UPLOAD = 40 * 1024 * 1024;
+const MAX_FILE = 2 * 1024 * 1024 * 1024; // one Drive upload
+// Kept free on the droplet: uploads that would go below this are refused.
+const DISK_RESERVE = 2 * 1024 * 1024 * 1024;
 const SONG_EXTS = [".m4a", ".opus", ".webm", ".mp3", ".ogg", ".aac", ".flac"];
 
 function secret(dir, name) {
@@ -96,7 +100,7 @@ function tenant(email) {
   const service = new Service(store);
   t = { email: key || owner, dir, store, service, icalKey: secret(dir, "ical_key"), aiKey: readKey(dir) };
   if (t.aiKey) aiKeys.set(t.aiKey, key || owner);
-  t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL, extra: (req, res, url, path) => ringtoneRoutes(t, req, res, url, path) });
+  t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL, extra: async (req, res, url, path) => (await driveRoutes(t, req, res, url, path)) || ringtoneRoutes(t, req, res, url, path) });
   tenants.set(key, t);
   return t;
 }
@@ -201,6 +205,82 @@ function songFile(id) {
     } catch {}
   }
   return file;
+}
+
+// --- drive -------------------------------------------------------------------------
+
+const drivePath = (t, id) => join(t.dir, "drive", id);
+
+// Drop the bytes of files deleted here or by a device's sync.
+function sweepDrive(t) {
+  for (const f of t.store.all("files", { withDeleted: true })) if (f.deleted) rmSync(drivePath(t, f.id), { force: true });
+}
+
+function diskUsage(t) {
+  const s = statfsSync(t.dir);
+  const total = s.blocks * s.bsize;
+  const free = s.bavail * s.bsize;
+  const mine = t.store.all("files").reduce((n, f) => n + (f.size || 0), 0);
+  return { total, free, used: total - free, mine, usable: Math.max(0, free - DISK_RESERVE), max_file: MAX_FILE };
+}
+
+const MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp",
+  pdf: "application/pdf", txt: "text/plain", md: "text/markdown", mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", mp4: "video/mp4",
+  zip: "application/zip", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+const mimeOf = (name) => MIME[String(name).split(".").pop().toLowerCase()] || "application/octet-stream";
+
+async function driveRoutes(t, req, res, url, path) {
+  const m = req.method;
+  // Any change may delete files (a row, a folder, a sync): drop their bytes after.
+  if (m !== "GET") res.on("finish", () => sweepDrive(t));
+  if (path === "/api/drive/usage" && m === "GET") return send(res, 200, diskUsage(t)), true;
+  if (path === "/api/files/upload" && m === "POST") {
+    const name = (url.searchParams.get("name") || "file").replace(/[\\/]/g, "_").trim().slice(0, 200) || "file";
+    const declared = Number(req.headers["content-length"] || 0);
+    if (declared > MAX_FILE) return send(res, 413, { error: "That file is over 2 GB." }), true;
+    if (declared && declared > diskUsage(t).usable) return send(res, 507, { error: "Not enough space left on the server." }), true;
+    const folder = url.searchParams.get("folder") || null;
+    if (folder && !t.store.get("folders", folder)) return send(res, 400, { error: "no folder with that id" }), true;
+    const id = crypto.randomUUID();
+    mkdirSync(join(t.dir, "drive"), { recursive: true });
+    const tmp = drivePath(t, id) + ".part";
+    let size = 0;
+    try {
+      await pipeline(req, async function* (src) {
+        for await (const c of src) {
+          size += c.length;
+          if (size > MAX_FILE) throw Object.assign(new Error("That file is over 2 GB."), { status: 413 });
+          yield c;
+        }
+      }, createWriteStream(tmp));
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw Object.assign(e, { status: e.status || 400 });
+    }
+    if (!size) {
+      rmSync(tmp, { force: true });
+      return send(res, 400, { error: "empty file" }), true;
+    }
+    renameSync(tmp, drivePath(t, id));
+    const row = t.store.upsert("files", { id, name, folder_id: folder, size, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
+    return send(res, 201, row), true;
+  }
+  const raw = /^\/api\/files\/([0-9a-f-]{36})\/raw$/.exec(path);
+  if (raw && m === "GET") {
+    const row = t.store.get("files", raw[1]);
+    const f = drivePath(t, raw[1]);
+    if (!row || row.deleted || !existsSync(f)) return send(res, 404, { error: "not found" }), true;
+    res.writeHead(200, {
+      "content-type": row.mime || "application/octet-stream",
+      "content-length": statSync(f).size,
+      "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(row.name)}`,
+      "cache-control": "private, max-age=31536000, immutable",
+    });
+    createReadStream(f).pipe(res);
+    return true;
+  }
+  return false;
 }
 
 async function ringtoneRoutes(t, req, res, url, path) {

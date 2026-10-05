@@ -14,6 +14,10 @@ Text {
         "sync": "", "cloud": "", "person": "", "back": "",
         "eye": "", "code": "", "bolt": "", "folder-open": "",
         "calendar-plus": "", "list": "", "timer": "", "down": "", "gear": "", "globe": ""
+        , "bold": "", "italic": "", "underline": "", "strike": ""
+        , "list-ul": "", "list-ol": "", "heading": "", "image": ""
+        , "clip": "", "folder": "", "file": "", "upload": ""
+        , "download": "", "check-square": "", "drive": "", "user-check": ""
     })
     text: glyphs[name] || ""
     font.family: Theme.mono

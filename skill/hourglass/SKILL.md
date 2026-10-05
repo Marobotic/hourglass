@@ -19,6 +19,11 @@ right notes at the right moment. During a lecture, its notes are what matter.
 - **Note**: Markdown, in a course, stamped with `session_date`, the date of
   the lecture it was written for. Pinned notes show in every session. The
   server keeps older text as versions (`note_versions`, `restore_note_version`).
+- **Drive**: the user's files on the server, in folders (`list_drive`,
+  `add_folder`, `remove_folder`). A note shows a Drive picture with
+  `![name](hgfile:<file id>)` and a file with `[name](hgfile:<file id>)` on a
+  line of its own. Notes are Markdown: `**bold**`, `*italic*`,
+  `<u>underline</u>`, `- bullets`, `1. numbered`.
 - **Mark**: one day of a course marked `attended`, `absent` or `off` (no class
   that day; it is left out of Now).
 - **Alarm**: at a time (daily, on weekdays, or on one date), or N minutes
@@ -71,6 +76,7 @@ event's own zone when you change it.
 | "25 minute timer" | `start_timer {minutes:25}` |
 | "I skipped Typography today" / "No class Saturday" | `mark_session {course:"Typography", status:"absent"}` / `mark_session {course, date, status:"off"}` |
 | "How many Printmaking classes have I missed?" | `get_attendance {course:"Printmaking"}` |
+| "What's in my Drive?" / "Make a folder for Typography" | `list_drive` / `add_folder {name:"Typography"}` |
 | "Undo the change to my note" | `note_versions {note_id}`, then `restore_note_version {version_id}` |
 
 ## Connecting an AI

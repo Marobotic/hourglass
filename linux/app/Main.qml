@@ -62,7 +62,9 @@ ApplicationWindow {
         { name: "Alarms", icon: "bell", key: "4" },
         { name: "Timers", icon: "timer", key: "5" },
         { name: "World clock", icon: "globe", key: "6" },
-        { name: "Settings", icon: "gear", key: "7" }
+        { name: "Attendance", icon: "check-square", key: "7" },
+        { name: "Drive", icon: "drive", key: "8" },
+        { name: "Settings", icon: "gear", key: "9" }
     ]
 
     Component.onCompleted: {
@@ -141,6 +143,8 @@ ApplicationWindow {
     Shortcut { sequences: ["5"]; onActivated: app.go(4) }
     Shortcut { sequences: ["6"]; onActivated: app.go(5) }
     Shortcut { sequences: ["7"]; onActivated: app.go(6) }
+    Shortcut { sequences: ["8"]; onActivated: app.go(7) }
+    Shortcut { sequences: ["9"]; onActivated: app.go(8) }
     Shortcut {
         sequences: ["n", "Ctrl+N"]
         onActivated: {
@@ -266,6 +270,8 @@ ApplicationWindow {
                     TimePage { app: app }
                     TimersPage { app: app }
                     WorldClockPage { app: app }
+                    AttendancePage { app: app }
+                    DrivePage { app: app }
                     SettingsPage { app: app }
                 }
 

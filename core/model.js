@@ -94,6 +94,20 @@ export const TABLES = {
     ["date", "text", null],
     ["status", "text", "attended"], // attended | absent | off
   ],
+  // Drive: folders (nested by parent_id) and files. A file's bytes live on
+  // the server (GET /api/files/<id>/raw); the row syncs. note_id: attached to
+  // a note (shown in it as ![name](hgfile:<id>) or [name](hgfile:<id>)).
+  folders: [
+    ["name", "text", ""],
+    ["parent_id", "text", null],
+  ],
+  files: [
+    ["name", "text", ""],
+    ["folder_id", "text", null],
+    ["size", "int", 0],
+    ["mime", "text", "application/octet-stream"],
+    ["note_id", "text", null],
+  ],
   // Synced preferences, one row per key (id = key). "ringtone": a built-in
   // name or a ringtones row id.
   prefs: [["value", "text", null]],
@@ -165,6 +179,7 @@ export function validate(table, r) {
     if (!r.course_id && !r.event_id) fail("course_id or event_id is required");
   }
   if (table === "note_versions" && !r.note_id) fail("note_id is required");
+  if ((table === "folders" || table === "files") && !r.name.trim()) fail("name is required");
   if (table === "timers" && !(r.duration_s > 0)) fail("duration_s must be positive");
   if (table === "clocks") {
     try {
