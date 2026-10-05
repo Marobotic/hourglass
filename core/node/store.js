@@ -98,7 +98,9 @@ export class Store {
   // Create or patch through normalize (validates the merged result).
   upsert(table, patch, opts) {
     const existing = patch.id ? this.get(table, patch.id) : null;
-    const merged = normalize(table, { ...(existing ?? {}), ...patch, updated_at: Math.max(Date.now(), (existing?.updated_at ?? 0) + 1) });
+    // Writing to a deleted row brings it back (marks reuse one id per day:
+    // clear a day, mark it again, and it must not stay deleted).
+    const merged = normalize(table, { ...(existing ?? {}), ...patch, deleted: patch.deleted ? 1 : 0, updated_at: Math.max(Date.now(), (existing?.updated_at ?? 0) + 1) });
     return this.write(table, merged, opts).row;
   }
 

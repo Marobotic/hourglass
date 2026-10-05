@@ -118,9 +118,22 @@ Rectangle {
         nameFilters: images ? ["Pictures (*.png *.jpg *.jpeg *.gif *.webp *.bmp)", "All files (*)"] : ["All files (*)"]
         onAccepted: ed.attach(selectedFiles)
     }
+    // Drop pictures or files on the note to attach them.
     DropArea {
+        id: noteDrop
         anchors.fill: parent
-        onDropped: drop => { if (drop.hasUrls) ed.attach(drop.urls); }
+        z: 5
+        onEntered: d => { if (d.hasUrls) d.accept(Qt.CopyAction); }
+        onDropped: d => { if (!d.hasUrls) return; d.accept(Qt.CopyAction); ed.attach(d.urls); }
+    }
+    Rectangle {
+        anchors.fill: parent
+        z: 6
+        visible: noteDrop.containsDrag
+        color: Theme.alpha(Theme.accent, 0.12)
+        border.width: 2
+        border.color: Theme.accent
+        Text { anchors.centerIn: parent; text: "Drop to attach to this note"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 20; font.weight: Font.Bold }
     }
     Shortcut { sequences: ["Ctrl+B"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("**", "**") }
     Shortcut { sequences: ["Ctrl+I"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("*", "*") }

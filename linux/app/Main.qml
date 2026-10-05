@@ -271,8 +271,26 @@ ApplicationWindow {
                     TimersPage { app: app }
                     WorldClockPage { app: app }
                     AttendancePage { app: app }
-                    DrivePage { app: app }
+                    DrivePage { id: drivePage; app: app }
                     SettingsPage { app: app }
+                }
+
+                // Files dropped on any other page are uploaded to the Drive.
+                DropArea {
+                    id: anyDrop
+                    anchors.fill: parent
+                    enabled: app.editingNote === null && app.page !== 7
+                    onEntered: d => { if (d.hasUrls) d.accept(Qt.CopyAction); }
+                    onDropped: d => { if (!d.hasUrls) return; d.accept(Qt.CopyAction); app.go(7); drivePage.upload(d.urls); }
+                }
+                Rectangle {
+                    anchors.fill: parent
+                    z: 20
+                    visible: anyDrop.containsDrag
+                    color: Theme.alpha(Theme.accent, 0.12)
+                    border.width: 2
+                    border.color: Theme.accent
+                    Text { anchors.centerIn: parent; text: "Drop to upload to your Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 20; font.weight: Font.Bold }
                 }
 
                 NoteEditor {

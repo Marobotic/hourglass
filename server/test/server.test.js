@@ -114,6 +114,9 @@ test("attendance: mark, read, clear", async () => {
   assert.deepEqual(got.totals, { attended: 1, absent: 0, off: 1 });
   await action("mark_session", { course: c.name, date: "2026-10-13", status: "none" });
   assert.equal((await action("get_attendance", { course: c.name })).marks.length, 1);
+  // Marking a cleared day again must stick (it reuses the same row id).
+  await action("mark_session", { course: c.name, date: "2026-10-13", status: "attended" });
+  assert.deepEqual((await action("get_attendance", { course: c.name })).totals, { attended: 2, absent: 0, off: 0 });
 });
 
 test("ical feed", async () => {

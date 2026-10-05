@@ -87,11 +87,6 @@ Item {
         fileMode: FileDialog.OpenFiles
         onAccepted: page.upload(selectedFiles)
     }
-    DropArea {
-        id: drop
-        anchors.fill: parent
-        onDropped: d => { if (d.hasUrls) page.upload(d.urls); }
-    }
 
     // New folder / rename
     Modal {
@@ -110,36 +105,45 @@ Item {
         footer: [Item { Layout.fillWidth: true }, Btn { text: "Cancel"; onClicked: nameDlg.close() }, Btn { kind: "primary"; text: "Save"; onClicked: nameDlg.save() }]
     }
 
-    // Right-click menu for a file or folder.
-    Menu {
-        id: menu
-        property var it: null
-        readonly property bool isFile: !!(it && it.table === "files")
-        readonly property var f: it ? it.row : null
-        MenuItem { text: menu.isFile ? "Open" : "Open folder"; onTriggered: menu.isFile ? page.openFile(menu.f) : page.go(menu.f.id, "") }
-        MenuItem { text: "Preview"; visible: menu.isFile && (page.isImage(menu.f) || page.isVideo(menu.f)); height: visible ? implicitHeight : 0; onTriggered: preview.show(menu.f) }
-        MenuItem { text: "Show in folder"; visible: menu.isFile; height: visible ? implicitHeight : 0; onTriggered: page.reveal(menu.f) }
-        MenuSeparator {}
-        Menu {
-            id: courseMenu
-            title: "Set course"
-            enabled: menu.isFile
-            Instantiator {
-                model: page.app ? page.app.courses : []
-                MenuItem {
-                    required property var modelData
-                    text: (menu.f && menu.f.course_id === modelData.id ? "✓  " : "") + modelData.name
-                    onTriggered: page.moveTo(menu.f, modelData.id)
-                }
-                onObjectAdded: (i, o) => courseMenu.insertItem(i, o)
-                onObjectRemoved: (i, o) => courseMenu.removeItem(o)
-            }
-            MenuSeparator {}
-            MenuItem { text: "No course"; enabled: !!(menu.f && menu.f.course_id); onTriggered: page.moveTo(menu.f, null) }
+    // Right-click menu for a file or folder, in the app's look.
+    property var menuItem: null
+    function openMenu(it, area, mx, my) {
+        menuItem = it;
+        const p = area.mapToItem(page, mx, my);
+        const f = it.row;
+        if (it.table === "folders") {
+            menu.show(p.x, p.y, f.name, [
+                { key: "open", label: "Open folder" },
+                { key: "rename", label: "Rename" },
+                { separator: true },
+                { key: "delete", label: "Delete folder", danger: true },
+            ]);
+            return;
         }
-        MenuItem { text: "Rename"; onTriggered: nameDlg.ask(menu.it) }
-        MenuSeparator {}
-        MenuItem { text: "Delete"; onTriggered: page.remove(menu.it) }
+        const media = page.isImage(f) || page.isVideo(f);
+        const courses = (page.app ? page.app.courses : []).map(c => ({ key: "course:" + c.id, label: c.name, checked: f.course_id === c.id }));
+        menu.show(p.x, p.y, f.name, [
+            { key: "open", label: "Open" },
+            media ? { key: "preview", label: "Preview" } : null,
+            { key: "reveal", label: "Show in folder" },
+            { separator: true },
+            { key: "course", label: "Set course", sub: courses.concat([{ separator: true }, { key: "course:", label: "No course", disabled: !f.course_id }]) },
+            { key: "rename", label: "Rename" },
+            { separator: true },
+            { key: "delete", label: "Delete", danger: true },
+        ].filter(x => x));
+    }
+    ContextMenu {
+        id: menu
+        onPicked: key => {
+            const it = page.menuItem, f = it.row;
+            if (key === "open") it.table === "folders" ? page.go(f.id, "") : page.openFile(f);
+            else if (key === "preview") preview.show(f);
+            else if (key === "reveal") page.reveal(f);
+            else if (key.startsWith("course:")) page.moveTo(f, key.slice(7) || null);
+            else if (key === "rename") nameDlg.ask(it);
+            else if (key === "delete") page.remove(it);
+        }
     }
 
     ScrollView {
@@ -288,7 +292,7 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
                             onClicked: e => {
-                                if (e.button === Qt.RightButton) { menu.it = item.modelData; menu.popup(); return; }
+                                if (e.button === Qt.RightButton) { page.openMenu(item.modelData, im, e.x, e.y); return; }
                                 if (item.isFolder) page.go(item.f.id, "");
                                 else if (page.isImage(item.f) || page.isVideo(item.f)) preview.show(item.f);
                                 else page.openFile(item.f);
@@ -322,7 +326,7 @@ Item {
                                     : page.size(item.f.size) + "  ·  " + Util.shortDate(Util.dayOf(item.f.updated_at)) + " " + Util.clock(item.f.updated_at)
                                 color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
                             }
-                            Btn { compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: { menu.it = item.modelData; menu.popup(); } }
+                            Btn { id: more; compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: page.openMenu(item.modelData, more, 0, more.height) }
                         }
                     }
                 }
@@ -335,8 +339,17 @@ Item {
         }
     }
 
+    // Drop files anywhere on the page to upload them here.
+    DropArea {
+        id: drop
+        anchors.fill: parent
+        z: 5
+        onEntered: d => { if (d.hasUrls) d.accept(Qt.CopyAction); }
+        onDropped: d => { if (!d.hasUrls) return; d.accept(Qt.CopyAction); page.upload(d.urls); }
+    }
     Rectangle {
         anchors.fill: parent
+        z: 6
         visible: drop.containsDrag
         color: Theme.alpha(Theme.accent, 0.12)
         border.width: 2
