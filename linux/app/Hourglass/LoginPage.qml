@@ -28,6 +28,14 @@ Rectangle {
         }, false);
     }
 
+    // The last account's email, as a starting point, when the page comes up.
+    function prefill() {
+        const a = app && app.appState ? app.appState.account : null;
+        if (email.text === "" && a && a.email) email.text = a.email;
+    }
+    onVisibleChanged: if (visible) prefill()
+    Component.onCompleted: prefill()
+
     MouseArea { anchors.fill: parent } // nothing behind it takes clicks
 
     ColumnLayout {
@@ -86,7 +94,10 @@ Rectangle {
                     id: email
                     Layout.fillWidth: true
                     implicitHeight: 42
-                    text: login.app.appState.account ? (login.app.appState.account.email || "") : ""
+                    // Filled in once, never bound: appState is replaced whenever
+                    // the sync loop moves (last_ok, pending), and a binding here
+                    // put the saved email back over whatever was being typed -
+                    // every few seconds, for good.
                     inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
                     onAccepted: password.forceActiveFocus()
                 }
