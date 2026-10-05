@@ -2,6 +2,11 @@ import { isDate, isTime } from "./dates.js";
 
 export const PALETTE = ["#B14242", "#D66E36", "#F0BE66", "#4A8B8B", "#7E6BAF", "#5B8C4A", "#C2587E", "#8A8A8A"];
 export const KINDS = ["lecture", "lab", "tutorial", "exam", "event"];
+export const MARKS = ["attended", "absent", "off"];
+
+// The marks row id for a session: per course and day, so a lecture and its
+// tutorial on the same day share one mark.
+export const markId = (courseId, eventId, date) => `${courseId || eventId}:${date}`;
 
 // Column definitions: [name, type, default]. type: text | int | bool | json.
 export const TABLES = {
@@ -23,6 +28,10 @@ export const TABLES = {
     ["end_time", "text", null],
     ["repeat", "json", null],
     ["exceptions", "json", []],
+    // The zone start_time/end_time are in: "08:00 Africa/Cairo" stays 08:00 in
+    // Cairo whatever zone the app shows, and converts for display. null = the
+    // app's zone at the time (rows from before this column).
+    ["tz", "text", null],
   ],
   notes: [
     ["course_id", "text", null],
@@ -65,6 +74,25 @@ export const TABLES = {
     ["artist", "text", null],
     ["song_id", "text", null],
     ["duration_s", "int", 0],
+  ],
+  // Older text of a note, written by the server only: the state before an
+  // editing session (at most one per 10 minutes of edits), and whatever lost
+  // when two devices edited at once. Restoring one is an ordinary note edit.
+  note_versions: [
+    ["note_id", "text", null],
+    ["title", "text", ""],
+    ["body", "text", ""],
+    ["saved_at", "int", 0], // when this text was last edited
+    ["reason", "text", "edit"], // edit | conflict | restore
+  ],
+  // One session of a course marked attended, absent or off (no class that
+  // day). id = "<course_id or event_id>:<date>", so every device writes the
+  // same row; removing it clears the mark.
+  marks: [
+    ["course_id", "text", null],
+    ["event_id", "text", null],
+    ["date", "text", null],
+    ["status", "text", "attended"], // attended | absent | off
   ],
   // Synced preferences, one row per key (id = key). "ringtone": a built-in
   // name or a ringtones row id.
@@ -124,6 +152,19 @@ export function validate(table, r) {
     if (r.date && !isDate(r.date)) fail("date must be YYYY-MM-DD");
   }
   if (table === "ringtones" && !r.name.trim()) fail("name is required");
+  if (table === "events" && r.tz) {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: r.tz });
+    } catch {
+      fail(`unknown time zone: ${r.tz}`);
+    }
+  }
+  if (table === "marks") {
+    if (!isDate(r.date)) fail("date must be YYYY-MM-DD");
+    if (!MARKS.includes(r.status)) fail(`status must be one of ${MARKS.join(", ")}`);
+    if (!r.course_id && !r.event_id) fail("course_id or event_id is required");
+  }
+  if (table === "note_versions" && !r.note_id) fail("note_id is required");
   if (table === "timers" && !(r.duration_s > 0)) fail("duration_s must be positive");
   if (table === "clocks") {
     try {

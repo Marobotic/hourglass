@@ -79,12 +79,41 @@ test("now: grace windows before and after", () => {
   assert.equal(resolveNow(data, at("2026-09-29", "10:20"), TZ).active, null);
 });
 
-test("now: nothing on shows next with countdown", () => {
-  const r = resolveNow(data, at("2026-09-28", "12:00"), TZ);
-  assert.equal(r.active, null);
+test("now: only today and the next 12 hours, else the day is off", () => {
+  // Monday noon: Tuesday 08:00 is 20 h away, so nothing is shown.
+  const far = resolveNow(data, at("2026-09-28", "12:00"), TZ);
+  assert.equal(far.active, null);
+  assert.equal(far.next, null);
+  assert.equal(far.day_off, true);
+  // Monday 21:00: Tuesday 08:00 is 11 h away, so it shows as next.
+  const r = resolveNow(data, at("2026-09-28", "21:00"), TZ);
   assert.equal(r.next.date, "2026-09-29");
-  assert.equal(r.next.starts_in_min, 20 * 60);
+  assert.equal(r.next.starts_in_min, 11 * 60);
+  assert.equal(r.day_off, false);
   assert.equal(r.focus, null); // next is tomorrow, so no notes forced on screen
+});
+
+test("now: a session marked off is not on", () => {
+  const off = normalize("marks", { id: "c1:2026-09-29", course_id: "c1", date: "2026-09-29", status: "off" });
+  const r = resolveNow({ ...data, marks: [off] }, at("2026-09-29", "09:00"), TZ);
+  assert.equal(r.active, null);
+  assert.equal(r.today[0].mark, "off");
+});
+
+test("expand: an event keeps its own zone's wall clock", () => {
+  const cairo = { ...lecture, tz: "Africa/Cairo", exceptions: [] };
+  // Shown in Cairo: 08:00. Shown in New York (7 h behind in September): 01:00 the same day.
+  const inCairo = expand([cairo], new Map([["c1", course]]), "2026-09-29", "2026-09-29", "Africa/Cairo");
+  assert.equal(inCairo[0].start_time, "08:00");
+  const inNY = expand([cairo], new Map([["c1", course]]), "2026-09-29", "2026-09-29", "America/New_York");
+  assert.equal(inNY[0].start_time, "01:00");
+  assert.equal(inNY[0].end_time, "03:00");
+  assert.equal(inNY[0].session_date, "2026-09-29");
+  assert.equal(inNY[0].start_ms, inCairo[0].start_ms);
+  // Tokyo is 6 h ahead: 14:00.
+  assert.equal(expand([cairo], new Map([["c1", course]]), "2026-09-29", "2026-09-29", "Asia/Tokyo")[0].start_time, "14:00");
+  // Without its own zone an event floats with the app's zone, as before.
+  assert.equal(expand([lecture], new Map([["c1", course]]), "2026-09-29", "2026-09-29", "America/New_York")[0].start_time, "08:00");
 });
 
 test("alarms: fixed, weekly, one-off, lead-before-event", () => {

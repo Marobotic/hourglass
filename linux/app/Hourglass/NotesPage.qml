@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
-// Notes like Google Keep: a quick "Take a note" bar, course chips to filter,
+// Notes like Google Keep: a quick "Take a note" bar, a course dropdown to filter,
 // and a masonry grid of cards tinted with the course colour.
 Item {
     id: page
@@ -73,32 +73,15 @@ Item {
                     Field { Layout.preferredWidth: 260; placeholderText: "Search"; onTextChanged: page.query = text }
                 }
 
-                // folders
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    Btn { compact: true; kind: "subtle"; text: "All"; active: page.sel === "all"; onClicked: page.sel = "all" }
-                    Repeater {
-                        model: page.app.courses
-                        Rectangle {
-                            required property var modelData
-                            readonly property bool on: page.sel === modelData.id
-                            width: chipRow.implicitWidth + 24
-                            height: 30
-                            color: on ? Theme.surface2 : chipMouse.containsMouse ? Theme.surface : "transparent"
-                            border.width: 1
-                            border.color: on ? Theme.faint : Theme.border
-                            RowLayout {
-                                id: chipRow
-                                anchors.centerIn: parent
-                                spacing: 8
-                                Rectangle { width: 10; height: 10; color: modelData.color }
-                                Text { text: modelData.name; color: parent.parent.on ? Theme.fg : Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
-                            }
-                            MouseArea { id: chipMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.sel = modelData.id }
-                        }
+                // "All" first, then each subject: one dropdown.
+                RowLayout {
+                    spacing: 8
+                    Picker {
+                        Layout.preferredWidth: 320
+                        options: [{ label: "All notes", value: "all" }].concat(page.app.courses.map(c => ({ label: c.name, value: c.id, color: c.color })), [{ label: "No course", value: "inbox" }])
+                        value: page.sel
+                        onPicked: v => page.sel = v
                     }
-                    Btn { compact: true; kind: "subtle"; text: "No course"; active: page.sel === "inbox"; onClicked: page.sel = "inbox" }
                     Btn { compact: true; kind: "subtle"; icon: "plus"; text: "Course"; onClicked: page.app.editCourse(null) }
                 }
 

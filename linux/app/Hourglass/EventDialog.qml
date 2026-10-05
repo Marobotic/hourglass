@@ -46,7 +46,8 @@ Modal {
             location: locF.text.trim() || undefined,
             repeat: repeat === "none" ? null : { freq: repeat, days: repeat === "weekly" ? days : undefined, until: untilF.text || undefined }
         };
-        if (ev) Api.action("update_event", Object.assign({ event_id: ev.id }, args), r => { if (r) dlg.close(); });
+        // Times are fixed in the event's zone; an old event without one takes the app's.
+        if (ev) Api.action("update_event", Object.assign({ event_id: ev.id }, args, ev.tz ? {} : { tz: dlg.app.nowData ? dlg.app.nowData.now.tz : undefined }), r => { if (r) dlg.close(); });
         else {
             if (!args.repeat) delete args.repeat;
             if (!args.course) delete args.course;

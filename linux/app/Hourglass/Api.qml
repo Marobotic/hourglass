@@ -15,7 +15,7 @@ QtObject {
 
     // Read-only actions are POSTs too; they must not announce a change, or every
     // page reloads, re-posts, and the app spins in a loop.
-    readonly property var reads: ["whats_now", "world_clock", "get_schedule", "list_courses", "get_notes", "search_notes", "list_alarms", "list_timers"]
+    readonly property var reads: ["whats_now", "world_clock", "get_schedule", "list_courses", "get_notes", "search_notes", "list_alarms", "list_timers", "note_versions", "get_attendance"]
 
     function request(method, path, body, cb, readOnly) {
         const xhr = new XMLHttpRequest();

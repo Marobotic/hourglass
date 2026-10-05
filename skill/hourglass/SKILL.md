@@ -1,6 +1,6 @@
 ---
 name: hourglass
-description: The user's calendar, lecture notes, alarms and timers (Hourglass). Use whenever the user asks what is on now, today, next or this week; wants to add, move, skip or remove a lecture or event; asks for, writes, appends to or searches their notes (especially "notes for this lecture" or "last week's notes"); or wants an alarm or timer. Works through the hourglass MCP tools, or the `hourglass-cli` shell command where MCP is not available.
+description: The user's calendar, lecture notes, alarms and timers (Hourglass). Use whenever the user asks what is on now, today, next or this week; wants to add, move, skip or remove a lecture or event, or adjust their schedule; marks a class attended, absent or off; asks for, writes, appends to or searches their notes (especially "notes for this lecture" or "last week's notes"); or wants an alarm or timer. Works through the hourglass MCP tools, or the `hourglass-cli` shell command where MCP is not available.
 ---
 
 # Hourglass
@@ -17,17 +17,26 @@ right notes at the right moment. During a lecture, its notes are what matter.
   Recurrence is `{ freq: "weekly", days: [2], until: "2026-12-11" }` with ISO
   weekdays (1 = Monday). Skipped dates live in `exceptions`.
 - **Note**: Markdown, in a course, stamped with `session_date`, the date of
-  the lecture it was written for. Pinned notes show in every session.
+  the lecture it was written for. Pinned notes show in every session. The
+  server keeps older text as versions (`note_versions`, `restore_note_version`).
+- **Mark**: one day of a course marked `attended`, `absent` or `off` (no class
+  that day; it is left out of Now).
 - **Alarm**: at a time (daily, on weekdays, or on one date), or N minutes
   before every session of a course.
 - **Timer**: a countdown that rings on the user's computer and phone.
 
-All times are the user's local wall-clock time. `whats_now` reports the zone.
+Times in results are shown in the app's zone (`now.tz` in `whats_now`). Each
+event also has its own zone (`tz`, shown as `event_tz` on occurrences): its
+start and end are fixed there, so an 08:00 Cairo lecture stays 08:00 Cairo
+time and shows as 01:00 when the app is set to New York. Pass times in the
+event's own zone when you change it.
 
 ## How to act
 
 1. **Start with `whats_now`** for anything about now, today or next. It
-   returns the active session (live, or within 10 min before / 15 min after),
+   only looks at today and the next 12 hours: `next` is null (and `day_off`
+   true) when nothing is on. Use `get_schedule` for anything further ahead.
+   It returns the active session (live, or within 10 min before / 15 min after),
    the notes for it (`notes.session`, `notes.pinned`, `notes.last` with
    `notes.last_date`), today's timeline, timers and upcoming alarms.
 2. **Refer to courses by name.** Tools take names, codes or partial names
@@ -60,6 +69,26 @@ All times are the user's local wall-clock time. `whats_now` reports the zone.
 | "Wake me at 7:15 on weekdays" | `set_alarm {time:"07:15", days:["Mon","Tue","Wed","Thu","Fri"], label:"Wake up"}` |
 | "Remind me 15 minutes before every OS lecture" | `set_alarm {before:"Operating Systems", minutes_before:15}` |
 | "25 minute timer" | `start_timer {minutes:25}` |
+| "I skipped Typography today" / "No class Saturday" | `mark_session {course:"Typography", status:"absent"}` / `mark_session {course, date, status:"off"}` |
+| "How many Printmaking classes have I missed?" | `get_attendance {course:"Printmaking"}` |
+| "Undo the change to my note" | `note_versions {note_id}`, then `restore_note_version {version_id}` |
+
+## Connecting an AI
+
+Any AI that speaks MCP can use Hourglass. In the app: Settings > Use with AI >
+Make my AI link. That gives a personal link like
+`https://marobotic.dev/hourglass/mcp/hg_...`:
+
+- **ChatGPT** (Settings > Connectors, developer mode) and **Claude**
+  (Settings > Connectors > Add custom connector): paste the link, no auth.
+- **Claude Code**: `claude mcp add --transport http hourglass <link>`
+- **Gemini CLI** (`~/.gemini/settings.json`) and **Codex**
+  (`~/.codex/config.toml`): an MCP server entry with `httpUrl`/`url` = the link.
+- **Custom GPT actions**: import `https://marobotic.dev/hourglass/openapi.json`
+  and use the key (the part after `/mcp/`) as a Bearer API key.
+
+Then just say "use Hourglass to move my Tuesday lecture to 10". New link in
+Settings turns the old one off.
 
 ## Without MCP
 

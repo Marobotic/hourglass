@@ -113,7 +113,7 @@ const config = () => {
 };
 
 adoptToken();
-const SCHEMA = 3; // bump when a table is added: forces one full pull
+const SCHEMA = 4; // bump when a table is added: forces one full pull
 const store = new Store(join(DATA_DIR, "hourglass.db"), { replica: true });
 const service = new Service(store);
 const TOKEN = token();
@@ -396,6 +396,16 @@ async function extra(req, res, url, path) {
     const b = await readBody(req);
     const out = await remote("/auth/login", { method: "POST", body: { email: b.email, password: b.password }, bearer: null });
     return json(res, 200, await signIn(out.session, out.email)), true;
+  }
+  if (path === "/api/account/register" && req.method === "POST") {
+    const b = await readBody(req);
+    const out = await remote("/auth/register", { method: "POST", body: { email: b.email, password: b.password }, bearer: null });
+    if (!out.session) throw Object.assign(new Error("account created: sign in with it"), { status: 400 });
+    return json(res, 200, await signIn(out.session, out.email || String(b.email).toLowerCase())), true;
+  }
+  // The account's personal AI key and links (made on the server).
+  if (path === "/api/ai" && (req.method === "GET" || req.method === "POST")) {
+    return json(res, 200, await remote("/api/ai", { method: req.method, body: req.method === "POST" ? {} : undefined })), true;
   }
   if (path === "/api/account/logout" && req.method === "POST") return json(res, 200, await signOut()), true;
   if (path === "/api/ringtones" && req.method === "GET") {

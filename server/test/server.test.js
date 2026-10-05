@@ -84,7 +84,7 @@ test("alarms and timers", async () => {
   assert.equal(p.remaining_s, 24 * 60);
 });
 
-test("sync: pull, push, note conflict copy", async () => {
+test("sync: a note edited on two sides keeps one note and a version, never a copy", async () => {
   const pull = await call("GET", "/api/sync?since=0");
   assert.ok(pull.body.rev > 0);
   const note = pull.body.changes.notes[0];
@@ -94,8 +94,26 @@ test("sync: pull, push, note conflict copy", async () => {
   const push = await call("POST", "/api/sync", { changes: { notes: [{ ...note, body: "client edit", updated_at: Date.now() + 1000 }] } });
   assert.equal(push.body.conflicts, 1);
   const notes = (await call("GET", "/api/notes")).body;
-  assert.deepEqual(notes.map((n) => n.body).sort(), ["client edit", "server edit"]);
-  assert.ok(notes.some((n) => /\s0[2-9]$/.test(n.title)), notes.map((n) => n.title).join());
+  assert.deepEqual(notes.map((n) => n.body), ["client edit"]);
+  const versions = (await action("note_versions", { note_id: note.id }));
+  assert.ok(versions.some((v) => v.body === "server edit" && v.reason === "conflict"), JSON.stringify(versions));
+  // Restoring puts the old text back on the same note; the replaced text becomes a version.
+  const v = versions.find((x) => x.body === "server edit");
+  await action("restore_note_version", { version_id: v.version_id });
+  const after = (await call("GET", "/api/notes")).body;
+  assert.deepEqual(after.map((n) => n.body), ["server edit"]);
+  assert.ok((await action("note_versions", { note_id: note.id })).some((x) => x.body === "client edit"));
+});
+
+test("attendance: mark, read, clear", async () => {
+  const c = (await call("GET", "/api/courses")).body[0];
+  await action("mark_session", { course: c.name, date: "2026-10-06", status: "attended" });
+  await action("mark_session", { course: c.name, date: "2026-10-13", status: "absent" });
+  await action("mark_session", { course: c.name, date: "2026-10-13", status: "off" });
+  const got = (await action("get_attendance", { course: c.name }));
+  assert.deepEqual(got.totals, { attended: 1, absent: 0, off: 1 });
+  await action("mark_session", { course: c.name, date: "2026-10-13", status: "none" });
+  assert.equal((await action("get_attendance", { course: c.name })).marks.length, 1);
 });
 
 test("ical feed", async () => {
@@ -111,8 +129,8 @@ test("MCP: tools list and call", async () => {
   const { tools } = await client.listTools();
   assert.ok(tools.length >= 20);
   assert.ok(tools.find((t) => t.name === "remove_event").annotations.destructiveHint);
-  const r = await client.callTool({ name: "search_notes", arguments: { query: "client" } });
-  assert.match(r.content[0].text, /client edit/);
+  const r = await client.callTool({ name: "search_notes", arguments: { query: "server" } });
+  assert.match(r.content[0].text, /server edit/);
   const err = await client.callTool({ name: "get_notes", arguments: { course: "zzz" } });
   assert.equal(err.isError, true);
   await client.close();

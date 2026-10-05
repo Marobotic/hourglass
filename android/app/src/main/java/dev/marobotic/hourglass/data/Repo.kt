@@ -37,7 +37,7 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 // (same semantics as core/node/service.js) and the sync loop.
 // autoConfigure: point a fresh install at the build-time server. Tests pass false
 // so demo data never reaches the real account.
-const val SCHEMA = "4"
+const val SCHEMA = "5"
 val BUILTIN_RINGTONES = listOf("classic", "klaxon", "siren", "digital", "rising", "bell") // bump when a table or column is added
 
 class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
@@ -123,9 +123,10 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     fun notes() = store.all("notes")
     fun alarms() = store.all("alarms")
     fun timers() = store.all("timers").filter { it.optString("state") != "done" }
-    fun now(ms: Long = System.currentTimeMillis()): NowState = Now.resolve(store.all("courses"), events(), notes(), ms, zone)
+    fun marks(): Map<String, String> = store.all("marks").associate { it.id to it.optString("status") }
+    fun now(ms: Long = System.currentTimeMillis()): NowState = Now.resolve(store.all("courses"), events(), notes(), ms, zone, marks())
     fun occurrences(from: LocalDate, to: LocalDate): List<Occ> =
-        Recurrence.expand(events(), store.all("courses").associateBy { it.id }, from, to, zone)
+        Recurrence.expand(events(), store.all("courses").associateBy { it.id }, from, to, zone, marks())
     fun notesFor(courseId: String) = notes().filter { it.str("course_id") == courseId }.sortedByDescending { it.optLong("updated_at") }
 
     // --- courses ---
@@ -156,11 +157,24 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     fun weekly(days: List<Int>, until: String?): JSONObject = JSONObject().put("freq", "weekly").put("days", days.toJson()).apply { if (!until.isNullOrBlank()) put("until", until) }
 
+    // Times are locked to the zone the app is in when the event is made.
     fun addEvent(courseId: String?, title: String, kind: String, date: String, start: String, end: String, location: String?, repeat: JSONObject?) =
         store.upsert("events", mapOf(
             "course_id" to courseId, "title" to title, "kind" to kind, "start_date" to date,
-            "start_time" to start, "end_time" to end, "location" to location, "repeat" to repeat,
+            "start_time" to start, "end_time" to end, "location" to location, "repeat" to repeat, "tz" to zone.id,
         ))
+
+    // --- attendance (synced) ---
+
+    // status null clears the mark.
+    fun setMark(o: Occ, status: String?) {
+        val id = dev.marobotic.hourglass.core.markId(o.courseId, o.eventId, o.session)
+        if (status == null) store.remove("marks", id)
+        else store.upsert("marks", mapOf("course_id" to o.courseId, "event_id" to if (o.courseId == null) o.eventId else null, "date" to o.session.toString(), "status" to status), id)
+    }
+
+    fun attendance(courseId: String): Map<String, Int> =
+        store.all("marks").filter { it.str("course_id") == courseId }.groupingBy { it.optString("status") }.eachCount()
 
     fun updateEvent(id: String, fields: Map<String, Any?>) = store.upsert("events", fields, id)
 
@@ -194,6 +208,11 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     }
 
     fun updateNote(id: String, fields: Map<String, Any?>) = store.upsert("notes", fields, id)
+
+    // Older text of a note, newest first (the server keeps them).
+    fun versions(noteId: String) = store.all("note_versions").filter { it.str("note_id") == noteId }.sortedByDescending { it.optLong("saved_at") }
+    // Putting one back is an ordinary edit: the server keeps the replaced text as a version.
+    fun restoreVersion(v: JSONObject) = updateNote(v.optString("note_id"), mapOf("title" to v.optString("title"), "body" to v.optString("body")))
     fun deleteNote(id: String) = store.remove("notes", id)
 
     // --- alarms & timers ---
@@ -294,9 +313,13 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     // --- account (Omarchy Music) ---
 
-    fun signIn(email: String, password: String, done: (String?) -> Unit) = scope.launch {
+    // A new Omarchy Music account, made from here: signed in once created.
+    fun register(email: String, password: String, done: (String?) -> Unit) = signIn(email, password, done, "/auth/register")
+
+    fun signIn(email: String, password: String, done: (String?) -> Unit, path: String = "/auth/login") = scope.launch {
         val err = runCatching {
-            val res = JSONObject(http("POST", "${BuildConfig.SERVER}/auth/login", null, JSONObject().put("email", email).put("password", password).toString()))
+            val res = JSONObject(http("POST", "${BuildConfig.SERVER}$path", null, JSONObject().put("email", email).put("password", password).toString()))
+            if (!res.has("session")) error("Account created. Sign in with it.")
             val who = res.optString("email").lowercase()
             val was = account
             if (was != null && was != who) store.clearAll()
@@ -307,6 +330,16 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             syncOnce()
         }.exceptionOrNull()?.message
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+
+    // The account's personal AI key and links. make: replace the key (the old
+    // link stops working).
+    fun aiLinks(make: Boolean, done: (JSONObject?, String?) -> Unit) = scope.launch {
+        val r = runCatching {
+            val t = token ?: error("Sign in first")
+            JSONObject(http(if (make) "POST" else "GET", "${BuildConfig.SERVER}/api/ai", t, if (make) "{}" else null))
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
     }
 
     fun signOut() = scope.launch {
@@ -372,7 +405,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
         if (code !in 200..299) {
             val msg = runCatching { JSONObject(text).optString("error") }.getOrNull()
-            throw RuntimeException(if (code == 401 && url.endsWith("/auth/login")) msg ?: "Wrong email or password" else if (code == 401) "HTTP 401" else msg?.ifBlank { null } ?: "HTTP $code")
+            throw RuntimeException(if (code == 401 && (url.endsWith("/auth/login") || url.endsWith("/auth/register"))) msg ?: "Wrong email or password" else if (code == 401) "HTTP 401" else msg?.ifBlank { null } ?: "HTTP $code")
         }
         return text
     }

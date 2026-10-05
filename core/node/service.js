@@ -3,9 +3,9 @@
 // names, "HH:MM" times.
 import { addDays, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
 import { expand } from "../recurrence.js";
-import { resolveNow, sessionNotes } from "../now.js";
+import { markMap, markOf, resolveNow, sessionNotes } from "../now.js";
 import { finishedTimer, nextAlarm } from "../alarms.js";
-import { BUILTIN_RINGTONES, PALETTE, parseWeekday } from "../model.js";
+import { BUILTIN_RINGTONES, MARKS, PALETTE, markId, parseWeekday } from "../model.js";
 import { numberedTitle } from "./store.js";
 
 export class Service {
@@ -67,7 +67,9 @@ export class Service {
     const end = to || addDays(start, 6);
     if (!isDate(start) || !isDate(end)) throw new Error("from and to must be YYYY-MM-DD");
     const courses = new Map(this.store.all("courses").map((c) => [c.id, c]));
-    return { from: start, to: end, tz: this.tz, occurrences: expand(this.store.all("events"), courses, start, end, this.tz) };
+    const marks = markMap(this.store.all("marks"));
+    const occurrences = expand(this.store.all("events"), courses, start, end, this.tz).map((o) => ({ ...o, mark: markOf(marks, o) }));
+    return { from: start, to: end, tz: this.tz, occurrences };
   }
 
   // --- courses ---------------------------------------------------------------
@@ -83,12 +85,13 @@ export class Service {
       .map((c) => ({
         ...c,
         note_count: notes.filter((n) => n.course_id === c.id).length,
-        next: sched.find((o) => o.course_id === c.id && o.end_ms > this.clock()) ?? null,
+        next: sched.find((o) => o.course_id === c.id && o.end_ms > this.clock() && o.mark !== "off") ?? null,
         events: this.store.all("events").filter((e) => e.course_id === c.id),
+        attendance: this.attendanceCounts(c.id),
       }));
   }
 
-  addCourse({ name, code, color, location, teacher, schedule = [], term_start, term_end }) {
+  addCourse({ name, code, color, location, teacher, schedule = [], term_start, term_end, tz }) {
     const used = new Set(this.store.all("courses").map((c) => c.color));
     const course = this.store.upsert("courses", {
       name,
@@ -104,6 +107,7 @@ export class Service {
         start: s.start,
         end: s.end,
         location: s.location,
+        tz,
         date: this.firstOnOrAfter(term_start || this.today(), parseWeekday(s.day)),
         repeat: { freq: "weekly", days: [parseWeekday(s.day)], until: term_end },
       }),
@@ -131,7 +135,7 @@ export class Service {
 
   // --- events ----------------------------------------------------------------
 
-  addEvent({ course, title, kind, date, start, end, location, repeat }) {
+  addEvent({ course, title, kind, date, start, end, location, repeat, tz }) {
     const c = this.course(course, { required: false });
     if (!start) throw new Error("start (HH:MM) is required");
     const endTime = end || addMinutes(start, 60);
@@ -143,11 +147,13 @@ export class Service {
       start_date: date || this.today(),
       start_time: start,
       end_time: endTime,
+      // Locked to the zone it was entered in.
+      tz: eventZone(tz || this.tz),
       repeat: normalizeRepeat(repeat, date || this.today()),
     });
   }
 
-  updateEvent({ event_id, course, title, kind, date, start, end, location, repeat }) {
+  updateEvent({ event_id, course, title, kind, date, start, end, location, repeat, tz }) {
     const ev = this.row("events", event_id);
     const patch = { id: ev.id };
     if (course !== undefined) patch.course_id = this.course(course, { required: false })?.id ?? null;
@@ -157,6 +163,7 @@ export class Service {
     if (start !== undefined) patch.start_time = start;
     if (end !== undefined) patch.end_time = end;
     if (location !== undefined) patch.location = location;
+    if (tz !== undefined) patch.tz = tz ? eventZone(tz) : null;
     if (repeat !== undefined) patch.repeat = normalizeRepeat(repeat, date || ev.start_date);
     return this.store.upsert("events", patch);
   }
@@ -169,6 +176,37 @@ export class Service {
       return this.store.upsert("events", { id: ev.id, exceptions: [...new Set([...(ev.exceptions ?? []), date])] });
     }
     return this.store.remove("events", ev.id);
+  }
+
+  // --- attendance --------------------------------------------------------------
+
+  // Mark one day of a course attended, absent or off; status "none" clears it.
+  // date defaults to today; course or event_id picks the session.
+  markSession({ course, event_id, date, status }) {
+    const day = date || this.today();
+    if (!isDate(day)) throw new Error("date must be YYYY-MM-DD");
+    const ev = event_id ? this.row("events", event_id) : null;
+    const c = ev ? (ev.course_id ? this.store.get("courses", ev.course_id) : null) : this.course(course);
+    const id = markId(c?.id, ev?.id, day);
+    if (status === "none" || status === null) return this.store.remove("marks", id) ?? { ok: true, cleared: id };
+    if (!MARKS.includes(status)) throw new Error(`status must be one of ${MARKS.join(", ")} or none`);
+    return this.store.upsert("marks", { id, course_id: c?.id ?? null, event_id: c ? null : ev.id, date: day, status });
+  }
+
+  attendanceCounts(courseId) {
+    const out = { attended: 0, absent: 0, off: 0 };
+    for (const m of this.store.all("marks")) if (m.course_id === courseId) out[m.status]++;
+    return out;
+  }
+
+  getAttendance({ course } = {}) {
+    const c = this.course(course, { required: false });
+    const marks = this.store.all("marks").filter((m) => !c || m.course_id === c.id).sort((a, b) => (a.date < b.date ? 1 : -1));
+    const names = new Map(this.store.all("courses").map((x) => [x.id, x.name]));
+    return {
+      totals: c ? this.attendanceCounts(c.id) : undefined,
+      marks: marks.map((m) => ({ date: m.date, status: m.status, course: names.get(m.course_id) ?? null, label: shortLabel(m.date) })),
+    };
   }
 
   // --- notes -----------------------------------------------------------------
@@ -230,6 +268,24 @@ export class Service {
     const n = this.row("notes", note_id);
     const body = n.body ? `${n.body.replace(/\s+$/, "")}\n\n${text}` : text;
     return this.store.upsert("notes", { id: n.id, body });
+  }
+
+  // Older text of a note, newest first.
+  noteVersions({ note_id }) {
+    const n = this.row("notes", note_id);
+    return this.store
+      .all("note_versions")
+      .filter((v) => v.note_id === n.id)
+      .sort((a, b) => b.saved_at - a.saved_at)
+      .map((v) => ({ version_id: v.id, title: v.title, body: v.body, saved_at: v.saved_at, reason: v.reason }));
+  }
+
+  // Put an older version back. The text it replaces becomes a version too.
+  restoreNoteVersion({ version_id }) {
+    const v = this.row("note_versions", version_id);
+    const n = this.row("notes", v.note_id);
+    if (!this.store.replica) this.store.keepVersion(n, { reason: "restore", force: true });
+    return this.store.upsert("notes", { id: n.id, title: v.title, body: v.body });
   }
 
   deleteNote({ note_id }) {
@@ -528,6 +584,16 @@ function cityOf(zone) {
 }
 
 // Accept an IANA zone ("America/New_York") or a city name ("new york", "Tokyo").
+// A zone the app already uses ("Etc/UTC" from the system) is taken as is;
+// anything else is looked up like a city.
+function eventZone(input) {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: input });
+    if (/\//.test(input) || input === "UTC") return input;
+  } catch {}
+  return resolveZone(input);
+}
+
 function resolveZone(input) {
   const raw = String(input ?? "").trim();
   if (!raw) throw new Error("zone is required, e.g. Asia/Tokyo or a city name");

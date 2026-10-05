@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.PushPin
@@ -77,12 +78,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
         }
         if (searching) item(span = StaggeredGridItemSpan.FullLine) { Field(query, { query = it }, "Search", Modifier.fillMaxWidth()) }
         item(span = StaggeredGridItemSpan.FullLine) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                item { Folder("All", null, sel == "all") { sel = "all" } }
-                items(courses, key = { it.id }) { c -> Folder(c.optString("name"), hex(c.optString("color")), sel == c.id) { sel = c.id } }
-                item { Folder("No course", null, sel == "inbox") { sel = "inbox" } }
-                item { Folder("+ Course", null, false) { nav.sheets.course = true to null } }
-            }
+            CourseFilter(sel, courses, { sel = it }) { nav.sheets.course = true to null }
         }
         if (course != null) item(span = StaggeredGridItemSpan.FullLine) {
             T(listOfNotNull(course.optString("name"), course.str("location"), course.str("teacher")?.substringBefore(",")).joinToString("  ·  "), 13, HColors.muted, maxLines = 2,
@@ -122,6 +118,38 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
         }
         if (notes.isEmpty()) item(span = StaggeredGridItemSpan.FullLine) {
             T(if (query.isNotBlank()) "No notes match." else "Notes you take will show up here.", 14, HColors.faint, modifier = Modifier.padding(top = 20.dp))
+        }
+    }
+}
+
+// "All" first, then each subject, then notes with no course: one dropdown
+// instead of a row of chips.
+@Composable
+private fun CourseFilter(sel: String, courses: List<org.json.JSONObject>, onPick: (String) -> Unit, onNewCourse: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val course = courses.firstOrNull { it.id == sel }
+    val label = when (sel) { "all" -> "All notes"; "inbox" -> "No course"; else -> course?.optString("name") ?: "All notes" }
+    Box {
+        Row(
+            Modifier.fillMaxWidth().background(HColors.surface).border(1.dp, HColors.border).clickable { open = true }.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (course != null) { Box(Modifier.size(10.dp).background(hex(course.optString("color")))); Spacer(Modifier.width(10.dp)) }
+            T(label, 15, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
+            Icon(Icons.Outlined.ArrowDropDown, "Choose", tint = HColors.muted)
+        }
+        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = HColors.surface) {
+            @Composable
+            fun Item(text: String, swatch: Color?, on: Boolean, action: () -> Unit) = androidx.compose.material3.DropdownMenuItem(
+                text = { T(text, 14, if (on) HColors.fg else HColors.muted, bold = on) },
+                leadingIcon = { Box(Modifier.size(10.dp).background(swatch ?: Color.Transparent)) },
+                onClick = { open = false; action() },
+            )
+            Item("All notes", null, sel == "all") { onPick("all") }
+            for (c in courses) Item(c.optString("name"), hex(c.optString("color")), sel == c.id) { onPick(c.id) }
+            Item("No course", null, sel == "inbox") { onPick("inbox") }
+            androidx.compose.material3.HorizontalDivider(color = HColors.border)
+            Item("+ New course", null, false, onNewCourse)
         }
     }
 }

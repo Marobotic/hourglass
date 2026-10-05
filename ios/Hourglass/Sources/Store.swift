@@ -10,6 +10,8 @@ struct DB: Codable {
     var timers: [HTimer] = []
     var ringtones: [Ringtone] = []
     var prefs: [Pref] = []
+    var note_versions: [NoteVersion] = []
+    var marks: [Mark] = []
 
     init() {}
     // Tolerant: files and servers from before a table existed decode fine.
@@ -23,6 +25,8 @@ struct DB: Codable {
         timers = try c.decodeIfPresent([HTimer].self, forKey: .timers) ?? []
         ringtones = try c.decodeIfPresent([Ringtone].self, forKey: .ringtones) ?? []
         prefs = try c.decodeIfPresent([Pref].self, forKey: .prefs) ?? []
+        note_versions = try c.decodeIfPresent([NoteVersion].self, forKey: .note_versions) ?? []
+        marks = try c.decodeIfPresent([Mark].self, forKey: .marks) ?? []
     }
 }
 
@@ -63,9 +67,9 @@ final class Store: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "token")
         UserDefaults.standard.removeObject(forKey: "server")
         // New table since the last run: pull everything once.
-        if UserDefaults.standard.integer(forKey: "schema") != 4 {
+        if UserDefaults.standard.integer(forKey: "schema") != 5 {
             UserDefaults.standard.set(0, forKey: "cursor")
-            UserDefaults.standard.set(4, forKey: "schema")
+            UserDefaults.standard.set(5, forKey: "schema")
         }
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
         applyZone()
@@ -79,9 +83,35 @@ final class Store: ObservableObject {
     var alarms: [Alarm] { db.alarms.filter { $0.deleted == 0 } }
     var timers: [HTimer] { db.timers.filter { $0.deleted == 0 && $0.state != "done" } }
     func course(_ id: String?) -> Course? { courses.first { $0.id == id } }
-    func now(_ ms: Int64 = nowMs()) -> NowState { Now.resolve(db.courses, db.events, db.notes, ms) }
+    var markMap: [String: String] { Dictionary(db.marks.filter { $0.deleted == 0 }.map { ($0.id, $0.status) }, uniquingKeysWith: { a, _ in a }) }
+    func now(_ ms: Int64 = nowMs()) -> NowState { Now.resolve(db.courses, db.events, db.notes, ms, marks: markMap) }
     func occurrences(_ from: String, _ to: String) -> [Occ] {
-        Recurrence.expand(db.events, Dictionary(uniqueKeysWithValues: db.courses.map { ($0.id, $0) }), from, to)
+        Recurrence.expand(db.events, Dictionary(uniqueKeysWithValues: db.courses.map { ($0.id, $0) }), from, to, marks: markMap)
+    }
+    // Older text of a note, newest first.
+    func versions(_ noteId: String) -> [NoteVersion] {
+        db.note_versions.filter { $0.deleted == 0 && $0.note_id == noteId }.sorted { ($0.saved_at ?? 0) > ($1.saved_at ?? 0) }
+    }
+    // Putting one back is an ordinary edit; the server keeps the replaced text.
+    func restore(_ v: NoteVersion) {
+        guard var n = notes.first(where: { $0.id == v.note_id }) else { return }
+        n.title = v.title; n.body = v.body
+        save(n)
+    }
+    // Attended / absent / off for one day of a course; nil clears it.
+    func setMark(_ o: Occ, _ status: String?) {
+        let day = o.session.isEmpty ? o.date : o.session
+        let id = markId(o.course_id, o.event_id, day)
+        var m = db.marks.first { $0.id == id } ?? Mark(id: id, course_id: o.course_id, event_id: o.course_id == nil ? o.event_id : nil, date: day)
+        if let status { m.status = status; m.deleted = 0 } else { m.deleted = 1 }
+        m.updated_at = stamp(m.updated_at); m.dirty = 1
+        if let i = db.marks.firstIndex(where: { $0.id == id }) { db.marks[i] = m } else { db.marks.append(m) }
+        changed()
+    }
+    func attendance(_ course: String) -> [String: Int] {
+        var out: [String: Int] = [:]
+        for m in db.marks where m.deleted == 0 && m.course_id == course { out[m.status, default: 0] += 1 }
+        return out
     }
     func courseNotes(_ course: String) -> [Note] { notes.filter { $0.course_id == course }.sorted { $0.updated_at > $1.updated_at } }
 
@@ -137,21 +167,36 @@ final class Store: ObservableObject {
         req.timeoutInterval = 120
         req.httpBody = data
         try check(try await URLSession.shared.data(for: req))
-        await sync()
+        await syncSoon()
     }
 
     // MARK: account (Omarchy Music)
 
-    func signIn(email: String, password: String) async throws {
+    // A new Omarchy Music account, made from here; signed in once created.
+    func register(email: String, password: String) async throws {
+        try await signIn(email: email, password: password, path: "auth/register")
+    }
+
+    // The account's personal AI key and links. make: replace the key.
+    func aiLinks(make: Bool) async throws -> [String: Any] {
+        guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
+        var req = request(base.appendingPathComponent("api/ai"))
+        if make { req.httpMethod = "POST"; req.setValue("application/json", forHTTPHeaderField: "Content-Type"); req.httpBody = Data("{}".utf8) }
+        let r = try await URLSession.shared.data(for: req)
+        try check(r)
+        return (try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any] ?? [:]
+    }
+
+    func signIn(email: String, password: String, path: String = "auth/login") async throws {
         guard let base = URL(string: server) else { return }
-        var req = URLRequest(url: base.appendingPathComponent("auth/login"), timeoutInterval: 15)
+        var req = URLRequest(url: base.appendingPathComponent(path), timeoutInterval: 15)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(["email": email, "password": password])
         let (data, res) = try await URLSession.shared.data(for: req)
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard (res as? HTTPURLResponse)?.statusCode == 200, let session = obj["session"] as? String else {
-            throw NSError(domain: "hourglass", code: 401, userInfo: [NSLocalizedDescriptionKey: obj["error"] as? String ?? "Sign-in failed"])
+            throw NSError(domain: "hourglass", code: 401, userInfo: [NSLocalizedDescriptionKey: obj["error"] as? String ?? (path == "auth/login" ? "Sign-in failed" : "Could not create the account")])
         }
         let who = (obj["email"] as? String ?? email).lowercased()
         if let was = account, was != who {
@@ -163,7 +208,7 @@ final class Store: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "signed_out")
         UserDefaults.standard.set(who, forKey: "account")
         signedIn = true
-        await sync()
+        await syncSoon()
     }
 
     func signOut() {
@@ -201,8 +246,13 @@ final class Store: ObservableObject {
         applyZone()
         if let data = try? JSONEncoder().encode(db) { try? data.write(to: file, options: .atomic) }
         Notifications.reschedule(self)
+        // Debounce only the wait: a push already on its way is never cancelled,
+        // or its new rev is lost and the next save looks like an edit conflict.
         syncTask?.cancel()
-        syncTask = Task { try? await Task.sleep(nanoseconds: 1_500_000_000); await self.sync() }
+        syncTask = Task {
+            do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
+            await self.syncSoon()
+        }
     }
 
     @discardableResult
@@ -267,7 +317,8 @@ final class Store: ObservableObject {
 
     func skip(_ o: Occ) {
         guard var e = db.events.first(where: { $0.id == o.event_id }) else { return }
-        if !e.exceptions.contains(o.date) { e.exceptions.append(o.date) }
+        let day = o.session.isEmpty ? o.date : o.session
+        if !e.exceptions.contains(day) { e.exceptions.append(day) }
         save(e)
     }
 
@@ -368,6 +419,19 @@ final class Store: ObservableObject {
         for (id, r) in revs["timers"] ?? [:] { if let i = db.timers.firstIndex(where: { $0.id == id }) { db.timers[i].rev = r } }
         for (id, r) in revs["ringtones"] ?? [:] { if let i = db.ringtones.firstIndex(where: { $0.id == id }) { db.ringtones[i].rev = r } }
         for (id, r) in revs["prefs"] ?? [:] { if let i = db.prefs.firstIndex(where: { $0.id == id }) { db.prefs[i].rev = r } }
+        for (id, r) in revs["marks"] ?? [:] { if let i = db.marks.firstIndex(where: { $0.id == id }) { db.marks[i].rev = r } }
+    }
+
+    private var syncing = false
+    private var again = false
+    // One sync at a time, outside any cancellable task; edits made during it
+    // run one more.
+    func syncSoon() async {
+        if syncing { again = true; return }
+        syncing = true
+        await Task.detached { @MainActor in await self.sync() }.value
+        syncing = false
+        if again { again = false; await syncSoon() }
     }
 
     func sync() async {
@@ -383,8 +447,9 @@ final class Store: ObservableObject {
             dirty.timers = db.timers.filter { $0.dirty == 1 }
             dirty.ringtones = db.ringtones.filter { $0.dirty == 1 }
             dirty.prefs = db.prefs.filter { $0.dirty == 1 }
+            dirty.marks = db.marks.filter { $0.dirty == 1 }
             let pushed = dirty
-            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.clocks.isEmpty && dirty.timers.isEmpty && dirty.ringtones.isEmpty && dirty.prefs.isEmpty) {
+            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.clocks.isEmpty && dirty.timers.isEmpty && dirty.ringtones.isEmpty && dirty.prefs.isEmpty && dirty.marks.isEmpty) {
                 var req = request(base.appendingPathComponent("api/sync"))
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -443,6 +508,7 @@ final class Store: ObservableObject {
         c(&db.timers, p.timers, { $0.updated_at }, { $0.dirty = 0 })
         c(&db.ringtones, p.ringtones, { $0.updated_at }, { $0.dirty = 0 })
         c(&db.prefs, p.prefs, { $0.updated_at }, { $0.dirty = 0 })
+        c(&db.marks, p.marks, { $0.updated_at }, { $0.dirty = 0 })
     }
 
     // Last write wins on updated_at.
@@ -461,6 +527,8 @@ final class Store: ObservableObject {
         m(&db.timers, ch.timers, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.ringtones, ch.ringtones, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.prefs, ch.prefs, { $0.updated_at }, { $0.dirty = 0 })
+        m(&db.note_versions, ch.note_versions, { $0.updated_at }, { $0.dirty = 0 })
+        m(&db.marks, ch.marks, { $0.updated_at }, { $0.dirty = 0 })
     }
 }
 

@@ -99,14 +99,20 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
     val zone = repo.zone
     val today = remember(clock / 60_000) { java.time.LocalDate.now(zone) }
-    val blocks = remember(version, today) { dev.marobotic.hourglass.core.merge(repo.occurrences(today, today.plusDays(7))) }
-    val current = blocks.firstOrNull { it.endMs > clock }
+    // Today only: what is on, and what starts in the next 12 hours. A session
+    // marked off is not happening.
+    val window = remember(version, today, clock / 60_000) {
+        dev.marobotic.hourglass.core.merge(repo.occurrences(today, today.plusDays(1)).filter { it.mark != "off" })
+            .filter { it.endMs > clock && (it.first.date == today || it.startMs - clock <= dev.marobotic.hourglass.core.Now.AHEAD) }
+    }
+    val current = window.firstOrNull()
+    val later = window.drop(1)
     // Notes dated today, then the class's: this session's, else the last one's.
-    val todayNotes = remember(version, today, current?.first?.courseId, current?.first?.date) {
+    val todayNotes = remember(version, today, current?.first?.courseId, current?.first?.session) {
         val all = repo.notes()
         val out = all.filter { it.str("session_date") == today.toString() }.toMutableList()
         current?.first?.courseId?.let { cid ->
-            val mine = all.filter { it.str("course_id") == cid && (it.str("session_date") ?: "~") <= current.first.date.toString() }
+            val mine = all.filter { it.str("course_id") == cid && (it.str("session_date") ?: "~") <= current.first.session.toString() }
             val last = mine.maxOfOrNull { it.optString("session_date") }
             mine.filter { it.optString("session_date") == last && it !in out }.forEach { out.add(it) }
         }
@@ -127,10 +133,11 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
         item {
             val live = current != null && clock >= current.startMs
             HCard(Modifier.fillMaxWidth(), stripe = current?.let { hex(it.first.color) } ?: HColors.border) {
-                T(when { current == null -> "NOTHING SCHEDULED"; live -> "NOW"; current.first.date == today -> "NEXT"; else -> "NEXT · " + Dates.short(current.first.date).uppercase() },
+                T(when { current == null -> "DAY OFF"; live -> "NOW"; current.first.date == today -> "NEXT"; else -> "NEXT · " + Dates.short(current.first.date).uppercase() },
                     12, if (live) HColors.accent else HColors.muted, bold = true, spacing = 2.0)
                 Spacer(Modifier.height(8.dp))
-                T(current?.first?.title ?: "Your week is clear.", 26, bold = true)
+                T(current?.first?.title ?: "Heyyy, your day is off!", 26, bold = true)
+                if (current == null && repo.courses().isNotEmpty()) T("Nothing on today or in the next 12 hours.", 14, HColors.muted)
                 if (current != null) {
                     Spacer(Modifier.height(6.dp))
                     T(Dates.range(current.startTime, current.endTime) + (current.first.location?.let { "   $it" } ?: ""), 18, bold = true)
@@ -140,14 +147,20 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                     if (current.first.courseId != null) {
                         Spacer(Modifier.height(12.dp))
                         HButton("Notes for this class", primary = true, icon = Icons.Outlined.EditNote) {
-                            val existing = if (live) repo.now(clock).notes.session else emptyList()
-                            nav.sessionNote(current.first, existing)
+                            // Opens this session's note when there is one, so a tap never makes a second.
+                            nav.sessionNote(current.first, dev.marobotic.hourglass.core.Now.sessionNotes(repo.notes(), current.first).session)
                         }
                     }
                 } else if (repo.courses().isEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     HButton("Add a course", primary = true, icon = Icons.Outlined.Add) { nav.sheets.course = true to null }
                 }
+            }
+        }
+        if (later.isNotEmpty()) item {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                T("COMING UP", 12, HColors.muted, bold = true, spacing = 2.0)
+                for (b in later) TimelineRow(b.first.copy(endTime = b.endTime, endMs = b.endMs), clock) { nav.sheets.session = b.first }
             }
         }
         item {
@@ -251,7 +264,7 @@ fun TimelineRow(o: Occ, clock: Long, onClick: () -> Unit) {
             .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 10.dp).alpha(if (past) 0.5f else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.width(52.dp)) { T(o.startTime, 14, bold = true); T(o.endTime, 11, HColors.faint) }
+        Column(Modifier.width(76.dp)) { T(Dates.t(o.startTime), 14, bold = true); T(Dates.t(o.endTime), 11, HColors.faint) }
         Box(Modifier.width(3.dp).height(34.dp).clip(RectangleShape).background(color))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

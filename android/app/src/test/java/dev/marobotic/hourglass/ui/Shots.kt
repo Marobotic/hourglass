@@ -39,6 +39,13 @@ class Shots {
     @Test fun week() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 1) } }
     @Test fun notes() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 2) } }
     @Test fun time() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 3) } }
+    @Test fun login() = paparazzi.snapshot { HourglassTheme { LoginScreen(demo()) } }
+    @Test fun dayOff() {
+        File(paparazzi.context.filesDir, "hourglass.json").delete()
+        val repo = Repo(paparazzi.context, autoConfigure = false)
+        repo.addCourse("Typography (1)", "GD 471", "#B14242", "B729", null, listOf(Slot(Dates.iso(LocalDate.now().plusDays(2)), "08:30", "13:30")), null)
+        paparazzi.snapshot { HourglassTheme { HourglassApp(repo, 0) } }
+    }
     @Test fun course() {
         val repo = demo()
         paparazzi.snapshot { HourglassTheme { HourglassApp(repo, 2, Route.CourseR(repo.courses().first().id)) } }

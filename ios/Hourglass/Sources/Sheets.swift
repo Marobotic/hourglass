@@ -96,6 +96,9 @@ struct EventSheet: View {
         var e = draft.event ?? Event()
         e.course_id = courseId; e.kind = kind; e.title = title.trimmingCharacters(in: .whitespaces); e.start_date = d
         e.start_time = start; e.end_time = end; e.location = room.isEmpty ? nil : room; e.repeat = rep
+        // Times are fixed in the event's zone; a new one (or an old one without
+        // a zone) takes the app's.
+        if e.tz == nil { e.tz = Dates.zone.identifier }
         store.save(e)
         dismiss()
     }
@@ -199,18 +202,27 @@ struct SessionSheet: View {
     @State private var confirmSkip = false
 
     var body: some View {
-        let notes = occ.course_id.map { cid in store.courseNotes(cid).filter { $0.session_date == occ.date } } ?? []
+        let notes = occ.course_id.map { cid in store.courseNotes(cid).filter { $0.session_date == occ.session } } ?? []
+        let mark = store.markMap[markId(occ.course_id, occ.event_id, occ.session)]
         SheetFrame(title: occ.title, subtitle: "\(Dates.long(occ.date))  ·  \(Dates.range(occ.start_time, occ.end_time))" + (occ.location.map { "  ·  \($0)" } ?? "")) {
             HStack(spacing: 8) {
                 Chip(text: kindLabel(occ.kind), tint: Color(hex: occ.color))
                 if let c = occ.code { Chip(text: c, tint: H.muted) }
+            }
+            SectionLabel(text: "This day")
+            Segmented(options: [("Attended", Optional("attended")), ("Absent", "absent"), ("Off", "off")], value: Binding(
+                get: { mark }, set: { v in store.setMark(occ, v == mark ? nil : v) }))
+            T(mark == "attended" ? "You were there. Tap again to clear." : mark == "absent" ? "Marked absent. Tap again to clear." : mark == "off" ? "No class this day: it is left out of Now." : "Mark it attended, absent, or off (no class that day).", 12, H.faint)
+            if let cid = occ.course_id {
+                let a = store.attendance(cid)
+                if !a.isEmpty { T("This course: \(a["attended"] ?? 0) attended · \(a["absent"] ?? 0) absent · \(a["off"] ?? 0) off", 12, H.muted) }
             }
             if occ.course_id != nil {
                 SectionLabel(text: "Notes for this session")
                 if notes.isEmpty { T("None yet.", 12, H.faint) }
                 ForEach(notes) { n in NoteRow(note: n).onTapGesture { dismiss(); path.append(.note(n.id)) } }
                 HButton(notes.isEmpty ? "Start a note for this session" : "Add another note", icon: "square.and.pencil", primary: true) {
-                    let n = store.addNote(course: occ.course_id, date: occ.date, event: occ.event_id, title: Dates.short(occ.date) + (notes.isEmpty ? "" : " (\(notes.count + 1))"))
+                    let n = store.addNote(course: occ.course_id, date: occ.session, event: occ.event_id, title: Dates.short(occ.session) + (notes.isEmpty ? "" : " (\(notes.count + 1))"))
                     dismiss()
                     path.append(.note(n.id))
                 }
@@ -278,55 +290,191 @@ struct AlarmSheet: View {
 // MARK: - Settings
 
 // Preferences for this phone. The sync server is built in; nothing to type.
-// Signed out, this is the whole app: the Omarchy Music account is the way
-// in, same as the music player's sign-in.
+// Signed out, this is the whole app: sign in or create an account. Same page
+// as the Omarchy Music phone app's (one account for both), in Hourglass colours.
 struct LoginView: View {
     @EnvironmentObject var store: Store
+    @State private var creating = false
     @State private var email = ""
     @State private var password = ""
+    @State private var confirm = ""
+    @State private var showPassword = false
     @State private var busy = false
-    @State private var error: String?
+    @State private var problem: String?
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 12) {
-                PixelLogo(cell: 7).padding(.top, 64)
-                T("Hourglass", 26, bold: true).padding(.top, 6)
-                Text("Sign in with your Omarchy Music account. Your schedule, notes, alarms and ringtones are shared between your phone and your computer.")
-                    .font(H.mono(14)).foregroundStyle(H.muted).multilineTextAlignment(.center)
-                VStack(alignment: .leading, spacing: 12) {
-                    Field(label: "Email", text: $email)
-                        .textInputAutocapitalization(.never).keyboardType(.emailAddress).autocorrectionDisabled()
-                    VStack(alignment: .leading, spacing: 4) {
-                        T("PASSWORD", 11, H.muted)
-                        SecureField("", text: $password)
-                            .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent)
-                            .padding(.horizontal, 12).frame(minHeight: 46)
-                            .background(H.bg).overlay(Rectangle().stroke(H.border, lineWidth: 1))
-                            .onSubmit(submit)
-                    }
-                    if let error { T(error, 13, H.accent) }
-                    HButton(busy ? "Signing in…" : "Sign in", primary: true, enabled: !busy && email.contains("@") && !password.isEmpty, action: submit)
-                        .frame(maxWidth: .infinity)
+            VStack(spacing: 0) {
+                PixelLogo(cell: 7)
+                Spacer().frame(height: 16)
+                text("Hourglass", 22, H.fg, bold: true)
+                Spacer().frame(height: 6)
+                text("Your schedule and notes, on every device", 14, H.muted)
+                Spacer().frame(height: 28)
+
+                modeSwitch
+                Spacer().frame(height: 22)
+
+                field("Email", $email, secure: false, keyboard: .emailAddress)
+                Spacer().frame(height: 14)
+                field("Password", $password, secure: !showPassword, trailing: showPassword ? "Hide" : "Show",
+                      onTrailing: { showPassword.toggle() }, submitsForm: !creating)
+                if creating {
+                    Spacer().frame(height: 14)
+                    field("Confirm password", $confirm, secure: !showPassword, submitsForm: true)
                 }
-                .padding(20)
-                .background(H.surface)
-                .overlay(Rectangle().stroke(H.border, lineWidth: 1))
-                .padding(.top, 8)
-                T("No account yet? Create one in Omarchy Music.", 13, H.faint)
+                Spacer().frame(height: 8)
+                text(creating ? "At least 8 characters." : "The same account as Omarchy Music. Your other devices use it too.",
+                     12, H.muted, align: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let problem {
+                    Spacer().frame(height: 14)
+                    text(problem, 13, H.accent, align: .leading).frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Spacer().frame(height: 22)
+                Button(action: submit) {
+                    HStack(spacing: 10) {
+                        if busy { ProgressView().tint(.white) }
+                        text(busy ? (creating ? "Creating account…" : "Signing in…") : (creating ? "Create account" : "Sign in"), 16, .white, bold: true)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(H.accent.opacity(busy ? 0.45 : 1), in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                Spacer().frame(height: 18)
+                HStack(spacing: 0) {
+                    text(creating ? "Already have an account? " : "New here? ", 14, H.muted)
+                    Button { creating.toggle(); problem = nil } label: {
+                        text(creating ? "Sign in" : "Create an account", 14, H.accent, bold: true)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .padding(24)
+            .frame(maxWidth: 440)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 32)
+            .frame(maxWidth: .infinity, minHeight: UIScreen.main.bounds.height * 0.85)
         }
-        .background(H.bg)
+        .scrollDismissesKeyboard(.interactively)
+        .background(H.bg.ignoresSafeArea())
         .onAppear { if email.isEmpty { email = store.account ?? "" } }
     }
 
+    // Checked here first, so the common mistakes never make a round trip.
     private func submit() {
-        guard !busy, email.contains("@"), !password.isEmpty else { return }
-        busy = true; error = nil
+        if busy { return }
+        let e = email.trimmingCharacters(in: .whitespaces)
+        if e.range(of: #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#, options: .regularExpression) == nil {
+            problem = "Enter a valid email address."
+        } else if password.count < 8 {
+            problem = "The password needs at least 8 characters."
+        } else if creating && confirm != password {
+            problem = "The passwords do not match."
+        } else {
+            problem = nil
+            busy = true
+            Task {
+                do {
+                    if creating { try await store.register(email: e, password: password) }
+                    else { try await store.signIn(email: e, password: password) }
+                } catch { problem = error.localizedDescription }
+                busy = false
+            }
+        }
+    }
+
+    private func text(_ s: String, _ size: CGFloat, _ color: Color, bold: Bool = false, align: TextAlignment = .center) -> some View {
+        Text(s).font(H.mono(size, bold: bold)).foregroundColor(color).multilineTextAlignment(align)
+    }
+
+    /** The two-way Sign in / Create account switch. */
+    private var modeSwitch: some View {
+        HStack(spacing: 0) {
+            ForEach([(false, "Sign in"), (true, "Create account")], id: \.1) { value, label in
+                let on = creating == value
+                Button { creating = value; problem = nil } label: {
+                    text(label, 14, on ? H.fg : H.muted, bold: on)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(on ? H.surface2 : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .frame(height: 44)
+        .background(H.surface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(H.border, lineWidth: 1))
+    }
+
+    private func field(_ label: String, _ value: Binding<String>, secure: Bool, keyboard: UIKeyboardType = .default,
+                       trailing: String? = nil, onTrailing: @escaping () -> Void = {}, submitsForm: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            text(label, 13, H.fg).padding(.leading, 2)
+            HStack(spacing: 10) {
+                Group {
+                    if secure { SecureField("", text: value) } else { TextField("", text: value).keyboardType(keyboard) }
+                }
+                .font(H.mono(16))
+                .foregroundColor(H.fg)
+                .tint(H.accent)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .submitLabel(submitsForm ? .go : .next)
+                .onSubmit { if submitsForm { submit() } }
+                .onChange(of: value.wrappedValue) { problem = nil }
+                if let trailing {
+                    Button(action: onTrailing) { text(trailing, 13, H.muted) }.buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .background(H.surface, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(H.border, lineWidth: 1))
+        }
+    }
+}
+
+// A personal link that lets any AI with MCP (ChatGPT, Claude, Gemini CLI,
+// Codex...) read and change this account's schedule, notes and alarms.
+struct AiSection: View {
+    @EnvironmentObject var store: Store
+    @State private var link: String?
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var copied = false
+    @State private var confirmNew = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Use with AI")
+            T("Tell any AI \"use Hourglass to move my Tuesday lecture\". Add this link as a connector (MCP server) in ChatGPT, Claude, Gemini CLI or Codex. Anyone with the link can change your schedule, so keep it to yourself.", 12, H.muted)
+            if let link {
+                T(link.components(separatedBy: "/mcp/")[0] + "/mcp/" + String(link.components(separatedBy: "/mcp/").last?.prefix(8) ?? "") + "…", 13, lines: 1)
+                HStack(spacing: 8) {
+                    HButton(copied ? "Copied" : "Copy link", primary: true) { UIPasteboard.general.string = link; copied = true }
+                    HButton("New link", enabled: !busy) { confirmNew = true }
+                }
+            } else {
+                HButton(busy ? "Working…" : "Make my AI link", enabled: !busy) { load(true) }
+            }
+            if let problem { T(problem, 12, H.accent) }
+        }
+        .task { load(false) }
+        .confirmationDialog("Make a new link?", isPresented: $confirmNew, titleVisibility: .visible) {
+            Button("New link", role: .destructive) { load(true) }
+        } message: { Text("The old link stops working; AIs using it need the new one.") }
+    }
+
+    private func load(_ make: Bool) {
+        busy = true; problem = nil; copied = false
         Task {
-            do { try await store.signIn(email: email.trimmingCharacters(in: .whitespaces), password: password) }
-            catch { self.error = error.localizedDescription }
+            do { link = try await store.aiLinks(make: make)["mcp_url"] as? String } catch { problem = error.localizedDescription }
             busy = false
         }
     }
@@ -373,6 +521,7 @@ struct SettingsSheet: View {
                 Spacer()
                 HButton("Sign out") { confirmSignOut = true }
             }
+            AiSection()
 
             SectionLabel(text: "Alarms")
             T("LECTURE REMINDERS", 11, H.muted)
@@ -402,7 +551,7 @@ struct SettingsSheet: View {
             HStack {
                 T(store.syncState == "offline" ? "Offline" : "Synced with marobotic.dev", 13, H.muted)
                 Spacer()
-                HButton("Sync now") { Task { await store.sync() } }
+                HButton("Sync now") { Task { await store.syncSoon() } }
             }
         }
         .task { alarmStatus = AlarmKitScheduler.status() }

@@ -13,13 +13,21 @@ Item {
     property var account: ({})
     property var tones: []
     property bool busy: false
+    property var ai: null // { key, mcp_url } once made
+    property string aiNote: ""
+    function aiLoad(make) {
+        Api.request(make ? "POST" : "GET", "/api/ai", make ? {} : null, (d, err) => { if (d) page.ai = d; page.aiNote = err || ""; }, true);
+    }
+    // QML has no clipboard API: copy through a hidden text field.
+    TextEdit { id: clip; visible: false }
+    function copy(text) { clip.text = text; clip.selectAll(); clip.copy(); page.aiNote = "Copied."; }
 
     function set(patch) { Api.put("/api/settings", patch, () => { page.app.pollState(); page.load(); }); }
     function load() {
         Api.get("/api/account", d => { if (d) page.account = d; });
         Api.get("/api/ringtones", d => { if (d) page.tones = d; });
     }
-    Component.onCompleted: load()
+    Component.onCompleted: { load(); aiLoad(false); }
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
     Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
@@ -136,6 +144,31 @@ Item {
                     hint: "Off: alarms still show a notification."
                     Btn { text: "On"; kind: "subtle"; active: page.s.sound !== false; onClicked: page.set({ sound: true }) }
                     Btn { text: "Off"; kind: "subtle"; active: page.s.sound === false; onClicked: page.set({ sound: false }) }
+                }
+
+                Section { Layout.fillWidth: true; text: "Use with AI" }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: "Tell any AI \"use Hourglass to move my Tuesday lecture\". Add your link as a connector (MCP server) in ChatGPT, Claude, Gemini CLI or Codex. Anyone with the link can change your schedule, so keep it to yourself."
+                    color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
+                }
+                RowLayout {
+                    spacing: 8
+                    Text {
+                        visible: !!(page.ai && page.ai.mcp_url)
+                        text: page.ai && page.ai.mcp_url ? page.ai.mcp_url.split("/mcp/")[0] + "/mcp/" + page.ai.mcp_url.split("/mcp/")[1].slice(0, 8) + "…" : ""
+                        color: Theme.fg; font.family: Theme.mono; font.pixelSize: 14
+                    }
+                    Btn { visible: !!(page.ai && page.ai.mcp_url); kind: "primary"; text: "Copy link"; onClicked: page.copy(page.ai.mcp_url) }
+                    Btn {
+                        visible: !!(page.account && page.account.signed_in)
+                        text: page.ai && page.ai.mcp_url ? "New link" : "Make my AI link"
+                        onClicked: page.ai && page.ai.mcp_url
+                            ? page.app.confirm("Make a new link?", "The old link stops working; AIs using it need the new one.", "New link", () => page.aiLoad(true))
+                            : page.aiLoad(true)
+                    }
+                    Text { text: page.aiNote; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                 }
 
                 Section { Layout.fillWidth: true; text: "Account" }

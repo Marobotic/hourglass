@@ -46,8 +46,10 @@ Every row has `id` (UUID string), `updated_at` (ms epoch, set by the writer),
 | archived | 0/1 | |
 
 ### event
-A one-off or recurring block of time. Times are **local wall-clock** in the
-user's zone, so "Tuesday 8 AM" stays 8 AM across daylight saving.
+A one-off or recurring block of time. Times are **wall-clock in the event's
+own zone** (`tz`), so "Tuesday 8 AM Cairo" stays 8 AM in Cairo across
+daylight saving, and shows converted (1 AM) when the app is set to New York.
+New events take the app's zone; `tz` null (older rows) floats with the app.
 
 | field | type | |
 |---|---|---|
@@ -60,6 +62,10 @@ user's zone, so "Tuesday 8 AM" stays 8 AM across daylight saving.
 | end_time | `HH:MM` | same day |
 | repeat | json? | `null` = once. `{ "freq": "weekly", "interval": 1, "days": [2], "until": "2026-12-12" }` |
 | exceptions | json | dates skipped: `["2026-10-27"]` |
+| tz | text? | IANA zone the times are in, e.g. `Africa/Cairo` |
+
+Occurrences carry `date`/`start_time`/`end_time` in the shown zone and
+`session_date` in the event's own: notes, marks and skips use `session_date`.
 
 `days` uses ISO weekdays, 1 = Monday ... 7 = Sunday. `freq` is `daily` or
 `weekly`. Exported to iCal as `RRULE` + `EXDATE`.
@@ -73,6 +79,15 @@ user's zone, so "Tuesday 8 AM" stays 8 AM across daylight saving.
 | title | text | |
 | body | text | Markdown |
 | pinned | 0/1 | pinned notes show in every session of the course |
+
+Editing a note never copies it. The server keeps older text in
+`note_versions` (note_id, title, body, saved_at, reason): the text before an
+editing session (at most one per 10 minutes), text that lost when two devices
+edited at once (`conflict`), and text replaced by a restore. 40 per note.
+
+### mark
+One day of a course: `attended`, `absent` or `off` (no class: left out of
+Now). id = `<course_id or event_id>:<session date>`, the same on every device.
 
 ### alarm
 | field | type | |
@@ -101,8 +116,10 @@ Timers sync, so "start a 25 minute timer" from an AI rings on your devices.
 
 1. Expand every event into occurrences for the day.
 2. **Active session** = the occurrence where `start - 10 min <= now < end + 15 min`.
-   The grace windows cover walking in early and writing up after.
-3. **Next** = the first occurrence starting after now (looking 7 days ahead).
+   The grace windows cover walking in early and writing up after. Sessions
+   marked `off` are skipped.
+3. **Next** = the first occurrence starting after now, today or within 12
+   hours. Nothing later: with nothing on, Now says the day is off.
 4. Notes surfaced for the active session, in order:
    today's notes for that course (`session_date` = today), pinned course notes,
    then the last session's notes ("last time").
@@ -113,8 +130,9 @@ Timers sync, so "start a 25 minute timer" from an AI rings on your devices.
   plus the new cursor.
 - Push: `POST /api/sync` with rows changed locally. Server keeps the row with
   the newer `updated_at` (last write wins) and assigns a new `rev`.
-- A note conflict (both sides changed the body since the last sync) keeps the
-  loser as a new note titled "... (conflict copy)" rather than dropping text.
+- A note conflict (both sides changed the body since the last sync): the
+  newer edit wins and the other text is kept as a version of the same note.
+  Never a second note.
 
 ## AI surface
 
@@ -132,8 +150,9 @@ The same service functions back REST and MCP tools:
 | `set_alarm` / `remove_alarm` / `list_alarms` | including "N min before event" |
 | `start_timer` / `stop_timer` / `list_timers` | |
 
-Auth: bearer token for the prototype. OAuth 2.1 (needed by ChatGPT and
-Claude web connectors) comes with the droplet deploy.
+Auth: the account session, or a personal AI key (`GET/POST /api/ai`). The key
+also works in the URL, `/mcp/<key>`, for ChatGPT and Claude connectors that
+only take a link.
 
 ## UX
 

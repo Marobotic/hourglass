@@ -122,7 +122,8 @@ ApplicationWindow {
     // Opens today's note for a session, creating it on first use.
     function sessionNote(occ, existing) {
         if (existing && existing.length) return openNote(existing[0]);
-        newNote({ course: occ.course_id, date: occ.date, title: Util.shortDate(occ.date) });
+        const day = occ.session_date || occ.date;
+        newNote({ course: occ.course_id, date: day, title: Util.shortDate(day) });
     }
     function startTimer(minutes, label) { Api.action("start_timer", { minutes: minutes, label: label }); }
     function openSession(occ) { sessionDialog.show(occ); }

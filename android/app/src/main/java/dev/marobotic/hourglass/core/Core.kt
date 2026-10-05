@@ -88,6 +88,11 @@ data class Occ(
     val endTime: String,
     val startMs: Long,
     val endMs: Long,
+    // The event's own date and zone: notes, marks and skips are keyed by the
+    // session date, while date/startTime/endTime are in the zone shown.
+    val session: LocalDate = date,
+    val eventZone: String? = null,
+    val mark: String? = null, // attended | absent | off
 ) {
     fun state(now: Long) = when {
         now < startMs -> "upcoming"
@@ -146,7 +151,9 @@ object Recurrence {
         return out
     }
 
-    fun expand(events: List<JSONObject>, courses: Map<String, JSONObject>, from: LocalDate, to: LocalDate, zone: ZoneId): List<Occ> {
+    // An event with its own tz keeps its times in that zone (08:00 Cairo shows
+    // as 01:00 in New York); without one it floats with the shown zone.
+    fun expand(events: List<JSONObject>, courses: Map<String, JSONObject>, from: LocalDate, to: LocalDate, zone: ZoneId, marks: Map<String, String> = emptyMap()): List<Occ> {
         val out = mutableListOf<Occ>()
         for (ev in events) {
             if (ev.isDeleted) continue
@@ -155,31 +162,46 @@ object Recurrence {
             val st = ev.optString("start_time")
             val et = ev.optString("end_time")
             if (!Dates.isTime(st) || !Dates.isTime(et) || !Dates.isDate(ev.optString("start_date"))) continue
+            val ez = ev.str("tz")?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: zone
+            val shifted = ez.id != zone.id
             val startMin = Dates.minutes(st)
             var endMin = Dates.minutes(et)
             if (endMin <= startMin) endMin = startMin + 60
-            for (d in dates(ev, from, to)) {
-                val s = Dates.epoch(d, st, zone)
+            for (d in dates(ev, if (shifted) from.minusDays(1) else from, if (shifted) to.plusDays(1) else to)) {
+                val s = Dates.epoch(d, st, ez)
+                val e = s + (endMin - startMin) * 60_000L
+                val here = Dates.local(s, zone)
+                val day = if (shifted) here.toLocalDate() else d
+                if (day.isBefore(from) || day.isAfter(to)) continue
+                val cid = ev.str("course_id")
                 out += Occ(
                     eventId = ev.id,
-                    courseId = ev.str("course_id"),
+                    courseId = cid,
                     title = ev.optString("title").ifBlank { course?.optString("name") ?: "Untitled" },
                     kind = ev.optString("kind", "event"),
                     location = ev.str("location")?.ifBlank { null } ?: course?.str("location"),
                     color = course?.optString("color") ?: "#4A8B8B",
                     courseCode = course?.str("code"),
                     teacher = course?.str("teacher")?.ifBlank { null },
-                    date = d,
-                    startTime = st,
-                    endTime = et,
+                    date = day,
+                    startTime = if (shifted) "%02d:%02d".format(here.hour, here.minute) else st,
+                    endTime = if (shifted) Dates.local(e, zone).let { "%02d:%02d".format(it.hour, it.minute) } else et,
                     startMs = s,
-                    endMs = s + (endMin - startMin) * 60_000L,
+                    endMs = e,
+                    session = d,
+                    eventZone = ez.id,
+                    mark = marks[markId(cid, ev.id, d)],
                 )
             }
         }
         return out.sortedWith(compareBy({ it.startMs }, { it.title }))
     }
 }
+
+// One mark per course and day (or per event for one without a course), the
+// same id on every device.
+fun markId(courseId: String?, eventId: String, date: LocalDate) = "${courseId ?: eventId}:$date"
+val MARKS = listOf("attended", "absent", "off")
 
 data class SessionNotes(val session: List<JSONObject>, val pinned: List<JSONObject>, val last: List<JSONObject>, val lastDate: String?)
 
@@ -191,27 +213,31 @@ data class NowState(
     val focus: Occ?,
     val todayList: List<Occ>,
     val notes: SessionNotes,
+    val dayOff: Boolean = active == null && next == null,
 )
 
 object Now {
     const val EARLY = 10 * 60_000L
     const val LATE = 15 * 60_000L
+    // Now is about today: what is on and what comes in the next 12 hours.
+    const val AHEAD = 12 * 3_600_000L
 
-    fun resolve(courses: List<JSONObject>, events: List<JSONObject>, notes: List<JSONObject>, now: Long, zone: ZoneId): NowState {
+    fun resolve(courses: List<JSONObject>, events: List<JSONObject>, notes: List<JSONObject>, now: Long, zone: ZoneId, marks: Map<String, String> = emptyMap()): NowState {
         val today = Dates.local(now, zone).toLocalDate()
         val cmap = courses.filter { !it.isDeleted }.associateBy { it.id }
-        val occ = Recurrence.expand(events, cmap, today.minusDays(1), today.plusDays(7), zone)
+        val all = Recurrence.expand(events, cmap, today.minusDays(1), today.plusDays(1), zone, marks)
+        val occ = all.filter { it.mark != "off" } // a day off is not happening
         val active = occ.firstOrNull { now >= it.startMs && now < it.endMs }
             ?: occ.firstOrNull { now >= it.startMs - EARLY && now < it.endMs + LATE }
-        val next = occ.firstOrNull { it.startMs > now && it != active }
+        val next = occ.firstOrNull { it.startMs > now && it != active && (it.date == today || it.startMs - now <= AHEAD) }
         val focus = active ?: next?.takeIf { it.date == today }
-        return NowState(now, today, active, next, focus, occ.filter { it.date == today },
+        return NowState(now, today, active, next, focus, all.filter { it.date == today },
             focus?.let { sessionNotes(notes, it) } ?: SessionNotes(emptyList(), emptyList(), emptyList(), null))
     }
 
     fun sessionNotes(notes: List<JSONObject>, occ: Occ): SessionNotes {
         val mine = notes.filter { !it.isDeleted && it.str("course_id") != null && it.str("course_id") == occ.courseId }
-        val date = occ.date.toString()
+        val date = occ.session.toString()
         val session = mine.filter { it.str("session_date") == date && (it.str("event_id") == null || it.str("event_id") == occ.eventId) }
             .sortedByDescending { it.updatedAt }
         val pinned = mine.filter { it.bool("pinned") && it.str("session_date") != date }.sortedByDescending { it.updatedAt }

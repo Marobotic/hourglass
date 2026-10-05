@@ -35,6 +35,8 @@ struct Event: Codable, Identifiable, Hashable {
     var end_time: String = "10:00"
     var `repeat`: Repeat?
     var exceptions: [String] = []
+    // The zone start_time/end_time are in; nil = the app's zone (older rows).
+    var tz: String?
     var updated_at: Int64 = 0
     var deleted: Int = 0
     var rev: Int64? = 0
@@ -107,6 +109,35 @@ struct Pref: Codable, Identifiable, Hashable {
     var dirty: Int? = 0
 }
 
+// Older text of a note, kept by the server (the phone only reads them).
+struct NoteVersion: Codable, Identifiable, Hashable {
+    var id: String
+    var note_id: String?
+    var title: String = ""
+    var body: String = ""
+    var saved_at: Int64? = 0
+    var reason: String? = "edit"
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
+// One day of a course marked attended, absent or off. id = markId(...).
+struct Mark: Codable, Identifiable, Hashable {
+    var id: String
+    var course_id: String?
+    var event_id: String?
+    var date: String = ""
+    var status: String = "attended"
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
+func markId(_ course: String?, _ event: String, _ date: String) -> String { "\(course ?? event):\(date)" }
+
 struct HTimer: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString.lowercased()
     var label: String = ""
@@ -175,12 +206,19 @@ enum Dates {
         let c = local.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: Double(ms) / 1000))
         return String(format: "%04ld-%02ld-%02ld", c.year!, c.month!, c.day!)
     }
-    // Instant of a wall-clock date and time in the device's zone.
-    static func epoch(_ d: String, _ t: String) -> Int64 {
+    // Instant of a wall-clock date and time in the app's zone (or another).
+    static func epoch(_ d: String, _ t: String, in tz: TimeZone? = nil) -> Int64 {
         let (y, m, day) = parts(d)
         let mins = minutes(t)
-        let date = local.date(from: DateComponents(year: y, month: m, day: day, hour: mins / 60, minute: mins % 60))!
+        var cal = local
+        if let tz { cal.timeZone = tz }
+        let date = cal.date(from: DateComponents(year: y, month: m, day: day, hour: mins / 60, minute: mins % 60))!
         return Int64(date.timeIntervalSince1970 * 1000)
+    }
+    // "HH:MM" of an instant in the app's zone.
+    static func hhmm(_ ms: Int64) -> String {
+        let c = local.dateComponents([.hour, .minute], from: Date(timeIntervalSince1970: Double(ms) / 1000))
+        return String(format: "%02ld:%02ld", c.hour!, c.minute!)
     }
     static func clock(_ ms: Int64) -> String {
         let c = local.dateComponents([.hour, .minute], from: Date(timeIntervalSince1970: Double(ms) / 1000))
@@ -240,6 +278,10 @@ struct Occ: Identifiable, Hashable {
     let end_time: String
     let start_ms: Int64
     let end_ms: Int64
+    // The event's own date (notes, marks and skips use it) and zone.
+    var session: String = ""
+    var event_tz: String? = nil
+    var mark: String? = nil
 
     func state(_ now: Int64) -> String { now < start_ms ? "upcoming" : now < end_ms ? "live" : "ended" }
     func progress(_ now: Int64) -> Double { min(1, max(0, Double(now - start_ms) / Double(end_ms - start_ms))) }
@@ -296,20 +338,32 @@ enum Recurrence {
         return out
     }
 
-    static func expand(_ events: [Event], _ courses: [String: Course], _ from: String, _ to: String) -> [Occ] {
+    // An event with its own tz keeps its times in that zone (08:00 Cairo shows
+    // as 01:00 in New York); without one it floats with the app's zone.
+    static func expand(_ events: [Event], _ courses: [String: Course], _ from: String, _ to: String, marks: [String: String] = [:]) -> [Occ] {
         var out: [Occ] = []
         for ev in events where ev.deleted == 0 {
             let c = ev.course_id.flatMap { courses[$0] }
             if let c, c.deleted == 1 || c.archived == 1 { continue }
             guard Dates.isTime(ev.start_time), Dates.isTime(ev.end_time), ev.start_date.count == 10 else { continue }
+            let ez = ev.tz.flatMap { TimeZone(identifier: $0) }
+            let shifted = ez != nil && ez!.identifier != Dates.zone.identifier
             let sm = Dates.minutes(ev.start_time)
             var em = Dates.minutes(ev.end_time)
             if em <= sm { em = sm + 60 }
-            for d in dates(ev, from, to) {
-                let s = Dates.epoch(d, ev.start_time)
-                out.append(Occ(event_id: ev.id, course_id: ev.course_id, title: ev.title.isEmpty ? (c?.name ?? "Untitled") : ev.title,
-                               kind: ev.kind, location: (ev.location?.isEmpty == false ? ev.location : c?.location), color: c?.color ?? "#4A8B8B",
-                               code: c?.code, teacher: c?.teacher, date: d, start_time: ev.start_time, end_time: ev.end_time, start_ms: s, end_ms: s + Int64(em - sm) * 60_000))
+            for d in dates(ev, shifted ? Dates.add(from, -1) : from, shifted ? Dates.add(to, 1) : to) {
+                let s = Dates.epoch(d, ev.start_time, in: shifted ? ez : nil)
+                let e = s + Int64(em - sm) * 60_000
+                let day = shifted ? Dates.dayOf(s) : d
+                if day < from || day > to { continue }
+                var o = Occ(event_id: ev.id, course_id: ev.course_id, title: ev.title.isEmpty ? (c?.name ?? "Untitled") : ev.title,
+                            kind: ev.kind, location: (ev.location?.isEmpty == false ? ev.location : c?.location), color: c?.color ?? "#4A8B8B",
+                            code: c?.code, teacher: c?.teacher, date: day, start_time: shifted ? Dates.hhmm(s) : ev.start_time,
+                            end_time: shifted ? Dates.hhmm(e) : ev.end_time, start_ms: s, end_ms: e)
+                o.session = d
+                o.event_tz = ev.tz
+                o.mark = marks[markId(ev.course_id, ev.id, d)]
+                out.append(o)
             }
         }
         return out.sorted { ($0.start_ms, $0.title) < ($1.start_ms, $1.title) }
@@ -326,28 +380,33 @@ struct NowState {
     let focus: Occ?
     let todayList: [Occ]
     let notes: SessionNotes
+    var dayOff: Bool { active == nil && next == nil }
 }
 
 enum Now {
     static let early: Int64 = 10 * 60_000
     static let late: Int64 = 15 * 60_000
+    // Now is about today: what is on, and what comes in the next 12 hours.
+    static let ahead: Int64 = 12 * 3_600_000
 
-    static func resolve(_ courses: [Course], _ events: [Event], _ notes: [Note], _ now: Int64) -> NowState {
+    static func resolve(_ courses: [Course], _ events: [Event], _ notes: [Note], _ now: Int64, marks: [String: String] = [:]) -> NowState {
         let today = Dates.dayOf(now)
         let cmap = Dictionary(uniqueKeysWithValues: courses.filter { $0.deleted == 0 }.map { ($0.id, $0) })
-        let occ = Recurrence.expand(events, cmap, Dates.add(today, -1), Dates.add(today, 7))
+        let all = Recurrence.expand(events, cmap, Dates.add(today, -1), Dates.add(today, 1), marks: marks)
+        let occ = all.filter { $0.mark != "off" } // a day off is not happening
         let active = occ.first(where: { now >= $0.start_ms && now < $0.end_ms }) ?? occ.first(where: { now >= $0.start_ms - early && now < $0.end_ms + late })
-        let next = occ.first(where: { $0.start_ms > now && $0 != active })
+        let next = occ.first(where: { $0.start_ms > now && $0 != active && ($0.date == today || $0.start_ms - now <= ahead) })
         let focus = active ?? (next?.date == today ? next : nil)
         return NowState(now: now, today: today, active: active, next: next, focus: focus,
-                        todayList: occ.filter { $0.date == today }, notes: focus.map { sessionNotes(notes, $0) } ?? SessionNotes())
+                        todayList: all.filter { $0.date == today }, notes: focus.map { sessionNotes(notes, $0) } ?? SessionNotes())
     }
 
     static func sessionNotes(_ notes: [Note], _ o: Occ) -> SessionNotes {
         let mine = notes.filter { $0.deleted == 0 && $0.course_id != nil && $0.course_id == o.course_id }
-        let session = mine.filter { $0.session_date == o.date && ($0.event_id == nil || $0.event_id == o.event_id) }.sorted { $0.updated_at > $1.updated_at }
-        let pinned = mine.filter { $0.pinned == 1 && $0.session_date != o.date }.sorted { $0.updated_at > $1.updated_at }
-        let earlier = mine.filter { ($0.session_date ?? "") != "" && $0.session_date! < o.date && $0.pinned == 0 }
+        let date = o.session.isEmpty ? o.date : o.session
+        let session = mine.filter { $0.session_date == date && ($0.event_id == nil || $0.event_id == o.event_id) }.sorted { $0.updated_at > $1.updated_at }
+        let pinned = mine.filter { $0.pinned == 1 && $0.session_date != date }.sorted { $0.updated_at > $1.updated_at }
+        let earlier = mine.filter { ($0.session_date ?? "") != "" && $0.session_date! < date && $0.pinned == 0 }
         let lastDate = earlier.compactMap(\.session_date).max()
         let last = lastDate.map { d in earlier.filter { $0.session_date == d }.sorted { $0.updated_at > $1.updated_at } } ?? []
         return SessionNotes(session: session, pinned: pinned, last: last, lastDate: lastDate)

@@ -1,6 +1,24 @@
 package dev.marobotic.hourglass.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.border
@@ -87,7 +105,7 @@ class Nav(val repo: Repo) {
     fun openNote(n: JSONObject) = push(Route.NoteR(n.optString("id")))
     fun sessionNote(occ: Occ, existing: List<JSONObject>) {
         if (existing.isNotEmpty()) openNote(existing[0])
-        else openNote(repo.addNote(occ.courseId, occ.date, occ.eventId))
+        else openNote(repo.addNote(occ.courseId, occ.session, occ.eventId))
     }
 }
 
@@ -140,7 +158,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                 // Alarms can only take over the screen with this permission (Android 14+).
                 val ctx = androidx.compose.ui.platform.LocalContext.current
                 val fsiOk = remember(clock / 5000) {
-                    Build.VERSION.SDK_INT < 34 || ctx.getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent()
+                    Build.VERSION.SDK_INT < 34 || runCatching { ctx.getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent() }.getOrDefault(true)
                 }
                 if (!fsiOk) Row(
                     Modifier.fillMaxWidth().background(HColors.accent.copy(alpha = 0.2f)).clickable {
@@ -179,39 +197,160 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
     }
 }
 
-// Signed out, this is the whole app: the Omarchy Music account is the way in,
-// same as the music player's sign-in.
+// Signed out, this is the whole app: sign in or create an account. Same page
+// as the Omarchy Music phone app's (one account for both), in Hourglass colours.
+private val EMAIL = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+
 @Composable
 fun LoginScreen(repo: Repo) {
+    var creating by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf(repo.account ?: "") }
     var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var problem by remember { mutableStateOf<String?>(null) }
+
+    // Checked here first, so the common mistakes never make a round trip.
     fun submit() {
-        if (busy || "@" !in email || password.isEmpty()) return
-        busy = true
-        error = null
-        repo.signIn(email.trim(), password) { busy = false; error = it }
-    }
-    Column(
-        Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().navigationBarsPadding().imePadding()
-            .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 24.dp, vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Spacer(Modifier.height(24.dp))
-        PixelLogo(7.dp)
-        Spacer(Modifier.height(6.dp))
-        T("Hourglass", 26, bold = true)
-        T("Sign in with your Omarchy Music account. Your schedule, notes, alarms and ringtones are shared between your phone and your computer.",
-            14, HColors.muted, modifier = Modifier.fillMaxWidth(), align = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(8.dp))
-        Column(Modifier.fillMaxWidth().background(HColors.surface).border(1.dp, HColors.border).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Field(email, { email = it.trim() }, "Email", Modifier.fillMaxWidth())
-            Field(password, { password = it }, "Password", Modifier.fillMaxWidth(), password = true)
-            error?.let { T(it, 13, HColors.accent) }
-            HButton(if (busy) "Signing in…" else "Sign in", Modifier.fillMaxWidth(), primary = true, enabled = !busy && "@" in email && password.isNotEmpty()) { submit() }
+        if (busy) return
+        val e = email.trim()
+        problem = when {
+            !EMAIL.matches(e) -> "Enter a valid email address."
+            password.length < 8 -> "The password needs at least 8 characters."
+            creating && confirm != password -> "The passwords do not match."
+            else -> null
         }
-        T("No account yet? Create one in Omarchy Music.", 13, HColors.faint)
+        if (problem != null) return
+        busy = true
+        val done: (String?) -> Unit = { busy = false; problem = it }
+        if (creating) repo.register(e, password, done) else repo.signIn(e, password, done)
+    }
+
+    Box(
+        Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().navigationBarsPadding().imePadding()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.widthIn(max = 440.dp).fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            PixelLogo(7.dp)
+            Spacer(Modifier.height(16.dp))
+            LoginText("Hourglass", 22.sp, HColors.fg, bold = true)
+            Spacer(Modifier.height(6.dp))
+            LoginText("Your schedule and notes, on every device", 14.sp, HColors.muted)
+            Spacer(Modifier.height(28.dp))
+
+            ModeSwitch(creating) { creating = it; problem = null }
+            Spacer(Modifier.height(22.dp))
+
+            LoginField("Email", email, { email = it; problem = null }, keyboard = KeyboardType.Email)
+            Spacer(Modifier.height(14.dp))
+            LoginField(
+                "Password", password, { password = it; problem = null },
+                keyboard = KeyboardType.Password, hidden = !showPassword,
+                trailing = if (showPassword) "Hide" else "Show", onTrailing = { showPassword = !showPassword },
+                last = !creating, onDone = ::submit,
+            )
+            if (creating) {
+                Spacer(Modifier.height(14.dp))
+                LoginField("Confirm password", confirm, { confirm = it; problem = null }, keyboard = KeyboardType.Password, hidden = !showPassword, last = true, onDone = ::submit)
+            }
+            Spacer(Modifier.height(8.dp))
+            LoginText(
+                if (creating) "At least 8 characters." else "The same account as Omarchy Music. Your other devices use it too.",
+                12.sp, HColors.muted, modifier = Modifier.fillMaxWidth(), align = TextAlign.Start,
+            )
+            problem?.let {
+                Spacer(Modifier.height(14.dp))
+                LoginText(it, 13.sp, HColors.accent, modifier = Modifier.fillMaxWidth(), align = TextAlign.Start)
+            }
+            Spacer(Modifier.height(22.dp))
+            PrimaryButton(
+                text = when {
+                    busy && creating -> "Creating account…"
+                    busy -> "Signing in…"
+                    creating -> "Create account"
+                    else -> "Sign in"
+                },
+                enabled = !busy, onClick = ::submit,
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LoginText(if (creating) "Already have an account? " else "New here? ", 14.sp, HColors.muted)
+                LoginText(
+                    if (creating) "Sign in" else "Create an account", 14.sp, HColors.accent, bold = true,
+                    modifier = Modifier.clickable { creating = !creating; problem = null },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LoginText(text: String, size: TextUnit, color: Color, bold: Boolean = false, modifier: Modifier = Modifier, align: TextAlign = TextAlign.Center) {
+    Text(text = text, color = color, fontFamily = Mono, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal, fontSize = size, textAlign = align, modifier = modifier)
+}
+
+/** The two-way Sign in / Create account switch. */
+@Composable
+private fun ModeSwitch(creating: Boolean, onChange: (Boolean) -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Row(Modifier.fillMaxWidth().height(44.dp).clip(shape).background(HColors.surface).border(1.dp, HColors.border, shape).padding(4.dp)) {
+        for ((label, value) in listOf("Sign in" to false, "Create account" to true)) {
+            val on = creating == value
+            Box(
+                Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(7.dp)).background(if (on) HColors.surface2 else Color.Transparent).clickable { onChange(value) },
+                contentAlignment = Alignment.Center,
+            ) { LoginText(label, 14.sp, if (on) HColors.fg else HColors.muted, bold = on) }
+        }
+    }
+}
+
+@Composable
+private fun LoginField(
+    label: String, value: String, onChange: (String) -> Unit, keyboard: KeyboardType,
+    hidden: Boolean = false, trailing: String? = null, onTrailing: () -> Unit = {}, last: Boolean = false, onDone: () -> Unit = {},
+) {
+    val shape = RoundedCornerShape(10.dp)
+    Column(Modifier.fillMaxWidth()) {
+        LoginText(label, 13.sp, HColors.fg, modifier = Modifier.padding(start = 2.dp, bottom = 6.dp))
+        Row(
+            Modifier.fillMaxWidth().height(52.dp).clip(shape).background(HColors.surface).border(1.dp, HColors.border, shape).padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = value, onValueChange = onChange, singleLine = true,
+                textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontSize = 16.sp),
+                cursorBrush = SolidColor(HColors.accent),
+                visualTransformation = if (hidden) PasswordVisualTransformation() else VisualTransformation.None,
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false,
+                    keyboardType = keyboard, imeAction = if (last) ImeAction.Done else ImeAction.Next,
+                ),
+                keyboardActions = KeyboardActions(onDone = { onDone() }),
+                modifier = Modifier.weight(1f),
+            )
+            if (trailing != null) {
+                Spacer(Modifier.width(10.dp))
+                LoginText(trailing, 13.sp, HColors.muted, modifier = Modifier.clickable(onClick = onTrailing))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier.fillMaxWidth().height(52.dp).clip(shape).background(if (enabled) HColors.accent else HColors.accent.copy(alpha = 0.45f)).clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (!enabled) androidx.compose.material3.CircularProgressIndicator(Modifier.size(14.dp), color = Color.White, strokeWidth = 2.dp)
+            LoginText(text, 16.sp, Color.White, bold = true)
+        }
     }
 }

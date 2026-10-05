@@ -21,6 +21,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,6 +56,9 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
     var body by remember(id) { mutableStateOf(initial.optString("body")) }
     var dirty by remember(id) { mutableStateOf(false) }
     val course = remember(version) { repo.course(initial.str("course_id")) }
+    val versions = remember(version) { repo.versions(id) }
+    var menu by remember { mutableStateOf(false) }
+    var showVersions by remember { mutableStateOf(false) }
 
     fun save() {
         if (!dirty) return
@@ -73,6 +79,24 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
             IconButton({
                 nav.sheets.confirm = Triple("Delete note?", "\"${title.ifBlank { "Untitled" }}\" will be removed from every device.") { dirty = false; repo.deleteNote(id); nav.pop() }
             }) { Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted) }
+            Box {
+                IconButton({ menu = true }) { Icon(Icons.Outlined.MoreVert, "More", tint = HColors.muted) }
+                androidx.compose.material3.DropdownMenu(menu, { menu = false }, containerColor = HColors.surface) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { T("Versions" + if (versions.isEmpty()) "  (none yet)" else "  (${versions.size})", 14) },
+                        leadingIcon = { Icon(Icons.Outlined.History, null, tint = HColors.muted) },
+                        enabled = versions.isNotEmpty(),
+                        onClick = { menu = false; save(); showVersions = true },
+                    )
+                }
+            }
+        }
+        if (showVersions) VersionsDialog(versions, { showVersions = false }) { v ->
+            showVersions = false
+            nav.sheets.confirm = Triple("Restore this version?", "The note goes back to the text from ${stamp(v.optLong("saved_at"))}. What it says now is kept as a version too.") {
+                repo.restoreVersion(v)
+                title = v.optString("title"); body = v.optString("body"); dirty = false
+            }
         }
         Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
             // Which course and day this note belongs to; changes save at once.
@@ -104,4 +128,31 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
             )
         }
     }
+}
+
+private fun stamp(ms: Long): String = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).let {
+    Dates.short(it.toLocalDate()) + " " + Dates.t("%02d:%02d".format(it.hour, it.minute))
+}
+
+// Older text of this note, newest first; tap one to put it back.
+@Composable
+private fun VersionsDialog(versions: List<org.json.JSONObject>, onDismiss: () -> Unit, onPick: (org.json.JSONObject) -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss, containerColor = HColors.surface, shape = RectangleShape,
+        title = { T("Versions", 18, bold = true) },
+        text = {
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                items(versions.size) { i ->
+                    val v = versions[i]
+                    Column(Modifier.fillMaxWidth().clickable { onPick(v) }.padding(vertical = 10.dp)) {
+                        T(stamp(v.optLong("saved_at")) + when (v.optString("reason")) { "conflict" -> "  ·  from another device"; "restore" -> "  ·  before a restore"; else -> "" }, 12, HColors.muted)
+                        T(v.optString("title").ifBlank { "Untitled" }, 14, bold = true, maxLines = 1)
+                        T(v.optString("body").replace(Regex("\\s+"), " ").trim().ifBlank { "(empty)" }, 13, HColors.fg.copy(alpha = 0.8f), maxLines = 3)
+                    }
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+                }
+            }
+        },
+        confirmButton = { HButton("Close", onClick = onDismiss) },
+    )
 }

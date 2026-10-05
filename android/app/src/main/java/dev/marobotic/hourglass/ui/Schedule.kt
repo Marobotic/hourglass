@@ -33,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
@@ -132,16 +133,23 @@ private fun Tab(label: String, on: Boolean, onClick: () -> Unit) {
 fun BlockCard(b: Block, clock: Long, onClick: () -> Unit) {
     val o = b.first
     val live = clock >= b.startMs && clock < b.endMs
-    Row(Modifier.fillMaxWidth().background(if (live) hex(o.color).copy(alpha = 0.18f) else HColors.surface).border(1.dp, if (live) hex(o.color) else HColors.border).clickable(onClick = onClick)) {
+    val off = o.mark == "off"
+    Row(Modifier.fillMaxWidth().alpha(if (off) 0.5f else 1f).background(if (live) hex(o.color).copy(alpha = 0.18f) else HColors.surface).border(1.dp, if (live) hex(o.color) else HColors.border).clickable(onClick = onClick)) {
         Box(Modifier.width(4.dp).height(if (o.teacher != null) 92.dp else 70.dp).background(hex(o.color)))
         Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 T(Dates.range(b.startTime, b.endTime), 16, bold = true, modifier = Modifier.weight(1f))
                 o.location?.let { T(it, 16, bold = true) }
             }
-            T(o.title, 15, maxLines = 1)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                T(o.title, 15, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                o.mark?.let { Spacer(Modifier.width(8.dp)); Chip(markLabel(it), markColor(it)) }
+            }
             T(b.parts.joinToString(" · ") { "${kindLabel(it.kind)} ${Dates.t(it.startTime)}" }, 12, HColors.muted, maxLines = 1)
             o.teacher?.let { T(it.substringBefore(","), 13, HColors.muted, maxLines = 1) }
         }
     }
 }
+
+fun markLabel(m: String) = when (m) { "attended" -> "Attended"; "absent" -> "Absent"; else -> "Off" }
+fun markColor(m: String) = when (m) { "attended" -> HColors.teal; "absent" -> HColors.accent; else -> HColors.faint }

@@ -17,7 +17,8 @@ const repeat = z
 
 export const INSTRUCTIONS = `Hourglass is the user's calendar, notes, alarms and timers.
 Model: courses are folders (e.g. a university module). Events are one-off or recurring blocks of time, usually lectures of a course. Notes are Markdown, live in a course, and are stamped with a session_date: the date of the lecture they were written for.
-Start with whats_now for anything about "now", "today" or "next". All times are the user's local wall-clock time (see now.tz in whats_now).
+Start with whats_now for anything about "now", "today" or "next"; get_schedule for a week. Times in results are shown in the app's zone (now.tz). Each event also has its own zone (event_tz): its start/end are fixed in that zone, so pass times in the event's zone when you change them (e.g. a Cairo lecture at 08:00 stays "08:00" with tz Africa/Cairo).
+To adjust the schedule: get_schedule or list_courses to find event ids, then update_event / add_event / remove_event. Mark days with mark_session (attended, absent, off).
 When removing a single lecture of a recurring series use remove_event with scope "occurrence" and the date; only use scope "series" when the user wants the whole thing gone.
 Confirm destructive actions (remove_event series, remove_course, delete_note) with the user first.`;
 
@@ -25,7 +26,7 @@ export const TOOLS = [
   {
     name: "whats_now",
     title: "What's on now",
-    description: "The current session (with its notes: this session's, pinned, and last session's), the next event, today's timeline, running timers and next alarms.",
+    description: "The current session (with its notes), the next event within 12 hours (nothing later: day_off is true when today is free), today's timeline with attendance marks, running timers and next alarms.",
     input: {},
     readOnly: true,
     run: (s) => s.whatsNow(),
@@ -69,6 +70,7 @@ export const TOOLS = [
         .optional(),
       term_start: date.optional().describe("First week of teaching; defaults to today"),
       term_end: date.optional().describe("Recurring sessions stop after this date"),
+      tz: z.string().optional().describe("IANA zone the times are in (Africa/Cairo). Defaults to the app's zone. The event stays at that wall-clock time in that zone even if the app later shows another zone"),
     },
     run: (s, a) => s.addCourse(a),
   },
@@ -108,6 +110,7 @@ export const TOOLS = [
       end: time.optional().describe("Defaults to one hour after start"),
       location: z.string().optional(),
       repeat: repeat.optional(),
+      tz: z.string().optional().describe("IANA zone the times are in (Africa/Cairo). Defaults to the app's zone. The event stays at that wall-clock time in that zone even if the app later shows another zone"),
     },
     run: (s, a) => s.addEvent(a),
   },
@@ -125,6 +128,7 @@ export const TOOLS = [
       end: time.optional(),
       location: z.string().optional(),
       repeat: repeat.nullable().optional().describe("null makes it a one-off"),
+      tz: z.string().nullable().optional().describe("IANA zone the start/end times are in; usually leave as is"),
     },
     run: (s, a) => s.updateEvent(a),
   },
@@ -135,6 +139,26 @@ export const TOOLS = [
     input: { event_id: z.string(), scope: z.enum(["occurrence", "series"]).default("series"), date: date.optional() },
     destructive: true,
     run: (s, a) => s.removeEvent(a),
+  },
+  {
+    name: "mark_session",
+    title: "Mark attendance",
+    description: 'Mark one day of a course: "attended", "absent" or "off" (no class that day; it then disappears from Now). "none" clears the mark. Pass course (or event_id) and date (defaults to today).',
+    input: {
+      course: course.optional(),
+      event_id: z.string().optional(),
+      date: date.optional(),
+      status: z.enum(["attended", "absent", "off", "none"]),
+    },
+    run: (s, a) => s.markSession(a),
+  },
+  {
+    name: "get_attendance",
+    title: "Get attendance",
+    description: "Attendance marks (attended / absent / off) by date, for one course with totals, or for all courses.",
+    input: { course: course.optional() },
+    readOnly: true,
+    run: (s, a) => s.getAttendance(a),
   },
   {
     name: "get_notes",
@@ -185,6 +209,21 @@ export const TOOLS = [
       date: date.nullable().optional(),
     },
     run: (s, a) => s.updateNote(a),
+  },
+  {
+    name: "note_versions",
+    title: "Note history",
+    description: "Older versions of a note (text before earlier edits, and text that lost when two devices edited at once), newest first.",
+    input: { note_id: z.string() },
+    readOnly: true,
+    run: (s, a) => s.noteVersions(a),
+  },
+  {
+    name: "restore_note_version",
+    title: "Restore note version",
+    description: "Put an older version of a note back. The current text is kept as a version, so this can be undone.",
+    input: { version_id: z.string() },
+    run: (s, a) => s.restoreNoteVersion(a),
   },
   {
     name: "delete_note",

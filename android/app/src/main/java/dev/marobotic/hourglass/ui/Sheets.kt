@@ -122,6 +122,8 @@ private fun EventSheet(nav: Nav, ev: JSONObject?, defaults: Map<String, Any?>, o
     var days by remember { mutableStateOf(rep?.ints("days")?.ifEmpty { null } ?: listOf(Dates.iso(LocalDate.parse(date)))) }
     var until by remember { mutableStateOf(rep?.str("until")) }
     val valid = Dates.minutes(end) > Dates.minutes(start) && (title.isNotBlank() || courseId != null) && (repeat != "weekly" || days.isNotEmpty())
+    // Times are fixed in the event's zone; one without a zone takes the app's on save.
+    val zoneId = ev?.str("tz") ?: repo.zone.id
 
     Sheet(if (ev == null) "New event" else "Edit event", onDismiss, if (ev?.optJSONObject("repeat") != null) "Changes apply to every session of this series." else null) {
         T("COURSE", 11, HColors.muted, spacing = 0.6)
@@ -134,6 +136,7 @@ private fun EventSheet(nav: Nav, ev: JSONObject?, defaults: Map<String, Any?>, o
             TimeField(start, { start = it; if (Dates.minutes(end) <= Dates.minutes(it)) end = Dates.pad((Dates.minutes(it) / 60 + 1).coerceAtMost(23)) + ":" + it.takeLast(2) }, "START", Modifier.weight(1f))
             TimeField(end, { end = it }, "END", Modifier.weight(1f))
         }
+        T("Times are ${zoneId.substringAfterLast('/').replace('_', ' ')} time" + if (zoneId != repo.zone.id) ", shown converted elsewhere in the app." else ". They stay fixed there if you switch the app to another city.", 12, HColors.faint)
         Field(room, { room = it }, "Room (optional)", Modifier.fillMaxWidth())
         T("REPEAT", 11, HColors.muted, spacing = 0.6)
         Segmented(listOf("Once" to "none", "Weekly" to "weekly", "Daily" to "daily"), repeat) { repeat = it }
@@ -153,7 +156,7 @@ private fun EventSheet(nav: Nav, ev: JSONObject?, defaults: Map<String, Any?>, o
                 }
                 if (ev == null) repo.addEvent(courseId, title.trim(), kind, date, start, end, room.trim().ifBlank { null }, r)
                 else repo.updateEvent(ev.id, mapOf("course_id" to courseId, "title" to title.trim(), "kind" to kind, "start_date" to date,
-                    "start_time" to start, "end_time" to end, "location" to room.trim().ifBlank { null }, "repeat" to r))
+                    "start_time" to start, "end_time" to end, "location" to room.trim().ifBlank { null }, "repeat" to r, "tz" to zoneId))
                 onDismiss()
             }
         }
@@ -227,11 +230,25 @@ private fun CourseSheet(nav: Nav, c: JSONObject?, onDismiss: () -> Unit) {
 @Composable
 private fun SessionSheet(nav: Nav, o: dev.marobotic.hourglass.core.Occ, version: Int, onDismiss: () -> Unit) {
     val repo = nav.repo
-    val notes = remember(version) { o.courseId?.let { cid -> repo.notesFor(cid).filter { it.str("session_date") == o.date.toString() } } ?: emptyList() }
-    Sheet(o.title, onDismiss, "${Dates.long(o.date)}  ·  ${o.startTime}–${o.endTime}" + (o.location?.let { "  ·  $it" } ?: "")) {
+    val notes = remember(version) { o.courseId?.let { cid -> repo.notesFor(cid).filter { it.str("session_date") == o.session.toString() } } ?: emptyList() }
+    // The mark as stored now (the sheet's Occ is a snapshot).
+    val mark = remember(version) { repo.marks()[dev.marobotic.hourglass.core.markId(o.courseId, o.eventId, o.session)] }
+    Sheet(o.title, onDismiss, "${Dates.long(o.date)}  ·  ${Dates.range(o.startTime, o.endTime)}" + (o.location?.let { "  ·  $it" } ?: "")) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip(kindLabel(o.kind), hex(o.color))
             o.courseCode?.let { Chip(it, HColors.muted) }
+        }
+        Section("This day")
+        Segmented(listOf("Attended" to "attended", "Absent" to "absent", "Off" to "off"), mark) { repo.setMark(o, if (it == mark) null else it) }
+        T(when (mark) {
+            "attended" -> "You were there. Tap again to clear."
+            "absent" -> "Marked absent. Tap again to clear."
+            "off" -> "No class this day: it is left out of Now."
+            else -> "Mark it attended, absent, or off (no class that day)."
+        }, 12, HColors.faint)
+        o.courseId?.let { cid ->
+            val a = repo.attendance(cid)
+            if (a.isNotEmpty()) T("This course: ${a["attended"] ?: 0} attended · ${a["absent"] ?: 0} absent · ${a["off"] ?: 0} off", 12, HColors.muted)
         }
         if (o.courseId != null) {
             Section("Notes for this session")
@@ -239,12 +256,12 @@ private fun SessionSheet(nav: Nav, o: dev.marobotic.hourglass.core.Occ, version:
             for (n in notes) NoteRow(n) { onDismiss(); nav.openNote(n) }
             HButton(if (notes.isEmpty()) "Start a note for this session" else "Add another note", Modifier.fillMaxWidth(), primary = true, icon = Icons.Outlined.EditNote) {
                 onDismiss()
-                nav.openNote(repo.addNote(o.courseId, o.date, o.eventId, Dates.short(o.date) + if (notes.isNotEmpty()) " (${notes.size + 1})" else ""))
+                nav.openNote(repo.addNote(o.courseId, o.session, o.eventId, Dates.short(o.session) + if (notes.isNotEmpty()) " (${notes.size + 1})" else ""))
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HButton("Skip this date", danger = true) {
-                nav.sheets.confirm = Triple("Skip ${Dates.short(o.date)}?", "Only this session is removed. The rest of the series stays.") { repo.skipOccurrence(o.eventId, o.date); onDismiss() }
+                nav.sheets.confirm = Triple("Skip ${Dates.short(o.date)}?", "Only this session is removed. The rest of the series stays.") { repo.skipOccurrence(o.eventId, o.session); onDismiss() }
             }
             Spacer(Modifier.weight(1f))
             HButton("Edit event") { repo.store.get("events", o.eventId)?.let { onDismiss(); nav.sheets.event = it to emptyMap() } }
@@ -338,6 +355,8 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
             }
             error?.let { T(it, 13, HColors.accent) }
 
+            if (repo.signedIn) AiSection(nav)
+
             Section("Alarms")
             T("LECTURE REMINDERS", 11, HColors.muted, spacing = 0.6)
             Segmented(listOf("Off" to 0, "10 min" to 10, "15 min" to 15, "30 min" to 30, "60 min" to 60), repo.reminderMin) { repo.setLectureReminders(it); tick++ }
@@ -390,3 +409,33 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
 }
 
 private fun token(repo: dev.marobotic.hourglass.data.Repo) = repo.signedIn || repo.sync.value.state == "synced"
+
+// A personal link that lets any AI with MCP (ChatGPT, Claude, Gemini CLI,
+// Codex...) read and change this account's schedule, notes and alarms.
+@Composable
+private fun AiSection(nav: Nav) {
+    val repo = nav.repo
+    val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+    var info by remember { mutableStateOf<JSONObject?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    var copied by remember { mutableStateOf(false) }
+    fun load(make: Boolean) {
+        busy = true; problem = null; copied = false
+        repo.aiLinks(make) { o, err -> busy = false; problem = err; if (o != null) info = o }
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) { load(false) }
+    val link = info?.str("mcp_url")
+    Section("Use with AI")
+    T("Tell any AI \"use Hourglass to move my Tuesday lecture\". Add this link as a connector (MCP server) in ChatGPT, Claude, Gemini CLI or Codex. Anyone with the link can change your schedule, so keep it to yourself.", 12, HColors.muted)
+    if (link != null) {
+        T(link.substringBeforeLast('/') + "/" + link.substringAfterLast('/').take(8) + "…", 13, maxLines = 1)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            HButton(if (copied) "Copied" else "Copy link", primary = true) { clip.setText(androidx.compose.ui.text.AnnotatedString(link)); copied = true }
+            HButton("New link", enabled = !busy) {
+                nav.sheets.confirm = Triple("Make a new link?", "The old link stops working; AIs using it need the new one.") { load(true) }
+            }
+        }
+    } else HButton(if (busy) "Working…" else "Make my AI link", enabled = !busy) { load(true) }
+    problem?.let { T(it, 12, HColors.accent) }
+}

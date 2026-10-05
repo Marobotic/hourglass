@@ -62,6 +62,29 @@ async function readRaw(req, limit) {
 
 const tenants = new Map(); // email ("" = owner) -> tenant
 
+// Personal AI keys: one per account, for ChatGPT, Claude, Gemini or any MCP
+// client. The key opens that account's data, like a session that does not
+// expire; making a new one turns the old one off.
+const aiKeys = new Map(); // key -> email
+const readKey = (dir) => (existsSync(join(dir, "ai_key")) ? readFileSync(join(dir, "ai_key"), "utf8").trim() : "");
+
+function newAiKey(t) {
+  if (t.aiKey) aiKeys.delete(t.aiKey);
+  t.aiKey = "hg_" + randomBytes(24).toString("base64url");
+  writeFileSync(join(t.dir, "ai_key"), t.aiKey + "\n", { mode: 0o600 });
+  aiKeys.set(t.aiKey, t.email === owner ? "" : t.email);
+  return t.aiKey;
+}
+
+function aiInfo(t, base) {
+  return {
+    key: t.aiKey || null,
+    mcp_url: t.aiKey ? `${base}/mcp/${t.aiKey}` : null,
+    openapi_url: `${base}/openapi.json`,
+    actions_url: `${base}/api/actions`,
+  };
+}
+
 function tenant(email) {
   const key = email === owner ? "" : email;
   let t = tenants.get(key);
@@ -71,7 +94,8 @@ function tenant(email) {
   if (key) writeFileSync(join(dir, "email"), key + "\n");
   const store = new Store(join(dir, "hourglass.db"));
   const service = new Service(store);
-  t = { email: key || owner, dir, store, service, icalKey: secret(dir, "ical_key") };
+  t = { email: key || owner, dir, store, service, icalKey: secret(dir, "ical_key"), aiKey: readKey(dir) };
+  if (t.aiKey) aiKeys.set(t.aiKey, key || owner);
   t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL, extra: (req, res, url, path) => ringtoneRoutes(t, req, res, url, path) });
   tenants.set(key, t);
   return t;
@@ -118,6 +142,7 @@ async function who(req) {
   const a = Buffer.from(bearer);
   const b = Buffer.from(token);
   if (a.length === b.length && timingSafeEqual(a, b)) return "";
+  if (aiKeys.has(bearer)) return aiKeys.get(bearer);
   return await sessionEmail(bearer);
 }
 
@@ -247,6 +272,14 @@ createServer(async (req, res) => {
       return t.handler(req, res);
     }
     if ((path === "/auth/login" || path === "/auth/register") && req.method === "POST") return await proxyAuth(req, res, path);
+    // MCP with the key in the link, for apps that only take a URL (ChatGPT
+    // and Claude connectors): https://.../hourglass/mcp/<key>
+    const mk = /^\/mcp\/(hg_[A-Za-z0-9_-]{20,})$/.exec(path);
+    if (mk) {
+      if (!aiKeys.has(mk[1])) return send(res, 401, { error: "unknown or replaced key: make a new link in Hourglass settings" });
+      req.url = "/mcp";
+      return tenant(aiKeys.get(mk[1])).handler(req, res);
+    }
     const email = await who(req);
     if (email === null) return send(res, 401, { error: "unauthorized" });
     if (path === "/auth/logout" && req.method === "POST") {
@@ -255,6 +288,12 @@ createServer(async (req, res) => {
     }
     const t = tenant(email);
     if (path === "/api/account") return send(res, 200, { email: t.email || null });
+    const base = process.env.HOURGLASS_URL || `http://${req.headers.host}`;
+    if (path === "/api/ai" && req.method === "GET") return send(res, 200, aiInfo(t, base));
+    if (path === "/api/ai" && req.method === "POST") {
+      newAiKey(t);
+      return send(res, 200, aiInfo(t, base));
+    }
     return t.handler(req, res);
   } catch (e) {
     if (res.headersSent) return;

@@ -41,6 +41,51 @@ Rectangle {
         Api.put("/api/notes/" + loadedId, patch, n => { if (n) { ed.app.editingNote = n; ed.status = "Saved"; } });
     }
     function edited() { if (loadedId) { status = "Edited"; saveTimer.restart(); } }
+
+    // Older text of this note, newest first; click one to put it back.
+    Modal {
+        id: versionsPop
+        property var versions: []
+        width: 620
+        title: "Versions"
+        subtitle: versions.length ? "Click one to restore it. What the note says now is kept as a version too." : "No older versions yet. They appear after edits."
+        Repeater {
+            model: versionsPop.versions
+            Rectangle {
+                id: vr
+                required property var modelData
+                Layout.fillWidth: true
+                implicitHeight: vrCol.implicitHeight + 20
+                color: vrMouse.containsMouse ? Theme.surface2 : "transparent"
+                border.width: 1
+                border.color: Theme.border
+                ColumnLayout {
+                    id: vrCol
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                    spacing: 4
+                    Text {
+                        text: Util.shortDate(Util.dayOf(vr.modelData.saved_at)) + " " + Util.clock(vr.modelData.saved_at) + (vr.modelData.reason === "conflict" ? "  ·  from another device" : vr.modelData.reason === "restore" ? "  ·  before a restore" : "")
+                        color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12
+                    }
+                    Text { Layout.fillWidth: true; text: vr.modelData.title || "Untitled"; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.Bold }
+                    Text { Layout.fillWidth: true; text: (vr.modelData.body || "(empty)").replace(/\s+/g, " "); color: Theme.fg; opacity: 0.8; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight; font.family: Theme.sans; font.pixelSize: 13 }
+                }
+                MouseArea {
+                    id: vrMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: Api.action("restore_note_version", { version_id: vr.modelData.version_id }, n => {
+                        if (!n) return;
+                        versionsPop.close();
+                        titleField.text = n.title || "";
+                        body.text = n.body || "";
+                        saveTimer.stop();
+                        ed.app.editingNote = n;
+                        ed.status = "Restored";
+                    })
+                }
+            }
+        }
+        footer: [Item { Layout.fillWidth: true }, Btn { text: "Close"; onClicked: versionsPop.close() }]
+    }
     Timer { id: saveTimer; interval: 600; onTriggered: ed.save() }
 
     ColumnLayout {
@@ -60,6 +105,12 @@ Rectangle {
                 onClicked: Api.put("/api/notes/" + ed.loadedId, { pinned: !ed.note.pinned }, n => { if (n) ed.app.editingNote = n; })
             }
             Btn { icon: ed.preview ? "edit" : "eye"; text: ed.preview ? "Edit" : "Preview"; compact: true; onClicked: { ed.flush(); ed.preview = !ed.preview; } }
+            Btn {
+                icon: "time"; compact: true; kind: "subtle"
+                text: "Versions"
+                tip: "Older text of this note"
+                onClicked: { ed.flush(); Api.action("note_versions", { note_id: ed.loadedId }, v => { if (v) { versionsPop.versions = v; versionsPop.open(); } }); }
+            }
             Btn {
                 icon: "trash"; compact: true; kind: "subtle"
                 onClicked: ed.app.confirm("Delete note?", "“" + (titleField.text || "Untitled") + "” will be removed from every device.", "Delete", () => {

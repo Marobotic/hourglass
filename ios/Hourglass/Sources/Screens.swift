@@ -12,8 +12,12 @@ struct NowView: View {
     var body: some View {
         Ticking { clock in
             let today = Dates.dayOf(clock)
-            let blocks = merge(store.occurrences(today, Dates.add(today, 7)))
-            let current = blocks.first { $0.endMs > clock }
+            // Today only: what is on and what starts in the next 12 hours; a
+            // session marked off is not happening.
+            let window = merge(store.occurrences(today, Dates.add(today, 1)).filter { $0.mark != "off" })
+                .filter { $0.endMs > clock && ($0.first.date == today || $0.startMs - clock <= Now.ahead) }
+            let current = window.first
+            let later = Array(window.dropFirst())
             let todays = todayNotes(today, current)
             let alarm = store.alarms.compactMap { a in Alarms.next(a, store.db.courses, store.db.events, clock).map { (a, $0) } }.min { $0.1 < $1.1 }
             let timer = store.timers.first { $0.state != "idle" }
@@ -24,6 +28,12 @@ struct NowView: View {
                         T(Dates.clock(clock), 42, bold: true)
                     }
                     hero(current, today, clock)
+                    if !later.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("COMING UP").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted)
+                            ForEach(later) { b in TimelineRow(o: b.first, clock: clock, end: b.end).onTapGesture { sheets.session = b.first } }
+                        }
+                    }
                     VStack(alignment: .leading, spacing: 8) {
                         Text("NOTES FOR TODAY").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted)
                         if todays.isEmpty { T("Nothing yet. Notes you take in class show up here.", 13, H.faint) }
@@ -53,7 +63,7 @@ struct NowView: View {
     // Notes dated today, then the class's: this session's, else the last one's.
     private func todayNotes(_ today: String, _ b: Block?) -> [Note] {
         var out = store.notes.filter { $0.session_date == today }
-        if let cid = b?.first.course_id, let day = b?.first.date {
+        if let cid = b?.first.course_id, let day = b?.first.session {
             let mine = store.notes.filter { $0.course_id == cid && ($0.session_date ?? "~") <= day }
             let last = mine.compactMap(\.session_date).max()
             for n in mine where n.session_date == last && !out.contains(where: { $0.id == n.id }) { out.append(n) }
@@ -82,18 +92,19 @@ struct NowView: View {
     private func hero(_ b: Block?, _ today: String, _ clock: Int64) -> some View {
         let live = b.map { clock >= $0.startMs } ?? false
         Card(stripe: b.map { Color(hex: $0.first.color) } ?? H.border) {
-            Text(b == nil ? "NOTHING SCHEDULED" : live ? "NOW" : b!.first.date == today ? "NEXT" : "NEXT · " + Dates.short(b!.first.date).uppercased())
+            Text(b == nil ? "DAY OFF" : live ? "NOW" : b!.first.date == today ? "NEXT" : "NEXT · " + Dates.short(b!.first.date).uppercased())
                 .font(H.mono(12, bold: true)).tracking(2).foregroundStyle(live ? H.accent : H.muted)
-            T(b?.first.title ?? "Your week is clear.", 26, bold: true).padding(.top, 8)
+            T(b?.first.title ?? "Heyyy, your day is off!", 26, bold: true).padding(.top, 8)
+            if b == nil && !store.courses.isEmpty { T("Nothing on today or in the next 12 hours.", 14, H.muted) }
             if let b {
                 T(Dates.range(b.start, b.end) + (b.first.location.map { "   \($0)" } ?? ""), 18, bold: true).padding(.top, 6)
                 if let t = b.first.teacher { T(String(t.split(separator: ",").first ?? ""), 14, H.muted) }
                 T(live ? Dates.left((b.endMs - clock + 59_999) / 60_000) : "Starts " + Dates.relative((b.startMs - clock + 59_999) / 60_000), 14, live ? H.accent : H.muted).padding(.top, 4)
                 if b.first.course_id != nil {
                     HButton("Notes for this class", icon: "square.and.pencil", primary: true) {
-                        let existing = live ? store.now(clock).notes.session : []
-                        if let n = existing.first { path.append(.note(n.id)) }
-                        else { path.append(.note(store.addNote(course: b.first.course_id, date: b.first.date, event: b.first.event_id).id)) }
+                        // This session's note when there is one, so a tap never makes a second.
+                        if let n = Now.sessionNotes(store.notes, b.first).session.first { path.append(.note(n.id)) }
+                        else { path.append(.note(store.addNote(course: b.first.course_id, date: b.first.session, event: b.first.event_id).id)) }
                     }
                     .padding(.top, 12)
                 }
@@ -107,12 +118,13 @@ struct NowView: View {
 struct TimelineRow: View {
     let o: Occ
     let clock: Int64
+    var end: String? = nil
     var body: some View {
         let past = clock >= o.end_ms
         let live = clock >= o.start_ms && !past
         let color = Color(hex: o.color)
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 0) { T(o.start_time, 14, bold: true); T(o.end_time, 11, H.faint) }.frame(width: 52, alignment: .leading)
+            VStack(alignment: .leading, spacing: 0) { T(Dates.t(o.start_time), 14, bold: true); T(Dates.t(end ?? o.end_time), 11, H.faint) }.frame(width: 76, alignment: .leading)
             Rectangle().fill(color).frame(width: 3, height: 34)
             VStack(alignment: .leading, spacing: 1) {
                 T(o.title, 14, lines: 1)
@@ -294,13 +306,22 @@ struct NotesView: View {
                     Button { searching.toggle(); if !searching { query = "" } } label: { Image(systemName: searching ? "xmark" : "magnifyingglass").foregroundStyle(H.muted).frame(width: 36, height: 36) }
                 }
                 if searching { Field(label: "Search", text: $query) }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        folder("All", nil, "all")
-                        ForEach(store.courses) { c in folder(c.name, Color(hex: c.color), c.id) }
-                        folder("No course", nil, "inbox")
-                        Button { sheets.course = CourseDraft() } label: { T("+ Course", 14, H.muted).padding(.horizontal, 12).padding(.vertical, 8).overlay(Rectangle().stroke(H.border, lineWidth: 1)) }.buttonStyle(.plain)
+                // "All" first, then each subject: one dropdown.
+                Menu {
+                    Button { sel = "all" } label: { Label("All notes", systemImage: sel == "all" ? "checkmark" : "") }
+                    ForEach(store.courses) { c in Button { sel = c.id } label: { Label(c.name, systemImage: sel == c.id ? "checkmark" : "") } }
+                    Button { sel = "inbox" } label: { Label("No course", systemImage: sel == "inbox" ? "checkmark" : "") }
+                    Divider()
+                    Button { sheets.course = CourseDraft() } label: { Label("New course", systemImage: "plus") }
+                } label: {
+                    HStack(spacing: 10) {
+                        if let c = course { Rectangle().fill(Color(hex: c.color)).frame(width: 10, height: 10) }
+                        T(sel == "all" ? "All notes" : sel == "inbox" ? "No course" : course?.name ?? "All notes", 15, bold: true, lines: 1)
+                        Spacer()
+                        Image(systemName: "chevron.down").foregroundStyle(H.muted)
                     }
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
                 }
                 if let c = course {
                     T([c.name, c.location, c.teacher.map { String($0.split(separator: ",").first ?? "") }].compactMap { $0 }.joined(separator: "  ·  "), 13, H.muted, lines: 2)
@@ -528,6 +549,12 @@ struct NoteView: View {
     @State private var loaded = false
     @State private var dirty = false
     @State private var confirmDelete = false
+    @State private var restoreChoice: NoteVersion?
+
+    private func stamp(_ ms: Int64) -> String {
+        let d = Dates.dayOf(ms)
+        return Dates.short(d) + " " + Dates.clock(ms)
+    }
 
     var body: some View {
         let note = store.notes.first { $0.id == id }
@@ -547,7 +574,12 @@ struct NoteView: View {
         .padding(.horizontal, 20)
         .background(H.bg)
         .onAppear { if let note, !loaded { title = note.title; text = note.body; loaded = true } }
-        .task(id: "\(title)\u{1}\(text)") { if dirty { try? await Task.sleep(nanoseconds: 700_000_000); save() } }
+        // 700 ms after the last keystroke; a keystroke cancels the wait, not starts a save.
+        .task(id: "\(title)\u{1}\(text)") {
+            guard dirty else { return }
+            do { try await Task.sleep(nanoseconds: 700_000_000) } catch { return }
+            save()
+        }
         .onDisappear { save() }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -556,8 +588,25 @@ struct NoteView: View {
                     Image(systemName: note?.pinned == 1 ? "pin.fill" : "pin").foregroundStyle(note?.pinned == 1 ? H.gold : H.muted)
                 }
                 Button { confirmDelete = true } label: { Image(systemName: "trash").foregroundStyle(H.muted) }
+                Menu {
+                    let versions = store.versions(id)
+                    Section(versions.isEmpty ? "No older versions yet" : "Versions") {
+                        ForEach(versions) { v in
+                            Button { save(); restoreChoice = v } label: {
+                                Text(stamp(v.saved_at ?? 0) + (v.reason == "conflict" ? " · other device" : v.reason == "restore" ? " · before a restore" : ""))
+                                Text(v.body.replacingOccurrences(of: "\n", with: " ").prefix(60))
+                            }
+                        }
+                    }
+                } label: { Image(systemName: "ellipsis.circle").foregroundStyle(H.muted) }
             }
         }
+        .confirmationDialog("Restore this version?", isPresented: Binding(get: { restoreChoice != nil }, set: { if !$0 { restoreChoice = nil } }), titleVisibility: .visible) {
+            Button("Restore") {
+                if let v = restoreChoice { store.restore(v); title = v.title; text = v.body; dirty = false }
+                restoreChoice = nil
+            }
+        } message: { Text("The note goes back to that text. What it says now is kept as a version too.") }
         .confirmationDialog("Delete note?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { dirty = false; store.deleteNote(id); dismiss() }
         } message: { Text("\"\(title.isEmpty ? "Untitled" : title)\" will be removed from every device.") }

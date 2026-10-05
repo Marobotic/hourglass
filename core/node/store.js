@@ -6,6 +6,8 @@ import { dirname } from "node:path";
 import { TABLES, TABLE_NAMES, normalize } from "../model.js";
 
 const sqlType = { text: "TEXT", int: "INTEGER", bool: "INTEGER", json: "TEXT" };
+const VERSION_GAP = 10 * 60000;
+const VERSION_CAP = 40;
 
 export class Store {
   // replica: a client copy. Local changes keep the server rev and are marked
@@ -71,6 +73,10 @@ export class Store {
   write(table, row, { mode = "local", assignRev = !this.replica } = {}) {
     const existing = this.get(table, row.id);
     if (existing && existing.updated_at > row.updated_at) return { row: existing, applied: false };
+    // The source of truth keeps the text a note had before it changed.
+    if (table === "notes" && !this.replica && existing && !existing.deleted && (existing.body !== row.body || existing.title !== row.title)) {
+      this.keepVersion(existing);
+    }
     const cols = [...TABLES[table].map(([n]) => n), "updated_at", "deleted"];
     const vals = cols.map((c) => {
       const type = TABLES[table].find(([n]) => n === c)?.[1];
@@ -100,6 +106,23 @@ export class Store {
     const existing = this.get(table, id);
     if (!existing) return null;
     return this.write(table, { ...existing, deleted: 1, updated_at: Math.max(Date.now(), existing.updated_at + 1) }, opts).row;
+  }
+
+  // Save a note's current text as a version. An edit keeps at most one per
+  // VERSION_GAP (the text before that stretch of typing); a conflict or a
+  // restore always keeps one. Never two identical in a row.
+  keepVersion(note, { reason = "edit", force = false } = {}) {
+    if (!note.body && !note.title) return null;
+    const mine = this.db
+      .prepare("SELECT * FROM note_versions WHERE note_id = ? AND deleted = 0 ORDER BY saved_at DESC")
+      .all(note.id)
+      .map((r) => this.decode("note_versions", r));
+    const last = mine[0];
+    if (last && last.body === note.body && last.title === note.title) return null;
+    if (!force && reason === "edit" && last && Date.now() - last.updated_at < VERSION_GAP) return null;
+    const v = this.write("note_versions", normalize("note_versions", { note_id: note.id, title: note.title, body: note.body, saved_at: note.updated_at, reason }));
+    for (const old of mine.slice(VERSION_CAP - 1)) this.remove("note_versions", old.id);
+    return v.row;
   }
 
   changesSince(rev) {
@@ -140,25 +163,28 @@ export function numberedTitle(store, base, { startAt = 1 } = {}) {
 }
 
 // Server side of sync: apply rows pushed by a client, and report the rev each
-// accepted row got so the client can base its next edit on it. A note whose
-// body both sides changed since the client last synced is kept as a numbered
-// copy ("Title 02"), unless the losing side is empty.
+// accepted row got so the client can base its next edit on it. A note edited
+// on two devices at once is never copied: the newer edit wins and the other
+// text is kept as a version of the same note.
 export function applyPush(store, changes) {
   const result = { applied: 0, conflicts: 0, revs: {} };
   const note = (t, row) => ((result.revs[t] ??= {})[row.id] = row.rev);
   for (const t of TABLE_NAMES) {
+    if (t === "note_versions") continue; // written by the server only
     for (const incoming of changes?.[t] ?? []) {
       const row = normalize(t, incoming);
       const existing = store.get(t, row.id);
       const baseRev = Number(incoming.base_rev ?? incoming.rev ?? 0);
       if (t === "notes" && existing && !existing.deleted && !row.deleted && existing.rev > baseRev && existing.body !== row.body && existing.body && row.body) {
-        const loser = existing.updated_at > row.updated_at ? row : existing;
-        const winner = loser === row ? existing : row;
-        if (winner === row) note(t, store.write(t, row).row);
-        else note(t, existing);
-        store.write(t, normalize(t, { ...loser, id: undefined, title: numberedTitle(store, loser.title, { startAt: 2 }), updated_at: Date.now() }));
+        if (existing.updated_at > row.updated_at) {
+          // This device's text lost: keep it where the versions menu shows it.
+          store.keepVersion({ ...row, id: existing.id }, { reason: "conflict", force: true });
+          note(t, existing);
+          result.conflicts++;
+          continue;
+        }
+        store.keepVersion(existing, { reason: "conflict", force: true });
         result.conflicts++;
-        continue;
       }
       const w = store.write(t, row);
       if (w.applied) result.applied++;

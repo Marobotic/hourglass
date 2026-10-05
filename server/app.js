@@ -106,12 +106,13 @@ function ics(service) {
   for (const e of service.store.all("events")) {
     const c = e.course_id ? courses.get(e.course_id) : null;
     lines.push("BEGIN:VEVENT", `UID:${e.id}@hourglass`, `DTSTAMP:${new Date(e.updated_at).toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`);
-    lines.push(`SUMMARY:${esc(e.title || c?.name || "Event")}`, `DTSTART;TZID=${tz}:${stamp(e.start_date, e.start_time)}`, `DTEND;TZID=${tz}:${stamp(e.start_date, e.end_time)}`);
+    const ez = e.tz || tz;
+    lines.push(`SUMMARY:${esc(e.title || c?.name || "Event")}`, `DTSTART;TZID=${ez}:${stamp(e.start_date, e.start_time)}`, `DTEND;TZID=${ez}:${stamp(e.start_date, e.end_time)}`);
     const loc = e.location || c?.location;
     if (loc) lines.push(`LOCATION:${esc(loc)}`);
     const rule = toRRule(e);
     if (rule) lines.push(`RRULE:${rule}`);
-    for (const x of e.exceptions ?? []) lines.push(`EXDATE;TZID=${tz}:${stamp(x, e.start_time)}`);
+    for (const x of e.exceptions ?? []) lines.push(`EXDATE;TZID=${ez}:${stamp(x, e.start_time)}`);
     lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");

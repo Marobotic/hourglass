@@ -1,4 +1,4 @@
-import { addDays, daysBetween, parseTime, weekday, weekStart, zonedToEpoch } from "./dates.js";
+import { addDays, daysBetween, localParts, parseTime, weekday, weekStart, zonedToEpoch } from "./dates.js";
 
 // Dates in [from, to] (inclusive) on which the event occurs.
 export function occurrenceDates(event, from, to) {
@@ -33,16 +33,28 @@ export function occurrenceDates(event, from, to) {
 }
 
 // Concrete occurrences with instants, sorted by start. courses maps id -> course.
+// tz is the zone to show them in. An event with its own tz keeps its times in
+// that zone: 08:00 Cairo is 01:00 when the app shows New York. date,
+// start_time and end_time are in tz; session_date is the event's own date,
+// which notes and marks are keyed by.
 export function expand(events, courses, from, to, tz) {
   const out = [];
   for (const ev of events) {
     if (ev.deleted) continue;
     const course = ev.course_id ? courses.get(ev.course_id) : null;
     if (course?.deleted || course?.archived) continue;
-    for (const date of occurrenceDates(ev, from, to)) {
-      const startMin = parseTime(ev.start_time);
-      let endMin = parseTime(ev.end_time);
-      if (endMin <= startMin) endMin = startMin + 60;
+    const ez = ev.tz || tz;
+    const shifted = ez !== tz;
+    const startMin = parseTime(ev.start_time);
+    let endMin = parseTime(ev.end_time);
+    if (endMin <= startMin) endMin = startMin + 60;
+    // Another zone can move a session across midnight: look a day either side.
+    for (const session of occurrenceDates(ev, shifted ? addDays(from, -1) : from, shifted ? addDays(to, 1) : to)) {
+      const start_ms = zonedToEpoch(session, ev.start_time, ez);
+      const end_ms = start_ms + (endMin - startMin) * 60000;
+      const here = shifted ? localParts(start_ms, tz) : null;
+      const date = here ? here.date : session;
+      if (date < from || date > to) continue;
       out.push({
         event_id: ev.id,
         course_id: ev.course_id ?? null,
@@ -53,10 +65,12 @@ export function expand(events, courses, from, to, tz) {
         course_code: course?.code ?? null,
         teacher: course?.teacher ?? null,
         date,
-        start_time: ev.start_time,
-        end_time: ev.end_time,
-        start_ms: zonedToEpoch(date, ev.start_time, tz),
-        end_ms: zonedToEpoch(date, ev.start_time, tz) + (endMin - startMin) * 60000,
+        session_date: session,
+        start_time: here ? here.time : ev.start_time,
+        end_time: here ? localParts(end_ms, tz).time : ev.end_time,
+        event_tz: ez,
+        start_ms,
+        end_ms,
       });
     }
   }

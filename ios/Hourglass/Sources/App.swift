@@ -11,9 +11,9 @@ struct HourglassApp: App {
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
                 .onAppear { Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
-                .task { while !Task.isCancelled { await store.sync(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
+                .task { while !Task.isCancelled { await store.syncSoon(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
         }
-        .onChange(of: phase) { _, p in if p == .active { Task { await store.sync() } } }
+        .onChange(of: phase) { _, p in if p == .active { Task { await store.syncSoon() } } }
     }
 }
 
