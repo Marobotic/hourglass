@@ -14,7 +14,7 @@ import java.util.UUID
 // Local changes are marked dirty until the server accepts them.
 class Store(private val file: File) {
     companion object {
-        val TABLES = listOf("courses", "events", "notes", "alarms", "clocks", "timers", "ringtones", "prefs", "note_versions", "marks")
+        val TABLES = listOf("courses", "events", "notes", "alarms", "clocks", "timers", "ringtones", "prefs", "note_versions", "marks", "folders", "files")
         private val DEFAULTS = mapOf(
             "courses" to mapOf("name" to "", "code" to null, "color" to "#B14242", "location" to null, "teacher" to null, "archived" to 0),
             "events" to mapOf("course_id" to null, "title" to "", "kind" to "event", "location" to null, "start_date" to null, "start_time" to null, "end_time" to null, "repeat" to null, "exceptions" to JSONArray(), "tz" to null),
@@ -27,6 +27,11 @@ class Store(private val file: File) {
             // Written by the server; the phone only reads them.
             "note_versions" to mapOf("note_id" to null, "title" to "", "body" to "", "saved_at" to 0, "reason" to "edit"),
             "marks" to mapOf("course_id" to null, "event_id" to null, "date" to null, "status" to "attended"),
+            // Drive: folders nest by parent_id; a file's bytes live on the server
+            // (GET /api/files/<id>/raw) and only the row syncs. course_id puts it
+            // in that course's folder; note_id attaches it to a note.
+            "folders" to mapOf("name" to "", "parent_id" to null),
+            "files" to mapOf("name" to "", "folder_id" to null, "size" to 0, "mime" to "application/octet-stream", "note_id" to null, "course_id" to null),
         )
     }
 

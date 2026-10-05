@@ -37,7 +37,7 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 // (same semantics as core/node/service.js) and the sync loop.
 // autoConfigure: point a fresh install at the build-time server. Tests pass false
 // so demo data never reaches the real account.
-const val SCHEMA = "5"
+const val SCHEMA = "6"
 val BUILTIN_RINGTONES = listOf("classic", "klaxon", "siren", "digital", "rising", "bell") // bump when a table or column is added
 
 class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
@@ -309,6 +309,163 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             syncOnce()
         }.exceptionOrNull()?.message
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+
+    // --- attendance ---
+
+    // One course's sessions, from its first to the end of term (the last
+    // "until", at most six months out): each day once, with its mark, upcoming
+    // ones flagged. Same rule as the desktop's Attendance page.
+    data class Session(val date: LocalDate, val eventId: String, val mark: String?, val future: Boolean, val occ: Occ)
+
+    fun attendanceSessions(now: Long = System.currentTimeMillis()): List<Pair<JSONObject, List<Session>>> {
+        val mine = events().filter { it.str("course_id") != null }
+        if (mine.isEmpty()) return courses().map { it to emptyList() }
+        val today = LocalDate.now(zone)
+        val starts = mine.mapNotNull { runCatching { LocalDate.parse(it.optString("start_date")) }.getOrNull() }
+        val ends = mine.mapNotNull { ev ->
+            val until = ev.optJSONObject("repeat")?.optString("until")?.takeIf { it.isNotBlank() } ?: ev.optString("start_date")
+            runCatching { LocalDate.parse(until) }.getOrNull()
+        }
+        val from = starts.minOrNull() ?: today
+        val to = minOf(ends.maxOrNull() ?: today, today.plusDays(183)).let { if (it.isBefore(today)) today else it }
+        val by = LinkedHashMap<String, LinkedHashMap<LocalDate, Session>>()
+        for (o in occurrences(from, to)) {
+            val cid = o.courseId ?: continue
+            val days = by.getOrPut(cid) { LinkedHashMap() }
+            if (!days.containsKey(o.session)) days[o.session] = Session(o.session, o.eventId, o.mark, o.startMs > now, o)
+        }
+        return courses().map { c -> c to (by[c.id]?.values?.sortedBy { it.date } ?: emptyList()) }
+    }
+
+    // unmarked -> attended -> absent -> off -> unmarked
+    fun cycleMark(s: Session) = setMark(s.occ, when (s.mark) { null, "" -> "attended"; "attended" -> "absent"; "absent" -> "off"; else -> null })
+
+    // --- drive ---
+
+    data class DriveView(val folder: JSONObject?, val course: JSONObject?, val path: List<JSONObject>, val courses: List<Pair<JSONObject, Int>>, val folders: List<Pair<JSONObject, Int>>, val files: List<JSONObject>)
+
+    fun folders() = store.all("folders")
+    fun files() = store.all("files")
+
+    // One folder's contents (null = the top) or one course's folder. The top
+    // lists the courses, then the folders and files that are in none. Same
+    // rule as the server's list_drive.
+    fun drive(folderId: String?, courseId: String?): DriveView {
+        val folders = folders()
+        val known = courses().map { it.id }.toSet()
+        val files = files().map { f -> if (f.str("course_id") != null && f.str("course_id") !in known) JSONObject(f.toString()).put("course_id", JSONObject.NULL) else f }
+        val byName = compareBy<JSONObject> { it.optString("name").lowercase() }
+        if (courseId != null) {
+            val c = course(courseId)
+            return DriveView(null, c, emptyList(), emptyList(), emptyList(), files.filter { it.str("course_id") == courseId }.sortedWith(byName))
+        }
+        val path = mutableListOf<JSONObject>()
+        var f = folderId?.let { id -> folders.firstOrNull { it.id == id } }
+        while (f != null) { path.add(0, f); f = f.str("parent_id")?.let { p -> folders.firstOrNull { it.id == p } } }
+        val top = folderId == null
+        return DriveView(
+            folder = path.lastOrNull(), course = null, path = path,
+            courses = if (top) courses().map { c -> c to files.count { it.str("course_id") == c.id } } else emptyList(),
+            folders = folders.filter { it.str("parent_id") == folderId }.sortedWith(byName)
+                .map { d -> d to (folders.count { it.str("parent_id") == d.id } + files.count { it.str("folder_id") == d.id }) },
+            files = files.filter { it.str("course_id") == null && it.str("folder_id") == folderId }.sortedWith(byName),
+        )
+    }
+
+    fun addFolder(name: String, parentId: String?) = store.upsert("folders", mapOf("name" to name.trim(), "parent_id" to parentId))
+    fun renameDrive(table: String, id: String, name: String) = store.upsert(table, mapOf("name" to name.trim()), id)
+
+    // A folder goes with everything in it.
+    fun removeFolder(id: String) {
+        for (sub in folders().filter { it.str("parent_id") == id }) removeFolder(sub.id)
+        for (file in files().filter { it.str("folder_id") == id }) store.remove("files", file.id)
+        store.remove("folders", id)
+    }
+    fun removeFile(id: String) { store.remove("files", id); driveCopy(id)?.parentFile?.deleteRecursively() }
+
+    // Into a course's folder (or out of it with null), or into a folder.
+    fun setFileCourse(id: String, courseId: String?) = store.upsert("files", if (courseId != null) mapOf("course_id" to courseId, "folder_id" to null) else mapOf("course_id" to null), id)
+    fun setFileFolder(id: String, folderId: String?) = store.upsert("files", mapOf("folder_id" to folderId, "course_id" to null), id)
+
+    // The server's disk: total, free, what this account uses.
+    fun driveUsage(done: (JSONObject?) -> Unit) = scope.launch {
+        val r = runCatching { JSONObject(http("GET", "${BuildConfig.SERVER}/api/drive/usage", token ?: error("Sign in first"), null)) }.getOrNull()
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r) }
+    }
+
+    // The folder note attachments go to when the note has no course.
+    private fun attachmentsFolder(): String {
+        folders().firstOrNull { it.str("parent_id") == null && it.optString("name") == "Note attachments" }?.let { return it.id }
+        val f = addFolder("Note attachments", null)
+        syncOnce() // the server checks the folder exists before taking the upload
+        return f.id
+    }
+
+    // Stream a file from the phone to the Drive. noteId: attached to that note
+    // (its course's folder, or "Note attachments"). Returns the new row.
+    fun upload(uri: android.net.Uri, folderId: String?, courseId: String?, noteId: String? = null, done: (JSONObject?, String?) -> Unit) = scope.launch {
+        val r = runCatching {
+            val t = token ?: error("Sign in first")
+            val cr = ctx.contentResolver
+            var name = "file"
+            var size = -1L
+            cr.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) ?: name }
+                    c.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 && !c.isNull(it) }?.let { size = c.getLong(it) }
+                }
+            }
+            val mime = cr.getType(uri) ?: "application/octet-stream"
+            val folder = if (noteId != null && courseId == null) attachmentsFolder() else folderId
+            val q = StringBuilder("name=").append(java.net.URLEncoder.encode(name, "UTF-8")).append("&mime=").append(java.net.URLEncoder.encode(mime, "UTF-8"))
+            if (courseId != null) q.append("&course=").append(courseId) else if (folder != null) q.append("&folder=").append(folder)
+            if (noteId != null) q.append("&note=").append(noteId)
+            val c = URL("${BuildConfig.SERVER}/api/files/upload?$q").openConnection() as HttpURLConnection
+            c.requestMethod = "POST"
+            c.doOutput = true
+            c.connectTimeout = 8000
+            c.readTimeout = 600_000
+            c.setRequestProperty("Authorization", "Bearer $t")
+            c.setRequestProperty("Content-Type", mime)
+            if (size > 0) c.setFixedLengthStreamingMode(size) else c.setChunkedStreamingMode(64 * 1024)
+            (cr.openInputStream(uri) ?: error("Could not read that file")).use { i -> c.outputStream.use { i.copyTo(it, 64 * 1024) } }
+            val code = c.responseCode
+            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+            if (code !in 200..299) error(runCatching { JSONObject(text).optString("error") }.getOrNull()?.ifBlank { null } ?: "HTTP $code")
+            val row = JSONObject(text)
+            syncOnce()
+            row
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+
+    // This phone's copy of a Drive file, under its real name so other apps
+    // know what it is; null until downloaded.
+    fun driveCopy(id: String): File? {
+        val f = store.get("files", id) ?: return null
+        return File(ctx.cacheDir, "drive/$id/${f.optString("name").replace('/', '_').ifBlank { "file" }}")
+    }
+
+    // Fetch a file's bytes once (kept until the cache is cleared or it changes size).
+    fun download(id: String, done: (File?, String?) -> Unit) = scope.launch {
+        val r = runCatching {
+            val row = store.get("files", id) ?: error("That file is gone")
+            val f = driveCopy(id)!!
+            if (!(f.exists() && f.length() == row.optLong("size"))) {
+                val c = URL("${BuildConfig.SERVER}/api/files/$id/raw").openConnection() as HttpURLConnection
+                c.setRequestProperty("Authorization", "Bearer ${token ?: error("Sign in first")}")
+                c.connectTimeout = 8000
+                c.readTimeout = 120_000
+                if (c.responseCode != 200) error("HTTP ${c.responseCode}")
+                f.parentFile?.mkdirs()
+                val tmp = File(f.parentFile, f.name + ".part")
+                c.inputStream.use { i -> tmp.outputStream().use { i.copyTo(it, 64 * 1024) } }
+                f.delete(); tmp.renameTo(f)
+            }
+            f
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
     }
 
     // --- account (Omarchy Music) ---

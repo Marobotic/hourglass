@@ -138,6 +138,33 @@ struct Mark: Codable, Identifiable, Hashable {
 
 func markId(_ course: String?, _ event: String, _ date: String) -> String { "\(course ?? event):\(date)" }
 
+// Drive: folders nest by parent_id; a file's bytes live on the server
+// (GET /api/files/<id>/raw) and only the row syncs. course_id puts a file in
+// that course's folder; note_id attaches it to a note.
+struct Folder: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString.lowercased()
+    var name: String = ""
+    var parent_id: String?
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
+struct DriveFile: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString.lowercased()
+    var name: String = ""
+    var folder_id: String?
+    var size: Int64 = 0
+    var mime: String = "application/octet-stream"
+    var note_id: String?
+    var course_id: String?
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
 struct HTimer: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString.lowercased()
     var label: String = ""

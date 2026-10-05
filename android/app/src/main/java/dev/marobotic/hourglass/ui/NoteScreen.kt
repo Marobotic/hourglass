@@ -45,6 +45,54 @@ import androidx.compose.ui.unit.sp
 import dev.marobotic.hourglass.core.Dates
 import dev.marobotic.hourglass.core.str
 import kotlinx.coroutines.delay
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FormatBold
+import androidx.compose.material.icons.outlined.FormatItalic
+import androidx.compose.material.icons.outlined.FormatListBulleted
+import androidx.compose.material.icons.outlined.FormatListNumbered
+import androidx.compose.material.icons.outlined.FormatStrikethrough
+import androidx.compose.material.icons.outlined.FormatUnderlined
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Title
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+
+// The toolbar writes the same Markdown as the desktop's: **bold**, *italic*,
+// <u>underline</u>, ~~strike~~, and "## ", "- ", "1. " in front of lines.
+// Again on the same selection takes it off.
+fun wrapSel(v: TextFieldValue, pre: String, post: String): TextFieldValue {
+    val a = v.selection.min; val b = v.selection.max
+    val sel = v.text.substring(a, b)
+    return if (sel.length >= pre.length + post.length && sel.startsWith(pre) && sel.endsWith(post)) {
+        val inner = sel.substring(pre.length, sel.length - post.length)
+        TextFieldValue(v.text.substring(0, a) + inner + v.text.substring(b), TextRange(a, a + inner.length))
+    } else {
+        val out = v.text.substring(0, a) + pre + sel + post + v.text.substring(b)
+        TextFieldValue(out, if (sel.isEmpty()) TextRange(a + pre.length) else TextRange(a, a + pre.length + sel.length + post.length))
+    }
+}
+
+fun prefixLines(v: TextFieldValue, kind: String): TextFieldValue {
+    val t = v.text
+    val a = t.lastIndexOf('\n', (v.selection.min - 1).coerceAtLeast(-1)).let { if (v.selection.min == 0) 0 else it + 1 }
+    var b = t.indexOf('\n', maxOf(v.selection.max - if (v.selection.max > v.selection.min) 1 else 0, a))
+    if (b < 0) b = t.length
+    val rows = t.substring(a, b).split("\n")
+    val re = when (kind) { "ul" -> Regex("^[-*] "); "ol" -> Regex("^\\d+\\. "); else -> Regex("^#{1,6} ") }
+    val on = rows.all { re.containsMatchIn(it) }
+    val out = rows.mapIndexed { i, r ->
+        if (on) r.replaceFirst(re, "")
+        else (when (kind) { "ul" -> "- "; "ol" -> "${i + 1}. "; else -> "## " }) + r.replaceFirst(Regex("^([-*] |\\d+\\. |#{1,6} )"), "")
+    }.joinToString("\n")
+    return TextFieldValue(t.substring(0, a) + out + t.substring(b), TextRange(a + out.length))
+}
 
 // Markdown note editor. Autosaves 700 ms after the last keystroke and on exit.
 @Composable
@@ -55,6 +103,33 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
     var title by remember(id) { mutableStateOf(initial.optString("title")) }
     var body by remember(id) { mutableStateOf(initial.optString("body")) }
     var dirty by remember(id) { mutableStateOf(false) }
+    var field by remember(id) { mutableStateOf(TextFieldValue(initial.optString("body"))) }
+    var preview by remember(id) { mutableStateOf(false) }
+    var uploading by remember { mutableStateOf<String?>(null) }
+    val opener = rememberFileOpener(repo)
+    fun edit(v: TextFieldValue) { field = v; if (v.text != body) { body = v.text; dirty = true } }
+    // Pictures and files: uploaded to the Drive (the note's course folder, or
+    // "Note attachments"), then a line in the note where the cursor is.
+    fun attach(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        var left = uris.size
+        uploading = if (left > 1) "Uploading $left files…" else "Uploading…"
+        for (u in uris) repo.upload(u, null, live.str("course_id"), id) { f, err ->
+            left--
+            if (f != null) {
+                val name = f.optString("name")
+                val line = (if (f.optString("mime").startsWith("image/")) "![$name]" else "[$name]") + "(hgfile:${f.optString("id")})"
+                val t = field.text
+                val pos = if (preview) t.length else field.selection.max
+                val before = if (pos > 0 && t[pos - 1] != '\n') "\n" else ""
+                val ins = before + line + "\n"
+                edit(TextFieldValue(t.substring(0, pos) + ins + t.substring(pos), TextRange(pos + ins.length)))
+            }
+            if (err != null) uploading = "Upload failed: $err" else if (left == 0) uploading = null
+        }
+    }
+    val pickPictures = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { attach(it) }
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { attach(it) }
     val course = remember(version) { repo.course(initial.str("course_id")) }
     val versions = remember(version) { repo.versions(id) }
     var menu by remember { mutableStateOf(false) }
@@ -72,7 +147,10 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton({ save(); nav.pop() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = HColors.fg) }
             Grow()
-            T(if (dirty) "Edited" else "Saved", 11, HColors.faint)
+            T(uploading ?: if (dirty) "Edited" else "Saved", 11, if (uploading != null) HColors.gold else HColors.faint)
+            IconButton({ save(); preview = !preview }) {
+                Icon(if (preview) Icons.Outlined.Edit else Icons.Outlined.Visibility, if (preview) "Edit" else "Preview", tint = if (preview) HColors.accent else HColors.muted)
+            }
             IconButton({ repo.updateNote(id, mapOf("pinned" to if (live.optInt("pinned") == 1) 0 else 1)) }) {
                 Icon(Icons.Outlined.PushPin, "Pin", tint = if (live.optInt("pinned") == 1) HColors.gold else HColors.muted)
             }
@@ -91,11 +169,12 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
                 }
             }
         }
+        FileOpenerHost(opener)
         if (showVersions) VersionsDialog(versions, { showVersions = false }) { v ->
             showVersions = false
             nav.sheets.confirm = Triple("Restore this version?", "The note goes back to the text from ${stamp(v.optLong("saved_at"))}. What it says now is kept as a version too.") {
                 repo.restoreVersion(v)
-                title = v.optString("title"); body = v.optString("body"); dirty = false
+                title = v.optString("title"); body = v.optString("body"); field = TextFieldValue(body); dirty = false
             }
         }
         Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
@@ -119,12 +198,31 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
                 decorationBox = { inner -> if (title.isEmpty()) T("Title", 26, HColors.faint, bold = true); inner() },
             )
             Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+            // Formatting and attachments, like the desktop's toolbar.
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                val tools = listOf(
+                    Icons.Outlined.FormatBold to { edit(wrapSel(field, "**", "**")) },
+                    Icons.Outlined.FormatItalic to { edit(wrapSel(field, "*", "*")) },
+                    Icons.Outlined.FormatUnderlined to { edit(wrapSel(field, "<u>", "</u>")) },
+                    Icons.Outlined.FormatStrikethrough to { edit(wrapSel(field, "~~", "~~")) },
+                    Icons.Outlined.Title to { edit(prefixLines(field, "h")) },
+                    Icons.Outlined.FormatListBulleted to { edit(prefixLines(field, "ul")) },
+                    Icons.Outlined.FormatListNumbered to { edit(prefixLines(field, "ol")) },
+                )
+                for ((icon, act) in tools) IconButton({ if (preview) preview = false; act() }, enabled = !preview) { Icon(icon, null, tint = if (preview) HColors.faint else HColors.muted) }
+                Box(Modifier.width(1.dp).height(24.dp).background(HColors.border))
+                IconButton({ pickPictures.launch("image/*") }) { Icon(Icons.Outlined.Image, "Add pictures", tint = HColors.muted) }
+                IconButton({ pickFiles.launch(arrayOf("*/*")) }) { Icon(Icons.Outlined.AttachFile, "Attach files", tint = HColors.muted) }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
             Spacer(Modifier.height(12.dp))
-            BasicTextField(
-                body, { body = it; dirty = true }, Modifier.fillMaxSize(),
+            if (preview) {
+                NoteView(body, opener, Modifier.fillMaxSize().verticalScroll(rememberScrollState()))
+            } else BasicTextField(
+                field, { edit(it) }, Modifier.fillMaxSize(),
                 textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp),
                 cursorBrush = SolidColor(HColors.accent),
-                decorationBox = { inner -> if (body.isEmpty()) T("Write in Markdown. # headings, - lists, **bold**.", 15, HColors.faint); inner() },
+                decorationBox = { inner -> if (body.isEmpty()) T("Write here. The toolbar formats it; pictures and files attach.", 15, HColors.faint); inner() },
             )
         }
     }

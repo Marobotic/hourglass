@@ -55,6 +55,8 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
@@ -172,12 +174,14 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                         2 -> NotesScreen(nav, version)
                         3 -> TimeScreen(nav, version, clock)
                         4 -> TimersScreen(nav, version, clock)
-                        else -> ClockScreen(nav, version, clock)
+                        5 -> ClockScreen(nav, version, clock)
+                        6 -> DriveScreen(nav, version)
+                        else -> AttendanceScreen(nav, version, clock)
                     }
                 }
                 // Square tab bar (Material's has a pill indicator).
                 Row(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
-                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Alarms" to Icons.Outlined.Alarm, "Timers" to Icons.Outlined.HourglassEmpty, "Clock" to Icons.Outlined.Public)
+                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Alarms" to Icons.Outlined.Alarm, "Timers" to Icons.Outlined.HourglassEmpty, "Clock" to Icons.Outlined.Public, "Drive" to Icons.Outlined.Folder, "Attend" to Icons.Outlined.FactCheck)
                     for ((i, it) in items.withIndex()) {
                         val on = nav.tab == i
                         Column(

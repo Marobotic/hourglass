@@ -32,7 +32,7 @@ struct EventDraft: Identifiable { let id = UUID(); var event: Event?; var date: 
 struct CourseDraft: Identifiable { let id = UUID(); var course: Course? }
 
 struct RootView: View {
-    static let tabs = [("Now", "clock"), ("Schedule", "calendar"), ("Notes", "note.text"), ("Alarms", "alarm"), ("Timers", "hourglass"), ("Clock", "globe")]
+    static let tabs = [("Now", "clock"), ("Schedule", "calendar"), ("Notes", "note.text"), ("Alarms", "alarm"), ("Timers", "hourglass"), ("Clock", "globe"), ("Drive", "folder"), ("Attend", "checklist")]
     @EnvironmentObject var store: Store
     @StateObject private var sheets = Sheets()
     @State private var path: [Route] = []
@@ -59,7 +59,9 @@ struct RootView: View {
                     case 2: NotesView(path: $path)
                     case 3: TimeView()
                     case 4: TimersView()
-                    default: ClockView()
+                    case 5: ClockView()
+                    case 6: DriveView()
+                    default: AttendanceView()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -1,4 +1,7 @@
 import SwiftUI
+import PhotosUI
+import QuickLook
+import UniformTypeIdentifiers
 
 // MARK: - Now
 
@@ -550,6 +553,59 @@ struct NoteView: View {
     @State private var dirty = false
     @State private var confirmDelete = false
     @State private var restoreChoice: NoteVersion?
+    @State private var selection: TextSelection?
+    @State private var preview = false
+    @State private var uploading: String?
+    @State private var importing = false
+    @State private var photoItems: [PhotosPickerItem] = []
+    @StateObject private var opener = FileOpener()
+
+    // The selection as UTF-16 offsets into text (the end when there is none).
+    private func selected() -> (Int, Int) {
+        let n = (text as NSString).length
+        guard let s = selection, case .selection(let r) = s.indices else { return (n, n) }
+        let a = min(n, max(0, r.lowerBound.utf16Offset(in: text))), b = min(n, max(a, r.upperBound.utf16Offset(in: text)))
+        return (a, b)
+    }
+    private func apply(_ r: (String, Int, Int)) {
+        text = r.0
+        let lo = String.Index(utf16Offset: r.1, in: text), hi = String.Index(utf16Offset: r.2, in: text)
+        selection = TextSelection(range: lo..<hi)
+        dirty = true
+    }
+    // Pictures and files: uploaded to the Drive (the note's course folder, or
+    // "Note attachments"), then a line in the note where the cursor is.
+    private func attach(_ files: [(URL, String?)]) {
+        guard !files.isEmpty else { return }
+        let course = store.notes.first { $0.id == id }?.course_id
+        uploading = files.count > 1 ? "Uploading \(files.count) files…" : "Uploading…"
+        Task {
+            var failed: String?
+            for (url, name) in files {
+                do {
+                    let f = try await store.upload(url, name: name, folder: nil, course: course, note: id)
+                    let line = (f.mime.hasPrefix("image/") ? "![\(f.name)]" : "[\(f.name)]") + "(hgfile:\(f.id))"
+                    let pos = preview ? (text as NSString).length : selected().1
+                    let before = pos > 0 && (text as NSString).substring(with: NSRange(location: pos - 1, length: 1)) != "\n" ? "\n" : ""
+                    let ins = before + line + "\n"
+                    let end = pos + (ins as NSString).length
+                    apply(((text as NSString).replacingCharacters(in: NSRange(location: pos, length: 0), with: ins), end, end))
+                } catch { failed = error.localizedDescription }
+            }
+            uploading = failed.map { "Upload failed: \($0)" }
+        }
+    }
+
+    private func format(_ k: String) {
+        let (a, b) = selected()
+        switch k {
+        case "b": apply(NoteFormat.wrap(text, a, b, "**", "**"))
+        case "i": apply(NoteFormat.wrap(text, a, b, "*", "*"))
+        case "u": apply(NoteFormat.wrap(text, a, b, "<u>", "</u>"))
+        case "s": apply(NoteFormat.wrap(text, a, b, "~~", "~~"))
+        default: apply(NoteFormat.lines(text, a, b, k))
+        }
+    }
 
     private func stamp(_ ms: Int64) -> String {
         let d = Dates.dayOf(ms)
@@ -567,9 +623,28 @@ struct NoteView: View {
                 .font(H.mono(26, bold: true)).foregroundStyle(H.fg).tint(H.accent)
                 .onChange(of: title) { _, _ in if loaded { dirty = true } }
             Rectangle().fill(H.border).frame(height: 1)
-            TextEditor(text: $text)
-                .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent).scrollContentBackground(.hidden)
-                .onChange(of: text) { _, _ in if loaded { dirty = true } }
+            // Formatting and attachments, like the desktop's toolbar.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach([("bold", "b"), ("italic", "i"), ("underline", "u"), ("strikethrough", "s"), ("textformat.size", "h"), ("list.bullet", "ul"), ("list.number", "ol")], id: \.1) { icon, k in
+                        Button { format(k) } label: { Image(systemName: icon).foregroundStyle(preview ? H.faint : H.muted).frame(width: 38, height: 34) }
+                            .disabled(preview)
+                    }
+                    Rectangle().fill(H.border).frame(width: 1, height: 22)
+                    PhotosPicker(selection: $photoItems, matching: .images) {
+                        Image(systemName: "photo").foregroundStyle(H.muted).frame(width: 38, height: 34)
+                    }
+                    Button { importing = true } label: { Image(systemName: "paperclip").foregroundStyle(H.muted).frame(width: 38, height: 34) }
+                }
+            }
+            Rectangle().fill(H.border).frame(height: 1)
+            if preview {
+                ScrollView { NoteBodyView(text: text) { opener.open($0, store) }.padding(.vertical, 8) }
+            } else {
+                TextEditor(text: $text, selection: $selection)
+                    .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent).scrollContentBackground(.hidden)
+                    .onChange(of: text) { _, _ in if loaded { dirty = true } }
+            }
         }
         .padding(.horizontal, 20)
         .background(H.bg)
@@ -581,9 +656,38 @@ struct NoteView: View {
             save()
         }
         .onDisappear { save() }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
+            guard case .success(let urls) = r else { return }
+            // Copied out first: a picked file is only readable while in scope.
+            let copies: [(URL, String?)] = urls.compactMap { u in
+                let scoped = u.startAccessingSecurityScopedResource()
+                defer { if scoped { u.stopAccessingSecurityScopedResource() } }
+                let dest = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-" + u.lastPathComponent)
+                return (try? FileManager.default.copyItem(at: u, to: dest)) != nil ? (dest, u.lastPathComponent) : nil
+            }
+            attach(copies)
+        }
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            photoItems = []
+            Task {
+                var out: [(URL, String?)] = []
+                for (i, item) in items.enumerated() {
+                    guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+                    let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                    let dest = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)
+                    if (try? data.write(to: dest)) != nil { out.append((dest, "Photo \(Dates.today()) \(i + 1).\(ext)")) }
+                }
+                attach(out)
+            }
+        }
+        .quickLookPreview($opener.url)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                T(dirty ? "Edited" : "Saved", 11, H.faint)
+                T(uploading ?? (dirty ? "Edited" : "Saved"), 11, uploading != nil ? H.gold : H.faint)
+                Button { save(); preview.toggle() } label: {
+                    Image(systemName: preview ? "pencil" : "eye").foregroundStyle(preview ? H.accent : H.muted)
+                }
                 Button { if var n = note { n.pinned = n.pinned == 1 ? 0 : 1; store.save(n) } } label: {
                     Image(systemName: note?.pinned == 1 ? "pin.fill" : "pin").foregroundStyle(note?.pinned == 1 ? H.gold : H.muted)
                 }

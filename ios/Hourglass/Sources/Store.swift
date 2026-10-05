@@ -12,6 +12,8 @@ struct DB: Codable {
     var prefs: [Pref] = []
     var note_versions: [NoteVersion] = []
     var marks: [Mark] = []
+    var folders: [Folder] = []
+    var files: [DriveFile] = []
 
     init() {}
     // Tolerant: files and servers from before a table existed decode fine.
@@ -27,6 +29,8 @@ struct DB: Codable {
         prefs = try c.decodeIfPresent([Pref].self, forKey: .prefs) ?? []
         note_versions = try c.decodeIfPresent([NoteVersion].self, forKey: .note_versions) ?? []
         marks = try c.decodeIfPresent([Mark].self, forKey: .marks) ?? []
+        folders = try c.decodeIfPresent([Folder].self, forKey: .folders) ?? []
+        files = try c.decodeIfPresent([DriveFile].self, forKey: .files) ?? []
     }
 }
 
@@ -67,9 +71,9 @@ final class Store: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "token")
         UserDefaults.standard.removeObject(forKey: "server")
         // New table since the last run: pull everything once.
-        if UserDefaults.standard.integer(forKey: "schema") != 5 {
+        if UserDefaults.standard.integer(forKey: "schema") != 6 {
             UserDefaults.standard.set(0, forKey: "cursor")
-            UserDefaults.standard.set(5, forKey: "schema")
+            UserDefaults.standard.set(6, forKey: "schema")
         }
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
         applyZone()
@@ -88,6 +92,180 @@ final class Store: ObservableObject {
     func occurrences(_ from: String, _ to: String) -> [Occ] {
         Recurrence.expand(db.events, Dictionary(uniqueKeysWithValues: db.courses.map { ($0.id, $0) }), from, to, marks: markMap)
     }
+    // MARK: attendance
+
+    struct Session: Identifiable, Hashable {
+        var id: String { date }
+        let date: String
+        let mark: String?
+        let future: Bool
+        let occ: Occ
+    }
+
+    // Every course's sessions, from its first to the end of term (the last
+    // "until", at most six months out): one per day with its mark, upcoming
+    // flagged. Same rule as the desktop's Attendance page.
+    func attendanceSessions(_ now: Int64 = nowMs()) -> [(Course, [Session])] {
+        let mine = events.filter { $0.course_id != nil }
+        guard !mine.isEmpty else { return courses.map { ($0, []) } }
+        let today = Dates.today()
+        let from = mine.map(\.start_date).filter { !$0.isEmpty }.min() ?? today
+        let last = mine.map { $0.repeat?.until ?? $0.start_date }.max() ?? today
+        var to = min(last, Dates.add(today, 183))
+        if to < today { to = today }
+        var by: [String: [String: Session]] = [:]
+        for o in occurrences(from, to) {
+            guard let cid = o.course_id else { continue }
+            let day = o.session.isEmpty ? o.date : o.session
+            if by[cid]?[day] == nil { by[cid, default: [:]][day] = Session(date: day, mark: o.mark, future: o.start_ms > now, occ: o) }
+        }
+        return courses.map { c in (c, (by[c.id] ?? [:]).values.sorted { $0.date < $1.date }) }
+    }
+
+    // unmarked -> attended -> absent -> off -> unmarked
+    func cycleMark(_ s: Session) {
+        let next: String? = s.mark == nil ? "attended" : s.mark == "attended" ? "absent" : s.mark == "absent" ? "off" : nil
+        setMark(s.occ, next)
+    }
+
+    // MARK: drive
+
+    var folders: [Folder] { db.folders.filter { $0.deleted == 0 } }
+    var files: [DriveFile] { db.files.filter { $0.deleted == 0 } }
+    func file(_ id: String) -> DriveFile? { files.first { $0.id == id } }
+
+    struct DriveView {
+        var folder: Folder?
+        var course: Course?
+        var path: [Folder] = []
+        var courses: [(Course, Int)] = []
+        var folders: [(Folder, Int)] = []
+        var files: [DriveFile] = []
+    }
+
+    // One folder's contents (nil = the top) or one course's folder. The top
+    // lists the courses, then the folders and files that are in none.
+    func drive(_ folderId: String?, course courseId: String?) -> DriveView {
+        let known = Set(courses.map(\.id))
+        let fs = files.map { f -> DriveFile in var f = f; if let c = f.course_id, !known.contains(c) { f.course_id = nil }; return f }
+        let byName: (String, String) -> Bool = { $0.lowercased() < $1.lowercased() }
+        if let courseId {
+            return DriveView(course: course(courseId), files: fs.filter { $0.course_id == courseId }.sorted { byName($0.name, $1.name) })
+        }
+        var path: [Folder] = []
+        var f = folderId.flatMap { id in folders.first { $0.id == id } }
+        while let cur = f { path.insert(cur, at: 0); f = cur.parent_id.flatMap { p in folders.first { $0.id == p } } }
+        return DriveView(
+            folder: path.last, course: nil, path: path,
+            courses: folderId == nil ? courses.map { c in (c, fs.filter { $0.course_id == c.id }.count) } : [],
+            folders: folders.filter { $0.parent_id == folderId }.sorted { byName($0.name, $1.name) }
+                .map { d in (d, folders.filter { $0.parent_id == d.id }.count + fs.filter { $0.folder_id == d.id }.count) },
+            files: fs.filter { $0.course_id == nil && $0.folder_id == folderId }.sorted { byName($0.name, $1.name) })
+    }
+
+    @discardableResult
+    func save(_ f: Folder) -> Folder {
+        var f = f; f.updated_at = stamp(db.folders.first { $0.id == f.id }?.updated_at ?? 0); f.dirty = 1; if f.deleted != 1 { f.deleted = 0 }
+        if let i = db.folders.firstIndex(where: { $0.id == f.id }) { db.folders[i] = f } else { db.folders.append(f) }
+        changed(); return f
+    }
+    @discardableResult
+    func save(_ f: DriveFile) -> DriveFile {
+        var f = f; f.updated_at = stamp(db.files.first { $0.id == f.id }?.updated_at ?? 0); f.dirty = 1; if f.deleted != 1 { f.deleted = 0 }
+        if let i = db.files.firstIndex(where: { $0.id == f.id }) { db.files[i] = f } else { db.files.append(f) }
+        changed(); return f
+    }
+    @discardableResult
+    func addFolder(_ name: String, parent: String?) -> Folder { save(Folder(name: name.trimmingCharacters(in: .whitespaces), parent_id: parent)) }
+    // A folder goes with everything in it.
+    func removeFolder(_ id: String) {
+        for sub in folders where sub.parent_id == id { removeFolder(sub.id) }
+        for var f in files where f.folder_id == id { f.deleted = 1; save(f) }
+        if var d = folders.first(where: { $0.id == id }) { d.deleted = 1; save(d) }
+    }
+    func removeFile(_ id: String) {
+        if var f = file(id) { f.deleted = 1; save(f) }
+        try? FileManager.default.removeItem(at: driveDir.appendingPathComponent(id))
+    }
+    func setFileCourse(_ id: String, _ course: String?) {
+        guard var f = file(id) else { return }
+        f.course_id = course
+        if course != nil { f.folder_id = nil }
+        save(f)
+    }
+    func setFileFolder(_ id: String, _ folder: String?) {
+        guard var f = file(id) else { return }
+        f.folder_id = folder; f.course_id = nil
+        save(f)
+    }
+
+    private var driveDir: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("drive") }
+    // This phone's copy, under the file's real name so other apps know what it is.
+    func driveCopy(_ f: DriveFile) -> URL {
+        driveDir.appendingPathComponent(f.id).appendingPathComponent(f.name.replacingOccurrences(of: "/", with: "_").isEmpty ? "file" : f.name.replacingOccurrences(of: "/", with: "_"))
+    }
+
+    // Fetch a file's bytes once (kept until it changes size).
+    func download(_ f: DriveFile) async throws -> URL {
+        let dest = driveCopy(f)
+        if let size = (try? FileManager.default.attributesOfItem(atPath: dest.path))?[.size] as? Int64, size == f.size { return dest }
+        guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
+        var req = request(base.appendingPathComponent("api/files/\(f.id)/raw"))
+        req.timeoutInterval = 300
+        let (tmp, res) = try await URLSession.shared.download(for: req)
+        if let h = res as? HTTPURLResponse, !(200..<300).contains(h.statusCode) {
+            throw NSError(domain: "hourglass", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(h.statusCode)"])
+        }
+        try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.moveItem(at: tmp, to: dest)
+        return dest
+    }
+
+    // The server's disk: total, free, what this account uses.
+    func driveUsage() async -> [String: Int64]? {
+        guard let base = URL(string: server), !token.isEmpty else { return nil }
+        guard let (d, r) = try? await URLSession.shared.data(for: request(base.appendingPathComponent("api/drive/usage"))),
+              (r as? HTTPURLResponse)?.statusCode == 200,
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return o.compactMapValues { ($0 as? NSNumber)?.int64Value }
+    }
+
+    // The folder note attachments go to when the note has no course.
+    private func attachmentsFolder() async -> String {
+        if let f = folders.first(where: { $0.parent_id == nil && $0.name == "Note attachments" }) { return f.id }
+        let f = addFolder("Note attachments", parent: nil)
+        // The server checks the folder exists before taking the upload.
+        await syncSoon()
+        if db.folders.first(where: { $0.id == f.id })?.dirty == 1 { await sync() }
+        return f.id
+    }
+
+    // Send a file from the phone to the Drive. note: attached to that note
+    // (its course's folder, or "Note attachments"). Returns the new row.
+    func upload(_ url: URL, name: String? = nil, folder: String?, course: String?, note: String? = nil) async throws -> DriveFile {
+        guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
+        let fileName = name ?? url.lastPathComponent
+        let mime = mimeOf(fileName)
+        let folderId = (note != nil && course == nil) ? await attachmentsFolder() : folder
+        var comps = URLComponents(url: base.appendingPathComponent("api/files/upload"), resolvingAgainstBaseURL: false)!
+        var q = [URLQueryItem(name: "name", value: fileName), URLQueryItem(name: "mime", value: mime)]
+        if let course { q.append(URLQueryItem(name: "course", value: course)) } else if let folderId { q.append(URLQueryItem(name: "folder", value: folderId)) }
+        if let note { q.append(URLQueryItem(name: "note", value: note)) }
+        comps.queryItems = q
+        var req = request(comps.url!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 900
+        req.setValue(mime, forHTTPHeaderField: "Content-Type")
+        let (d, r) = try await URLSession.shared.upload(for: req, fromFile: url)
+        try check((d, r))
+        let row = try JSONDecoder().decode(DriveFile.self, from: d)
+        var clean = row; clean.dirty = 0
+        if let i = db.files.firstIndex(where: { $0.id == row.id }) { db.files[i] = clean } else { db.files.append(clean) }
+        await syncSoon()
+        return clean
+    }
+
     // Older text of a note, newest first.
     func versions(_ noteId: String) -> [NoteVersion] {
         db.note_versions.filter { $0.deleted == 0 && $0.note_id == noteId }.sorted { ($0.saved_at ?? 0) > ($1.saved_at ?? 0) }
@@ -420,6 +598,8 @@ final class Store: ObservableObject {
         for (id, r) in revs["ringtones"] ?? [:] { if let i = db.ringtones.firstIndex(where: { $0.id == id }) { db.ringtones[i].rev = r } }
         for (id, r) in revs["prefs"] ?? [:] { if let i = db.prefs.firstIndex(where: { $0.id == id }) { db.prefs[i].rev = r } }
         for (id, r) in revs["marks"] ?? [:] { if let i = db.marks.firstIndex(where: { $0.id == id }) { db.marks[i].rev = r } }
+        for (id, r) in revs["folders"] ?? [:] { if let i = db.folders.firstIndex(where: { $0.id == id }) { db.folders[i].rev = r } }
+        for (id, r) in revs["files"] ?? [:] { if let i = db.files.firstIndex(where: { $0.id == id }) { db.files[i].rev = r } }
     }
 
     private var syncing = false
@@ -448,8 +628,10 @@ final class Store: ObservableObject {
             dirty.ringtones = db.ringtones.filter { $0.dirty == 1 }
             dirty.prefs = db.prefs.filter { $0.dirty == 1 }
             dirty.marks = db.marks.filter { $0.dirty == 1 }
+            dirty.folders = db.folders.filter { $0.dirty == 1 }
+            dirty.files = db.files.filter { $0.dirty == 1 }
             let pushed = dirty
-            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.clocks.isEmpty && dirty.timers.isEmpty && dirty.ringtones.isEmpty && dirty.prefs.isEmpty && dirty.marks.isEmpty) {
+            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.clocks.isEmpty && dirty.timers.isEmpty && dirty.ringtones.isEmpty && dirty.prefs.isEmpty && dirty.marks.isEmpty && dirty.folders.isEmpty && dirty.files.isEmpty) {
                 var req = request(base.appendingPathComponent("api/sync"))
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -509,6 +691,8 @@ final class Store: ObservableObject {
         c(&db.ringtones, p.ringtones, { $0.updated_at }, { $0.dirty = 0 })
         c(&db.prefs, p.prefs, { $0.updated_at }, { $0.dirty = 0 })
         c(&db.marks, p.marks, { $0.updated_at }, { $0.dirty = 0 })
+        c(&db.folders, p.folders, { $0.updated_at }, { $0.dirty = 0 })
+        c(&db.files, p.files, { $0.updated_at }, { $0.dirty = 0 })
     }
 
     // Last write wins on updated_at.
@@ -529,6 +713,8 @@ final class Store: ObservableObject {
         m(&db.prefs, ch.prefs, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.note_versions, ch.note_versions, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.marks, ch.marks, { $0.updated_at }, { $0.dirty = 0 })
+        m(&db.folders, ch.folders, { $0.updated_at }, { $0.dirty = 0 })
+        m(&db.files, ch.files, { $0.updated_at }, { $0.dirty = 0 })
     }
 }
 
@@ -569,4 +755,23 @@ enum Notifications {
         }
         AlarmKitScheduler.reschedule(store)
     }
+}
+
+// The server's table, so a picture is stored as one.
+func mimeOf(_ name: String) -> String {
+    let ext = (name as NSString).pathExtension.lowercased()
+    let m: [String: String] = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "heic": "image/heic", "gif": "image/gif", "webp": "image/webp",
+        "svg": "image/svg+xml", "bmp": "image/bmp", "pdf": "application/pdf", "txt": "text/plain", "md": "text/markdown", "mp3": "audio/mpeg",
+        "m4a": "audio/mp4", "wav": "audio/wav", "mp4": "video/mp4", "mov": "video/quicktime", "zip": "application/zip", "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+    return m[ext] ?? "application/octet-stream"
+}
+
+func fmtBytes(_ n: Int64) -> String {
+    if n < 1024 { return "\(n) B" }
+    if n < 1_048_576 { return String(format: "%.0f KB", Double(n) / 1024) }
+    if n < 1_073_741_824 { return String(format: "%.1f MB", Double(n) / 1_048_576) }
+    return String(format: "%.1f GB", Double(n) / 1_073_741_824)
 }
