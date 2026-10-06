@@ -3,12 +3,14 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
 
-// Full-page Markdown editor. Autosaves 600 ms after the last keystroke.
+// A note, two ways: formatted to read (with boxes to tick on to-dos), or as
+// Markdown to edit. Save shows the formatted note; Edit goes back. While
+// editing it also autosaves 600 ms after the last keystroke.
 Rectangle {
     id: ed
     property var app
     property var note: null
-    property bool preview: false
+    property bool preview: false // true: the formatted note; false: editing
     property string status: ""
     property string loadedId: ""
     color: Theme.bg
@@ -21,9 +23,10 @@ Rectangle {
         loadedId = note.id;
         titleField.text = note.title || "";
         body.text = note.body || "";
-        preview = false;
+        // A note with something in it opens ready to read; a new one opens to write.
+        preview = !!note.body;
         status = "";
-        if (!note.body) body.area.forceActiveFocus(); else titleField.forceActiveFocus();
+        if (!note.body) body.area.forceActiveFocus();
     }
 
     function flush() {
@@ -42,6 +45,29 @@ Rectangle {
         Api.put("/api/notes/" + loadedId, patch, n => { if (n) { ed.app.editingNote = n; ed.status = "Saved"; } });
     }
     function edited() { if (loadedId) { status = "Edited"; saveTimer.restart(); } }
+
+    // Save: numbered lists counted again, saved now, shown formatted.
+    function saveAndView() {
+        const tidy = Util.renumber(body.text);
+        if (tidy !== body.text) body.text = tidy;
+        saveTimer.stop();
+        save();
+        preview = true;
+    }
+    function startEditing() {
+        preview = false;
+        body.area.forceActiveFocus();
+    }
+    // Ticking a to-do in the formatted note rewrites its line and saves at once.
+    function toggleTask(line) {
+        const rows = body.text.split("\n");
+        const m = Util.taskRe.exec(rows[line] || "");
+        if (!m) return;
+        rows[line] = rows[line].replace(/\[([ xX])\]/, m[2] === " " ? "[x]" : "[ ]");
+        body.text = rows.join("\n");
+        saveTimer.stop();
+        save();
+    }
 
     // --- formatting: the toolbar writes Markdown around the selection ---
     readonly property var ta: body.area
@@ -62,7 +88,8 @@ Rectangle {
         ta.forceActiveFocus();
         edited();
     }
-    // Prefix every selected line: "- ", numbers, or "## ". Again removes it.
+    // Prefix every selected line: "- ", "- [ ] ", numbers, or "## ". Again
+    // removes it. Blank lines are left alone, and numbers count on from 1.
     function lines(kind) {
         if (ed.preview) return;
         const t = ta.text;
@@ -70,13 +97,22 @@ Rectangle {
         let b = t.indexOf("\n", Math.max(ta.selectionEnd - (ta.selectionEnd > ta.selectionStart ? 1 : 0), a));
         if (b < 0) b = t.length;
         const rows = t.slice(a, b).split("\n");
-        const re = kind === "ul" ? /^[-*] / : kind === "ol" ? /^\d+\. / : /^#{1,6} /;
-        const on = rows.every(r => re.test(r));
-        const out = rows.map((r, i) => on ? r.replace(re, "")
-            : (kind === "ul" ? "- " : kind === "ol" ? (i + 1) + ". " : "## ") + r.replace(/^([-*] |\d+\. |#{1,6} )/, ""));
+        const res = { ul: /^[-*] (?!\[[ xX]\] )/, todo: /^[-*] \[[ xX]\] /, ol: /^\d+\. /, h: /^#{1,6} / };
+        const re = res[kind];
+        const any = /^([-*] \[[ xX]\] |[-*] |\d+\. |#{1,6} )/;
+        const filled = rows.filter(r => r.trim() !== "");
+        const on = filled.length > 0 && filled.every(r => re.test(r));
+        let n = 0;
+        const out = rows.map(r => {
+            if (r.trim() === "") return r;
+            if (on) return r.replace(re, "");
+            const prefix = kind === "ul" ? "- " : kind === "todo" ? "- [ ] " : kind === "ol" ? (++n) + ". " : "## ";
+            return prefix + r.replace(any, "");
+        });
         ta.remove(a, b);
         ta.insert(a, out.join("\n"));
         ta.cursorPosition = a + out.join("\n").length;
+        if (kind === "ol") body.renumberKeepingCursor();
         ta.forceActiveFocus();
         edited();
     }
@@ -138,6 +174,8 @@ Rectangle {
     Shortcut { sequences: ["Ctrl+B"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("**", "**") }
     Shortcut { sequences: ["Ctrl+I"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("*", "*") }
     Shortcut { sequences: ["Ctrl+U"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("<u>", "</u>") }
+    Shortcut { sequences: ["Ctrl+S"]; enabled: ed.visible && !ed.preview; onActivated: ed.saveAndView() }
+    Shortcut { sequences: ["Ctrl+E"]; enabled: ed.visible && ed.preview; onActivated: ed.startEditing() }
 
     // Older text of this note, newest first; click one to put it back.
     Modal {
@@ -201,7 +239,18 @@ Rectangle {
                 tip: "Pin to every session"
                 onClicked: Api.put("/api/notes/" + ed.loadedId, { pinned: !ed.note.pinned }, n => { if (n) ed.app.editingNote = n; })
             }
-            Btn { icon: ed.preview ? "edit" : "eye"; text: ed.preview ? "Edit" : "Preview"; compact: true; onClicked: { ed.flush(); ed.preview = !ed.preview; } }
+            Btn {
+                visible: ed.preview
+                icon: "edit"; text: "Edit"; compact: true
+                tip: "Edit this note (Ctrl+E, or double-click it)"
+                onClicked: ed.startEditing()
+            }
+            Btn {
+                visible: !ed.preview
+                icon: "check"; text: "Save"; compact: true; kind: "primary"
+                tip: "Save and show it formatted (Ctrl+S)"
+                onClicked: ed.saveAndView()
+            }
             Btn {
                 icon: "time"; compact: true; kind: "subtle"
                 text: "Versions"
@@ -259,11 +308,12 @@ Rectangle {
             onTextEdited: ed.edited()
             Keys.onReturnPressed: body.area.forceActiveFocus()
         }
-        // formatting toolbar
+        // formatting toolbar, while editing
         RowLayout {
             Layout.fillWidth: true
+            visible: !ed.preview
             spacing: 4
-            component Tool: Btn { compact: true; kind: "subtle"; enabled: !ed.preview }
+            component Tool: Btn { compact: true; kind: "subtle" }
             Tool { icon: "bold"; tip: "Bold (Ctrl+B)"; onClicked: ed.wrap("**", "**") }
             Tool { icon: "italic"; tip: "Italic (Ctrl+I)"; onClicked: ed.wrap("*", "*") }
             Tool { icon: "underline"; tip: "Underline (Ctrl+U)"; onClicked: ed.wrap("<u>", "</u>") }
@@ -272,6 +322,7 @@ Rectangle {
             Tool { icon: "heading"; tip: "Heading"; onClicked: ed.lines("h") }
             Tool { icon: "list-ul"; tip: "Bullet list"; onClicked: ed.lines("ul") }
             Tool { icon: "list-ol"; tip: "Numbered list"; onClicked: ed.lines("ol") }
+            Tool { icon: "check-square"; tip: "To-do list"; onClicked: ed.lines("todo") }
             Rectangle { width: 1; height: 22; color: Theme.border }
             Btn { compact: true; kind: "subtle"; icon: "image"; text: "Picture"; tip: "Add pictures (or drop them here)"; onClicked: { attachDialog.images = true; attachDialog.open(); } }
             Btn { compact: true; kind: "subtle"; icon: "clip"; text: "File"; tip: "Attach files (or drop them here)"; onClicked: { attachDialog.images = false; attachDialog.open(); } }
@@ -296,9 +347,9 @@ Rectangle {
                 area.onTextChanged: if (area.activeFocus) ed.edited()
             }
 
-            // How it reads: next to the editor on a wide window, alone in Preview.
+            // How it reads, once saved.
             ScrollView {
-                visible: ed.preview || ed.width > 1100
+                visible: ed.preview
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredWidth: 1
@@ -307,7 +358,9 @@ Rectangle {
                 NoteView {
                     width: parent.width
                     app: ed.app
-                    text: body.text || "*Nothing written yet.*"
+                    text: body.text || "*Nothing written yet. Press Edit to write.*"
+                    onToggleTask: line => ed.toggleTask(line)
+                    onEditRequested: ed.startEditing()
                 }
             }
         }

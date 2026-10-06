@@ -7,7 +7,7 @@ import { TABLE_NAMES, toRRule } from "../core/index.js";
 import { applyPush } from "../core/node/store.js";
 import { INSTRUCTIONS, TOOLS, runTool } from "./tools.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 const MAX_BODY = 2 * 1024 * 1024;
 
 class HttpError extends Error {

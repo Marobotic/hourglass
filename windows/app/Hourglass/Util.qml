@@ -128,4 +128,30 @@ QtObject {
     function preview(body) {
         return (body || "").replace(/[#>*_`\-\[\]]/g, "").replace(/\s+/g, " ").trim().slice(0, 140);
     }
+
+    // Numbered lists count 1, 2, 3 again after any edit: each run of "N. " lines
+    // at one indent is renumbered from its first number. Deeper lines (sub-items,
+    // bullets under an item) and blank lines between items keep the run going;
+    // any other line ends it. Returns the new text.
+    function renumber(text) {
+        const lines = (text || "").split("\n");
+        const runs = {}; // indent -> next number, for runs still open
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.trim() === "") continue;
+            const indent = /^\s*/.exec(line)[0].length;
+            // A line closes every run at a deeper indent, and at its own indent
+            // unless it is a numbered item there.
+            for (const k of Object.keys(runs)) if (+k > indent) delete runs[k];
+            const m = /^(\s*)(\d+)\. /.exec(line);
+            if (!m) { delete runs[indent]; continue; }
+            if (runs[indent] === undefined) runs[indent] = +m[2];
+            const n = runs[indent]++;
+            lines[i] = m[1] + n + ". " + line.slice(m[0].length);
+        }
+        return lines.join("\n");
+    }
+
+    // A to-do line: "- [ ] buy milk" / "- [x] buy milk".
+    readonly property var taskRe: /^(\s*)[-*] \[([ xX])\] ?(.*)$/
 }

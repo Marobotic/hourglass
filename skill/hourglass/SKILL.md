@@ -23,7 +23,8 @@ right notes at the right moment. During a lecture, its notes are what matter.
   `add_folder`, `remove_folder`). A note shows a Drive picture with
   `![name](hgfile:<file id>)` and a file with `[name](hgfile:<file id>)` on a
   line of its own. Notes are Markdown: `**bold**`, `*italic*`,
-  `<u>underline</u>`, `- bullets`, `1. numbered`.
+  `<u>underline</u>`, `- bullets`, `1. numbered`, and to-dos as
+  `- [ ] item` (ticked: `- [x] item`), which the apps show as boxes to tick.
 - **Mark**: one day of a course marked `attended`, `absent` or `off` (no class
   that day; it is left out of Now).
 - **Alarm**: at a time (daily, on weekdays, or on one date), or N minutes

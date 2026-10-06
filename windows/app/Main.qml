@@ -281,6 +281,30 @@ ApplicationWindow {
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.go(0) }
                     }
 
+                    // Who is signed in, and which Hourglass this is
+                    ColumnLayout {
+                        visible: !app.narrow
+                        Layout.leftMargin: 8
+                        Layout.rightMargin: 4
+                        Layout.bottomMargin: 2
+                        spacing: 2
+                        Text {
+                            Layout.fillWidth: true
+                            visible: !!(app.appState.account && app.appState.account.email)
+                            text: app.appState.account ? app.appState.account.email || "" : ""
+                            color: Theme.fg
+                            elide: Text.ElideMiddle
+                            font.family: Theme.mono
+                            font.pixelSize: 13
+                        }
+                        Text {
+                            text: "Hourglass " + (app.appState.version || "")
+                            color: Theme.faint
+                            font.family: Theme.mono
+                            font.pixelSize: 12
+                        }
+                    }
+
                     // Sync + clock
                     RowLayout {
                         Layout.leftMargin: app.narrow ? 12 : 8

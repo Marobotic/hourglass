@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, TABLE_NAMES, dueBetween, isSpent, localParts, parseDate } from "../../core/index.js";
-import { createHandler } from "../../server/app.js";
+import { createHandler, VERSION } from "../../server/app.js";
 
 const HOME = homedir();
 const WIN = process.platform === "win32";
@@ -575,6 +575,7 @@ async function extra(req, res, url, path) {
       settings: service.settings(),
       account: account(),
       tz_offset_min: tzOffsetMin(),
+      version: VERSION,
     }), true;
   }
   if (path === "/api/ring/stop" && req.method === "POST") {
