@@ -17,7 +17,7 @@ Text {
         , "bold": "", "italic": "", "underline": "", "strike": ""
         , "list-ul": "", "list-ol": "", "heading": "", "image": ""
         , "clip": "", "folder": "", "file": "", "upload": ""
-        , "download": "", "check-square": "", "drive": "", "user-check": ""
+        , "download": "", "check-square": "", "chat": "", "send": "", "drive": "", "user-check": ""
     })
     text: glyphs[name] || ""
     font.family: Theme.mono

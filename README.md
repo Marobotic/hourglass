@@ -66,6 +66,26 @@ HOURGLASS_DATA=/var/lib/hourglass HOURGLASS_PORT=8930 node server.js
 - `POST /api/actions/<tool>`: the same tools as REST; `GET /openapi.json` for Custom GPT actions
 - `GET/POST /api/sync`: replica sync (pull by rev, push dirty rows, last write wins, note conflict copies)
 - `GET /ical?key=...`: subscribe from Google or Apple Calendar
+- `GET/POST /api/assistant[/message|/stop|/new]`: the in-app Assistant tab
+
+### Assistant
+
+The Assistant tab lets anyone signed in ask Hourglass to do things ("tidy my
+latest note", "wake me at 7:30 on weekdays"). The server hands the message to
+[opencode](https://opencode.ai) running on the same machine; opencode works on
+that account's data through the Hourglass MCP tools, with a key the server makes
+for it, so no AI link is needed. Each account gets its own workspace whose config
+switches off every built-in opencode tool (shell, files, web).
+
+```bash
+sudo bash server/assistant-setup.sh       # opencode as its own user, localhost only
+sudo -u hourglass-ai HOME=/var/lib/hourglass-assistant/home opencode auth login
+# then run the server with:
+HOURGLASS_ASSISTANT_URL=http://127.0.0.1:4590 HOURGLASS_ASSISTANT_DIR=/var/lib/hourglass-assistant/workspaces HOURGLASS_ASSISTANT_MODEL=<provider/model> node server.js
+```
+
+opencode's free models refuse requests from `opencode serve`, so it needs a real
+provider key.
 
 ## Android
 

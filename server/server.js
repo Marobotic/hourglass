@@ -8,6 +8,7 @@
 //                    (default http://127.0.0.1:8900)
 //   MARO_CACHE_DIR   its data dir, for songs used as ringtones
 //                    (default /var/lib/maro-cache)
+//   HOURGLASS_ASSISTANT_*  the in-app assistant (opencode); see assistant.js
 //
 // Accounts: sign in with the Omarchy Music email and password; its session is
 // the bearer here too. Each account has its own data; the account named in
@@ -21,6 +22,7 @@ import { Store } from "../core/node/store.js";
 import { Service } from "../core/node/service.js";
 import { createHandler, openApi, VERSION } from "./app.js";
 import { makeClip } from "./sounds.js";
+import { createAssistant } from "./assistant.js";
 
 const dataDir = resolve(process.env.HOURGLASS_DATA || join(import.meta.dirname, "data"));
 const port = Number(process.env.HOURGLASS_PORT || 8930);
@@ -100,10 +102,20 @@ function tenant(email) {
   const service = new Service(store);
   t = { email: key || owner, dir, store, service, icalKey: secret(dir, "ical_key"), aiKey: readKey(dir) };
   if (t.aiKey) aiKeys.set(t.aiKey, key || owner);
+  // The assistant's own key, so its MCP calls work straight after a restart.
+  const ak = existsSync(join(dir, "assistant_key")) ? readFileSync(join(dir, "assistant_key"), "utf8").trim() : "";
+  if (ak) { t.assistantKey = ak; aiKeys.set(ak, key || owner); }
   t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL, extra: async (req, res, url, path) => (await driveRoutes(t, req, res, url, path)) || ringtoneRoutes(t, req, res, url, path) });
   tenants.set(key, t);
   return t;
 }
+
+const assistant = createAssistant({
+  dataDir,
+  rootDir: resolve(import.meta.dirname, ".."),
+  localUrl: `http://127.0.0.1:${port}`,
+  registerKey: (key, t) => aiKeys.set(key, t.email),
+});
 
 // Open every account once so iCal keys resolve.
 tenant("");
@@ -391,6 +403,7 @@ createServer(async (req, res) => {
     }
     const t = tenant(email);
     if (path === "/api/account") return send(res, 200, { email: t.email || null });
+    if (await assistant.routes(t, req, res, path)) return;
     const base = process.env.HOURGLASS_URL || `http://${req.headers.host}`;
     if (path === "/api/ai" && req.method === "GET") return send(res, 200, aiInfo(t, base));
     if (path === "/api/ai" && req.method === "POST") {

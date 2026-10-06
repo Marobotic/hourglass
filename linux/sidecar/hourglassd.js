@@ -627,6 +627,16 @@ async function extra(req, res, url, path) {
     playOnce(soundFile(url.searchParams.get("name")));
     return json(res, 200, { ok: true }), true;
   }
+  // The assistant runs on the server (opencode there, on this account's data);
+  // the sidecar only carries the account's session to it.
+  if (path.startsWith("/api/assistant")) {
+    if (!config().token) {
+      if (req.method === "GET") return json(res, 200, { enabled: false, reason: "Sign in to use the assistant.", messages: [] }), true;
+      return json(res, 401, { error: "Sign in to use the assistant." }), true;
+    }
+    const body = req.method === "POST" ? await readBody(req) : undefined;
+    return json(res, 200, await remote(path, { method: req.method, body })), true;
+  }
   if (path === "/api/sync/now" && req.method === "POST") {
     await syncOnce();
     return json(res, 200, sync), true;
