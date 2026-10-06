@@ -48,13 +48,20 @@ if (git status --porcelain) { throw "commit or stash your changes first" }
 # ---------------------------------------------------------------- 1. version
 Step "Version $Version"
 $gradle = 'android\app\build.gradle.kts'
-$code = [int]([regex]::Match([IO.File]::ReadAllText($gradle), 'versionCode = (\d+)').Groups[1].Value) + 1
-$build = [int]([regex]::Match([IO.File]::ReadAllText('ios\project.yml'), 'CURRENT_PROJECT_VERSION: "(\d+)"').Groups[1].Value) + 1
-Edit-File 'server\app.js' 'VERSION = "[^"]+"' "VERSION = `"$Version`""
-Edit-File $gradle 'versionCode = \d+' "versionCode = $code"
-Edit-File $gradle 'versionName = "[^"]+"' "versionName = `"$Version`""
-Edit-File 'ios\project.yml' 'MARKETING_VERSION: "[^"]+"' "MARKETING_VERSION: `"$Version`""
-Edit-File 'ios\project.yml' 'CURRENT_PROJECT_VERSION: "\d+"' "CURRENT_PROJECT_VERSION: `"$build`""
+# Resuming: a run that stopped after pushing "Hourglass <version>" picks up from there.
+$resume = [IO.File]::ReadAllText('server\app.js') -match ('VERSION = "' + [regex]::Escape($Version) + '"')
+$code = [int]([regex]::Match([IO.File]::ReadAllText($gradle), 'versionCode = (\d+)').Groups[1].Value)
+$build = [int]([regex]::Match([IO.File]::ReadAllText('ios\project.yml'), 'CURRENT_PROJECT_VERSION: "(\d+)"').Groups[1].Value)
+if ($resume) {
+  "  resuming: $Version is already committed"
+} else {
+  $code++; $build++
+  Edit-File 'server\app.js' 'VERSION = "[^"]+"' "VERSION = `"$Version`""
+  Edit-File $gradle 'versionCode = \d+' "versionCode = $code"
+  Edit-File $gradle 'versionName = "[^"]+"' "versionName = `"$Version`""
+  Edit-File 'ios\project.yml' 'MARKETING_VERSION: "[^"]+"' "MARKETING_VERSION: `"$Version`""
+  Edit-File 'ios\project.yml' 'CURRENT_PROJECT_VERSION: "\d+"' "CURRENT_PROJECT_VERSION: `"$build`""
+}
 "  Android versionCode $code, iOS build $build"
 
 # A dry run puts the version files back when it ends, even when a step fails.
@@ -66,12 +73,14 @@ $out = Join-Path $env:TEMP "hourglass-release-$Version"
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Force $out | Out-Null
 
-if (-not $DryRun) {
+if (-not $DryRun -and -not $resume) {
   git add server/app.js $gradle ios/project.yml
   git -c user.name=Marobotic -c user.email=marobotus@icloud.com commit -q -m "Hourglass $Version"
   git push -q origin main
 }
-$sha = git rev-parse HEAD
+# CI builds the commit that set this version (later commits may not touch the apps).
+$sha = if ($resume) { git log -1 --format=%H --fixed-strings --grep "Hourglass $Version" } else { git rev-parse HEAD }
+if (-not $sha) { $sha = git rev-parse HEAD }
 
 # ---------------------------------------------------------------- 2. local builds
 Step "Android APK"
@@ -102,7 +111,7 @@ function Wait-Run($workflow) {
   }
   if (-not $runs.Count) { throw "no $workflow run for $sha" }
   $id = $runs[0].databaseId
-  "  $workflow run $id"
+  Write-Host "  $workflow run $id"   # Write-Host: anything else would become part of the return value
   gh run watch $id --exit-status --interval 30 | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "$workflow run $id failed: gh run view $id --log-failed" }
   return $id
