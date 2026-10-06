@@ -107,8 +107,32 @@ ApplicationWindow {
         }
         menu: Menu {
             MenuItem { text: "Show Hourglass"; onTriggered: app.restoreWindow() }
-            MenuItem { text: "Quit Hourglass"; onTriggered: Qt.quit() }
+            MenuItem { text: "Quit Hourglass"; onTriggered: app.quitAll() }
         }
+    }
+
+    // Quit from the tray ends the service too (it owns this window). If the
+    // service is an older one without /api/quit, just close the window.
+    function quitAll() {
+        Api.request("POST", "/api/quit", {}, () => Qt.quit(), true);
+        quitFallback.start();
+    }
+    Timer { id: quitFallback; interval: 1500; onTriggered: Qt.quit() }
+
+    // Opening Hourglass from the Start menu while the window sits in the tray:
+    // the launcher asks the service, which bumps show_seq, and the window comes
+    // back. Quick while hidden, slow while shown.
+    property int showSeq: -1
+    property bool showPoll: true
+    Timer {
+        interval: app.visible ? 3000 : 400
+        running: app.showPoll && !app.shotPath
+        repeat: true
+        onTriggered: Api.request("GET", "/api/window", null, (d, err) => {
+            if (!d) { app.showPoll = false; return; } // an older service: no window routes
+            if (app.showSeq >= 0 && d.show_seq !== app.showSeq) app.restoreWindow();
+            app.showSeq = d.show_seq;
+        }, true)
     }
 
     onClosing: close => {

@@ -1,4 +1,5 @@
-# Gives the app and its service their own names in Task Manager.
+# Gives the app and its service their own names in Task Manager. The service is
+# the window's parent, so Task Manager shows one Hourglass with both inside.
 #
 # The window runs in Qt's qml.exe ("QML Runtime") and the service in node.exe
 # ("Node.js JavaScript Runtime"). This makes stamped copies next to them -
@@ -37,4 +38,4 @@ function Stamp($source, $target, $description) {
 }
 
 Stamp (Join-Path $root 'qt\bin\qml.exe') (Join-Path $root 'qt\bin\Hourglass.exe') 'Hourglass'
-Stamp (Join-Path $root 'node\node.exe') (Join-Path $root 'node\hourglassd.exe') 'Hourglass service'
+Stamp (Join-Path $root 'node\node.exe') (Join-Path $root 'node\hourglassd.exe') 'Hourglass'

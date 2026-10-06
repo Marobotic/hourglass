@@ -565,8 +565,58 @@ async function driveRoutes(req, res, url, path) {
   return false;
 }
 
+// --- the window (Windows) ---------------------------------------------------------
+// The service starts the window as its own child, so Task Manager shows one
+// Hourglass, not a window and a service side by side. The launcher asks for it
+// with POST /api/window/show; a window hidden in the tray sees show_seq change
+// and comes back. "Quit Hourglass" in the tray ends both.
+const APP_ROOT = join(import.meta.dirname, "..");
+let ui = null;
+let showSeq = 0;
+
+function windowExe() {
+  for (const p of ["qt/bin/Hourglass.exe", "qt/bin/qml.exe", "qt/qml.exe"]) {
+    const f = join(APP_ROOT, p);
+    if (existsSync(f)) return f;
+  }
+  return null;
+}
+
+function openWindow() {
+  showSeq++;
+  if (ui) return { started: false };
+  const exe = windowExe();
+  if (!exe) return { error: "the Qt runtime is missing" };
+  // widget: Qt's tray menu needs a QApplication on Windows, or right-click does nothing.
+  ui = spawn(exe, ["--apptype", "widget", "-I", join(APP_ROOT, "app"), join(APP_ROOT, "app", "Main.qml"), "--", "--port", String(PORT), "--token", TOKEN], {
+    cwd: APP_ROOT,
+    stdio: "ignore",
+    env: { ...process.env, QT_QUICK_CONTROLS_STYLE: "Basic" },
+  });
+  const child = ui;
+  child.on("error", (e) => { log(`window: ${e.message}`); if (ui === child) ui = null; });
+  child.on("exit", () => { if (ui === child) ui = null; });
+  return { started: true };
+}
+
+function quitAll() {
+  for (const id of [...ringing.keys()]) ring_stop(id);
+  try { ui?.kill(); } catch {}
+  process.exit(0);
+}
+
 async function extra(req, res, url, path) {
   if (await driveRoutes(req, res, url, path)) return true;
+  if (WIN && path === "/api/window" && req.method === "GET") return json(res, 200, { show_seq: showSeq, open: !!ui }), true;
+  if (WIN && path === "/api/window/show" && req.method === "POST") {
+    const r = openWindow();
+    return json(res, r.error ? 500 : 200, r), true;
+  }
+  if (WIN && path === "/api/quit" && req.method === "POST") {
+    json(res, 200, { ok: true });
+    setTimeout(quitAll, 200);
+    return true;
+  }
   if (path === "/api/app" && req.method === "GET") {
     return json(res, 200, {
       theme: theme(),
@@ -663,7 +713,4 @@ createServer((req, res) => {
   scheduleSync(0);
 });
 
-for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => {
-  for (const id of [...ringing.keys()]) ring_stop(id);
-  process.exit(0);
-});
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, quitAll);

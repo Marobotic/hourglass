@@ -1,5 +1,5 @@
 # Hourglass launcher for Windows: starts the background service if needed,
-# then opens the window. Layout of the package:
+# then has it open the window (the service is the window's parent). Layout of the package:
 #   node\node.exe  qt\qml.exe  app\Main.qml  sidecar\hourglassd.js
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -60,16 +60,23 @@ public static class HgWindow {
   }
 }
 '@
-$running = @(Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
-if ($running) {
-  [HgWindow]::ShowWindow($running.MainWindowHandle, 9) | Out-Null
-  [HgWindow]::SetForegroundWindow($running.MainWindowHandle) | Out-Null
-  # an already-open window may predate the icon: set it here too
-  [HgWindow]::SetIcon($running.MainWindowHandle, "$root\hourglass.ico")
-  exit 0
+# The service owns the window (one Hourglass in Task Manager): ask it to open
+# the window, or bring it back from the tray. A window that is already showing
+# is brought to the front here, straight away.
+$open = @(Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
+if ($open) {
+  [HgWindow]::ShowWindow($open.MainWindowHandle, 9) | Out-Null
+  [HgWindow]::SetForegroundWindow($open.MainWindowHandle) | Out-Null
 }
-
-Start-Process -FilePath $qml -ArgumentList @('-I', "`"$root\app`"", "`"$root\app\Main.qml`"", '--', '--port', $port, '--token', $token) -WindowStyle Normal
+$asked = $false
+try {
+  Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/api/window/show" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 5 | Out-Null
+  $asked = $true
+} catch {}
+if (-not $asked -and -not $open) {
+  # An older service without /api/window: start the window ourselves.
+  Start-Process -FilePath $qml -ArgumentList @('--apptype', 'widget', '-I', "`"$root\app`"", "`"$root\app\Main.qml`"", '--', '--port', $port, '--token', $token) -WindowStyle Normal
+}
 
 # Wait for the window, then set the hourglass icon on it. Qt applies
 # its own tile as the window is realized, so re-apply for a while.

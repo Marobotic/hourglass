@@ -4,7 +4,7 @@ Set sh = CreateObject("WScript.Shell")
 root = sh.CurrentDirectory
 Set fso = CreateObject("Scripting.FileSystemObject")
 root = fso.GetParentFolderName(fso.GetParentFolderName(WScript.ScriptFullName))
-' hourglassd.exe is node.exe named "Hourglass service" (tools\brand.ps1).
+' hourglassd.exe is node.exe named "Hourglass"; it is the window's parent (tools\brand.ps1).
 node = root & "\node\hourglassd.exe"
 If Not fso.FileExists(node) Then node = root & "\node\node.exe"
 If Not fso.FileExists(node) Then node = "node.exe"
