@@ -587,8 +587,9 @@ function openWindow() {
   if (ui) return { started: false };
   const exe = windowExe();
   if (!exe) return { error: "the Qt runtime is missing" };
-  // widget: Qt's tray menu needs a QApplication on Windows, or right-click does nothing.
-  ui = spawn(exe, ["--apptype", "widget", "-I", join(APP_ROOT, "app"), join(APP_ROOT, "app", "Main.qml"), "--", "--port", String(PORT), "--token", TOKEN], {
+  // menus=native: Qt's own tray menu opens and Windows closes it at once (the app
+  // is not in the foreground); the native one stays up like any tray menu.
+  ui = spawn(exe, ["--apptype", "widget", "-platform", "windows:menus=native", "-I", join(APP_ROOT, "app"), join(APP_ROOT, "app", "Main.qml"), "--", "--port", String(PORT), "--token", TOKEN], {
     cwd: APP_ROOT,
     stdio: "ignore",
     env: { ...process.env, QT_QUICK_CONTROLS_STYLE: "Basic" },

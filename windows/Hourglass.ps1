@@ -75,7 +75,7 @@ try {
 } catch {}
 if (-not $asked -and -not $open) {
   # An older service without /api/window: start the window ourselves.
-  Start-Process -FilePath $qml -ArgumentList @('--apptype', 'widget', '-I', "`"$root\app`"", "`"$root\app\Main.qml`"", '--', '--port', $port, '--token', $token) -WindowStyle Normal
+  Start-Process -FilePath $qml -ArgumentList @('--apptype', 'widget', '-platform', 'windows:menus=native', '-I', "`"$root\app`"", "`"$root\app\Main.qml`"", '--', '--port', $port, '--token', $token) -WindowStyle Normal
 }
 
 # Wait for the window, then set the hourglass icon on it. Qt applies
