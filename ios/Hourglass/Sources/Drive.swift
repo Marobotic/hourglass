@@ -31,7 +31,6 @@ struct AttendanceView: View {
         let list = store.attendanceSessions()
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                T("Attendance", 26, bold: true)
                 HStack(spacing: 14) {
                     ForEach([("attended", "attended"), ("absent", "absent"), ("off", "off"), ("", "not marked")], id: \.1) { m, label in
                         HStack(spacing: 6) { MarkCell(mark: m.isEmpty ? nil : m, size: 18); T(label, 12, H.muted) }

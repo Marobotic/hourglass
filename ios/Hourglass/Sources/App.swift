@@ -32,11 +32,15 @@ struct EventDraft: Identifiable { let id = UUID(); var event: Event?; var date: 
 struct CourseDraft: Identifiable { let id = UUID(); var course: Course? }
 
 struct RootView: View {
-    static let tabs = [("Now", "clock"), ("Schedule", "calendar"), ("Notes", "note.text"), ("Alarms", "alarm"), ("Timers", "hourglass"), ("Clock", "globe"), ("Drive", "folder"), ("Attend", "checklist")]
+    // Five: more did not fit a phone. Related pages share a tab and a
+    // switcher at its top.
+    static let tabs = [("Now", "clock"), ("Schedule", "calendar"), ("Notes", "note.text"), ("Drive", "folder"), ("Time", "alarm")]
     @EnvironmentObject var store: Store
     @StateObject private var sheets = Sheets()
     @State private var path: [Route] = []
     @State private var tab = 0
+    @State private var scheduleSub = 0
+    @State private var timeSub = 0
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -55,13 +59,22 @@ struct RootView: View {
                 Group {
                     switch tab {
                     case 0: NowView(path: $path)
-                    case 1: ScheduleView()
+                    case 1:
+                        VStack(spacing: 0) {
+                            SubTabs(items: ["Week", "Attendance"], selected: $scheduleSub)
+                            if scheduleSub == 0 { ScheduleView() } else { AttendanceView() }
+                        }
                     case 2: NotesView(path: $path)
-                    case 3: TimeView()
-                    case 4: TimersView()
-                    case 5: ClockView()
-                    case 6: DriveView()
-                    default: AttendanceView()
+                    case 3: DriveView()
+                    default:
+                        VStack(spacing: 0) {
+                            SubTabs(items: ["Alarms", "Timers", "Clock"], selected: $timeSub)
+                            switch timeSub {
+                            case 0: TimeView()
+                            case 1: TimersView()
+                            default: ClockView()
+                            }
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -107,5 +120,29 @@ struct Ticking<Content: View>: View {
     @ViewBuilder var content: (Int64) -> Content
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in content(Int64(ctx.date.timeIntervalSince1970 * 1000)) }
+    }
+}
+
+// The pages of a grouped tab, as an underlined row like the tab bar's.
+struct SubTabs: View {
+    let items: [String]
+    @Binding var selected: Int
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.offset) { i, label in
+                let on = i == selected
+                Button { selected = i } label: {
+                    VStack(spacing: 8) {
+                        T(label, 13, on ? H.fg : H.muted, bold: on, lines: 1)
+                        Rectangle().fill(on ? H.accent : H.border).frame(height: 2)
+                    }
+                    .padding(.top, 8)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
     }
 }

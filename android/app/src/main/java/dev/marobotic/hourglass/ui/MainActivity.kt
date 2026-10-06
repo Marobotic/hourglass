@@ -56,7 +56,6 @@ import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
@@ -101,6 +100,10 @@ class Sheets {
 class Nav(val repo: Repo) {
     val stack = mutableStateListOf<Route>()
     var tab by mutableStateOf(0)
+    // The page inside a grouped tab: Schedule (Week, Attendance) and Time
+    // (Alarms, Timers, Clock).
+    var scheduleSub by mutableStateOf(0)
+    var timeSub by mutableStateOf(0)
     val sheets = Sheets()
     fun push(r: Route) { stack.add(r) }
     fun pop() { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) }
@@ -170,18 +173,31 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                 Box(Modifier.weight(1f)) {
                     when (nav.tab) {
                         0 -> NowScreen(nav, version, clock)
-                        1 -> ScheduleScreen(nav, version, clock)
+                        1 -> Column(Modifier.fillMaxSize()) {
+                            SubTabs(listOf("Week", "Attendance"), nav.scheduleSub) { nav.scheduleSub = it }
+                            Box(Modifier.weight(1f)) {
+                                if (nav.scheduleSub == 0) ScheduleScreen(nav, version, clock) else AttendanceScreen(nav, version, clock)
+                            }
+                        }
                         2 -> NotesScreen(nav, version)
-                        3 -> TimeScreen(nav, version, clock)
-                        4 -> TimersScreen(nav, version, clock)
-                        5 -> ClockScreen(nav, version, clock)
-                        6 -> DriveScreen(nav, version)
-                        else -> AttendanceScreen(nav, version, clock)
+                        3 -> DriveScreen(nav, version)
+                        else -> Column(Modifier.fillMaxSize()) {
+                            SubTabs(listOf("Alarms", "Timers", "Clock"), nav.timeSub) { nav.timeSub = it }
+                            Box(Modifier.weight(1f)) {
+                                when (nav.timeSub) {
+                                    0 -> TimeScreen(nav, version, clock)
+                                    1 -> TimersScreen(nav, version, clock)
+                                    else -> ClockScreen(nav, version, clock)
+                                }
+                            }
+                        }
                     }
                 }
                 // Square tab bar (Material's has a pill indicator).
                 Row(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
-                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Alarms" to Icons.Outlined.Alarm, "Timers" to Icons.Outlined.HourglassEmpty, "Clock" to Icons.Outlined.Public, "Drive" to Icons.Outlined.Folder, "Attend" to Icons.Outlined.FactCheck)
+                    // Five: more did not fit a phone. Related pages share a tab
+                    // and a switcher at its top.
+                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Drive" to Icons.Outlined.Folder, "Time" to Icons.Outlined.Alarm)
                     for ((i, it) in items.withIndex()) {
                         val on = nav.tab == i
                         Column(
@@ -355,6 +371,21 @@ private fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (!enabled) androidx.compose.material3.CircularProgressIndicator(Modifier.size(14.dp), color = Color.White, strokeWidth = 2.dp)
             LoginText(text, 16.sp, Color.White, bold = true)
+        }
+    }
+}
+
+// The pages of a grouped tab, as an underlined row like the tab bar's.
+@Composable
+fun SubTabs(items: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp)) {
+        for ((i, label) in items.withIndex()) {
+            val on = i == selected
+            Column(Modifier.weight(1f).clickable { onSelect(i) }.padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                T(label, 13, if (on) HColors.fg else HColors.muted, bold = on, maxLines = 1)
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth().height(2.dp).background(if (on) HColors.accent else HColors.border))
+            }
         }
     }
 }

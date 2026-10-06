@@ -421,7 +421,6 @@ struct TimeView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        T("Alarms", 24, bold: true)
                         let alarms = store.alarms.map { ($0, Alarms.next($0, store.db.courses, store.db.events, clock)) }.sorted { ($0.1 ?? Int64.max) < ($1.1 ?? Int64.max) }
                         if alarms.isEmpty { T("No alarms yet. Tap the alarm button to add one, at a time or before a course.", 13, H.muted) }
                         ForEach(alarms, id: \.0.id) { item in
@@ -737,7 +736,6 @@ struct ClockView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        T("World clock", 24, bold: true)
                         T("Hourglass runs on \(city(home.identifier)) time", 13, H.muted)
                     }
                     Field(label: "Add a city", text: $query, placeholder: "e.g. Tokyo")

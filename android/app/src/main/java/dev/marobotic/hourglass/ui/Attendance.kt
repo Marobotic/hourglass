@@ -43,8 +43,6 @@ fun AttendanceScreen(nav: Nav, version: Int, clock: Long) {
     val list = remember(version, clock / 60_000) { repo.attendanceSessions() }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            T("Attendance", 26, bold = true)
-            Spacer(Modifier.height(10.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 for ((m, label) in listOf("attended" to "attended", "absent" to "absent", "off" to "off (no class)", null to "not marked")) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

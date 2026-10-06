@@ -319,7 +319,6 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { T("Alarms", 24, bold = true) }
             if (alarms.isEmpty()) item { T("No alarms yet. Tap + to add one, at a time or before a course.", 13, HColors.muted) }
             items(alarms, key = { it.first.id }) { (a, next) ->
                 val on = a.optInt("enabled") == 1
@@ -434,7 +433,6 @@ fun ClockScreen(nav: Nav, version: Int, clock: Long) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Column {
-                T("World clock", 24, bold = true)
                 T("Hourglass runs on ${home.id.substringAfterLast('/').replace('_', ' ')} time", 13, HColors.muted)
             }
         }

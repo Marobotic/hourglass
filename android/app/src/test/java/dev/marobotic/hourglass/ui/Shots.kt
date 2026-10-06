@@ -38,7 +38,7 @@ class Shots {
     @Test fun now() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 0) } }
     @Test fun week() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 1) } }
     @Test fun notes() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 2) } }
-    @Test fun time() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 3) } }
+    @Test fun time() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 4) } }
     @Test fun login() = paparazzi.snapshot { HourglassTheme { LoginScreen(demo()) } }
     @Test fun dayOff() {
         File(paparazzi.context.filesDir, "hourglass.json").delete()
