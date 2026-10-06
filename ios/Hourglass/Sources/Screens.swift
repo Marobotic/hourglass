@@ -595,6 +595,31 @@ struct NoteView: View {
         }
     }
 
+    private func saveAndView() {
+        let tidy = Md.renumber(text)
+        if tidy != text { text = tidy; dirty = true }
+        save()
+        preview = true
+    }
+    private func toggleTask(_ line: Int) {
+        let t = Md.toggleTask(text, line)
+        guard t != text else { return }
+        text = t
+        dirty = true
+        save()
+    }
+    // Typing: Enter on a list line starts the next item, like the desktop.
+    private func continueList(_ old: String, _ new: String) {
+        let o = old as NSString, n = new as NSString
+        guard !preview, n.length == o.length + 1 else { return }
+        var i = 0
+        while i < o.length && o.character(at: i) == n.character(at: i) { i += 1 }
+        guard n.character(at: i) == 10, n.replacingCharacters(in: NSRange(location: i, length: 1), with: "") == old,
+              let next = Md.continueList(old, i) else { return }
+        text = next.0
+        selection = TextSelection(insertionPoint: String.Index(utf16Offset: next.1, in: next.0))
+    }
+
     private func format(_ k: String) {
         let (a, b) = selected()
         switch k {
@@ -622,12 +647,11 @@ struct NoteView: View {
                 .font(H.mono(26, bold: true)).foregroundStyle(H.fg).tint(H.accent)
                 .onChange(of: title) { _, _ in if loaded { dirty = true } }
             Rectangle().fill(H.border).frame(height: 1)
-            // Formatting and attachments, like the desktop's toolbar.
-            ScrollView(.horizontal, showsIndicators: false) {
+            // Formatting and attachments, like the desktop's toolbar; only while editing.
+            if !preview { ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach([("bold", "b"), ("italic", "i"), ("underline", "u"), ("strikethrough", "s"), ("textformat.size", "h"), ("list.bullet", "ul"), ("list.number", "ol")], id: \.1) { icon, k in
-                        Button { format(k) } label: { Image(systemName: icon).foregroundStyle(preview ? H.faint : H.muted).frame(width: 38, height: 34) }
-                            .disabled(preview)
+                    ForEach([("bold", "b"), ("italic", "i"), ("underline", "u"), ("strikethrough", "s"), ("textformat.size", "h"), ("list.bullet", "ul"), ("list.number", "ol"), ("checklist", "todo")], id: \.1) { icon, k in
+                        Button { format(k) } label: { Image(systemName: icon).foregroundStyle(H.muted).frame(width: 38, height: 34) }
                     }
                     Rectangle().fill(H.border).frame(width: 1, height: 22)
                     PhotosPicker(selection: $photoItems, matching: .images) {
@@ -636,18 +660,24 @@ struct NoteView: View {
                     Button { importing = true } label: { Image(systemName: "paperclip").foregroundStyle(H.muted).frame(width: 38, height: 34) }
                 }
             }
-            Rectangle().fill(H.border).frame(height: 1)
+            Rectangle().fill(H.border).frame(height: 1) }
             if preview {
-                ScrollView { NoteBodyView(text: text) { opener.open($0, store) }.padding(.vertical, 8) }
+                ScrollView {
+                    NoteBodyView(text: text.isEmpty ? "*Nothing written yet. Tap the pencil to write.*" : text, open: { opener.open($0, store) }, onToggle: { toggleTask($0) })
+                        .padding(.vertical, 8)
+                }
             } else {
                 TextEditor(text: $text, selection: $selection)
                     .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent).scrollContentBackground(.hidden)
-                    .onChange(of: text) { _, _ in if loaded { dirty = true } }
+                    .onChange(of: text) { old, new in
+                        if loaded { dirty = true }
+                        continueList(old, new)
+                    }
             }
         }
         .padding(.horizontal, 20)
         .background(H.bg)
-        .onAppear { if let note, !loaded { title = note.title; text = note.body; loaded = true } }
+        .onAppear { if let note, !loaded { title = note.title; text = note.body; preview = !note.body.isEmpty; loaded = true } }
         // 700 ms after the last keystroke; a keystroke cancels the wait, not starts a save.
         .task(id: "\(title)\u{1}\(text)") {
             guard dirty else { return }
@@ -684,8 +714,13 @@ struct NoteView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 T(uploading ?? (dirty ? "Edited" : "Saved"), 11, uploading != nil ? H.gold : H.faint)
-                Button { save(); preview.toggle() } label: {
-                    Image(systemName: preview ? "pencil" : "eye").foregroundStyle(preview ? H.accent : H.muted)
+                if preview {
+                    Button { preview = false } label: { Image(systemName: "pencil").foregroundStyle(H.fg) }
+                } else {
+                    Button { saveAndView() } label: {
+                        Label("Save", systemImage: "checkmark").labelStyle(.titleAndIcon).font(H.mono(14, bold: true))
+                            .foregroundStyle(.white).padding(.horizontal, 10).padding(.vertical, 6).background(H.accent)
+                    }
                 }
                 Button { if var n = note { n.pinned = n.pinned == 1 ? 0 : 1; store.save(n) } } label: {
                     Image(systemName: note?.pinned == 1 ? "pin.fill" : "pin").foregroundStyle(note?.pinned == 1 ? H.gold : H.muted)

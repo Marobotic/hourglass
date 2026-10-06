@@ -365,6 +365,23 @@ final class Store: ObservableObject {
         return (try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any] ?? [:]
     }
 
+    // The Assistant tab: opencode on the server works on this account's data
+    // (server/assistant.js). path: "" to read the chat, "/message", "/stop", "/new".
+    func assistant(_ method: String, _ path: String = "", _ body: [String: Any]? = nil) async throws -> [String: Any] {
+        guard signedIn, let base = URL(string: server) else {
+            throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "Sign in to use the assistant."])
+        }
+        var req = request(base.appendingPathComponent("api/assistant" + path))
+        req.httpMethod = method
+        if method == "POST" {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: body ?? [:])
+        }
+        let r = try await URLSession.shared.data(for: req)
+        try check(r)
+        return (try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any] ?? [:]
+    }
+
     func signIn(email: String, password: String, path: String = "auth/login") async throws {
         guard let base = URL(string: server) else { return }
         var req = URLRequest(url: base.appendingPathComponent(path), timeoutInterval: 15)

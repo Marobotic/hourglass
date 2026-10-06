@@ -1,6 +1,85 @@
 import SwiftUI
 import UIKit
 
+// Note Markdown rules shared with the desktop (Util.qml) and Android (Md).
+// Offsets are UTF-16, as NSString.
+enum Md {
+    static let task = try! NSRegularExpression(pattern: #"^(\s*)[-*] \[([ xX])\] ?(.*)$"#)
+    static let list = try! NSRegularExpression(pattern: #"^(\s*)([-*] \[[ xX]\] |[-*] |(\d+)\. )"#)
+    static let ol = try! NSRegularExpression(pattern: #"^(\s*)(\d+)\. "#)
+
+    /// The match's groups as strings ("" for a group that did not take part), or nil.
+    static func groups(_ re: NSRegularExpression, _ s: String) -> [String]? {
+        let ns = s as NSString
+        guard let m = re.firstMatch(in: s, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return (0..<m.numberOfRanges).map { m.range(at: $0).location == NSNotFound ? "" : ns.substring(with: m.range(at: $0)) }
+    }
+
+    /// Numbered lists count 1, 2, 3 again: each run of "N. " lines at one indent
+    /// is renumbered from its first number. Deeper lines and blank lines keep the
+    /// run going; any other line ends it.
+    static func renumber(_ text: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        var runs: [Int: Int] = [:] // indent -> next number
+        for i in lines.indices {
+            let line = lines[i]
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+            let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+            for k in runs.keys where k > indent { runs[k] = nil }
+            guard let g = groups(ol, line) else { runs[indent] = nil; continue }
+            let n = runs[indent] ?? Int(g[2]) ?? 1
+            runs[indent] = n + 1
+            lines[i] = g[1] + "\(n). " + (line as NSString).substring(from: (g[0] as NSString).length)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Flips the to-do on line `index`; the text unchanged if that line is not one.
+    static func toggleTask(_ text: String, _ index: Int) -> String {
+        var lines = text.components(separatedBy: "\n")
+        guard index < lines.count, let g = groups(task, lines[index]) else { return text }
+        if let r = lines[index].range(of: #"\[[ xX]\]"#, options: .regularExpression) {
+            lines[index].replaceSubrange(r, with: g[2] == " " ? "[x]" : "[ ]")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// After Enter on a list line: the next line starts the next item (a new to-do
+    /// unticked, a number counted on). Enter on an empty item ends the list. nil
+    /// when the Enter was not on a list line. `cursor` is where the newline went.
+    static func continueList(_ before: String, _ cursor: Int) -> (String, Int)? {
+        let ns = before as NSString
+        let newline = ns.range(of: "\n", options: .backwards, range: NSRange(location: 0, length: cursor)).location
+        let lineStart = newline == NSNotFound ? 0 : newline + 1
+        let line = ns.substring(with: NSRange(location: lineStart, length: cursor - lineStart))
+        guard let g = groups(list, line) else { return nil }
+        let rest = ns.substring(from: cursor)
+        if line.trimmingCharacters(in: .whitespaces) == g[2].trimmingCharacters(in: .whitespaces) {
+            return (ns.substring(to: lineStart) + rest, lineStart)
+        }
+        let next = g[2].contains("[") ? g[2].replacingOccurrences(of: #"\[[xX]\]"#, with: "[ ]", options: .regularExpression)
+            : !g[3].isEmpty ? "\((Int(g[3]) ?? 0) + 1). " : g[2]
+        let insert = "\n" + g[1] + next
+        let text = ns.substring(to: cursor) + insert + rest
+        let pos = cursor + (insert as NSString).length
+        return g[3].isEmpty ? (text, pos) : renumberKeeping(text, pos)
+    }
+
+    /// Renumbers, keeping the cursor at the same place in its line.
+    static func renumberKeeping(_ text: String, _ cursor: Int) -> (String, Int) {
+        let out = renumber(text)
+        if out == text { return (text, cursor) }
+        let ns = text as NSString
+        let line = ns.substring(to: cursor).components(separatedBy: "\n").count - 1
+        let lineStart = ns.substring(to: cursor).components(separatedBy: "\n").dropLast().reduce(0) { $0 + ($1 as NSString).length + 1 }
+        let col = cursor - lineStart
+        let before = text.components(separatedBy: "\n")[line], afterLines = out.components(separatedBy: "\n"), after = afterLines[line]
+        let shift = ((groups(ol, after)?[0] ?? "") as NSString).length - ((groups(ol, before)?[0] ?? "") as NSString).length
+        let start = afterLines.prefix(line).reduce(0) { $0 + ($1 as NSString).length + 1 }
+        return (out, start + min(max(0, col + shift), (after as NSString).length))
+    }
+}
+
 // The toolbar writes the same Markdown as the desktop's: **bold**, *italic*,
 // <u>underline</u>, ~~strike~~, and "## ", "- ", "1. " in front of lines.
 // Again on the same selection takes it off. Offsets are UTF-16, as NSString.
@@ -22,15 +101,21 @@ enum NoteFormat {
         var r = ns.lineRange(for: NSRange(location: a, length: max(0, b - a - (b > a ? 1 : 0))))
         if r.length > 0 && ns.substring(with: NSRange(location: r.location + r.length - 1, length: 1)) == "\n" { r.length -= 1 }
         let rows = ns.substring(with: r).components(separatedBy: "\n")
-        let re = kind == "ul" ? "^[-*] " : kind == "ol" ? "^\\d+\\. " : "^#{1,6} "
-        let on = rows.allSatisfy { $0.range(of: re, options: .regularExpression) != nil }
-        let out = rows.enumerated().map { i, row -> String in
+        let re = kind == "ul" ? #"^[-*] (?!\[[ xX]\] )"# : kind == "todo" ? #"^[-*] \[[ xX]\] "# : kind == "ol" ? #"^\d+\. "# : "^#{1,6} "
+        let filled = rows.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let on = !filled.isEmpty && filled.allSatisfy { $0.range(of: re, options: .regularExpression) != nil }
+        var n = 0
+        let out = rows.map { row -> String in
+            if row.trimmingCharacters(in: .whitespaces).isEmpty { return row }
             if on { return row.replacingOccurrences(of: re, with: "", options: .regularExpression) }
-            let bare = row.replacingOccurrences(of: "^([-*] |\\d+\\. |#{1,6} )", with: "", options: .regularExpression)
-            return (kind == "ul" ? "- " : kind == "ol" ? "\(i + 1). " : "## ") + bare
+            let bare = row.replacingOccurrences(of: #"^([-*] \[[ xX]\] |[-*] |\d+\. |#{1,6} )"#, with: "", options: .regularExpression)
+            n += 1
+            return (kind == "ul" ? "- " : kind == "todo" ? "- [ ] " : kind == "ol" ? "\(n). " : "## ") + bare
         }.joined(separator: "\n")
         let end = r.location + (out as NSString).length
-        return (ns.replacingCharacters(in: r, with: out), end, end)
+        let result = ns.replacingCharacters(in: r, with: out)
+        if kind == "ol" { let (t, p) = Md.renumberKeeping(result, end); return (t, p, p) }
+        return (result, end, end)
     }
 }
 
@@ -61,6 +146,8 @@ struct NoteBodyView: View {
     @EnvironmentObject var store: Store
     let text: String
     let open: (DriveFile) -> Void
+    /// The line of the note a ticked box is on. Without it, boxes only show.
+    var onToggle: ((Int) -> Void)? = nil
 
     private static let img = try! NSRegularExpression(pattern: #"^\s*!\[([^\]]*)\]\(hgfile:([0-9a-f-]{36})\)\s*$"#)
     private static let file = try! NSRegularExpression(pattern: #"^\s*\[([^\]]*)\]\(hgfile:([0-9a-f-]{36})\)\s*$"#)
@@ -71,34 +158,62 @@ struct NoteBodyView: View {
         return (ns.substring(with: m.range(at: 1)), ns.substring(with: m.range(at: 2)))
     }
 
-    private enum Block { case picture(String, String), file(String, String), gap, heading(Int, String), bullet(String), numbered(String, String), text(String) }
+    private enum Block { case picture(String, String), file(String, String), gap, heading(Int, String), bullet(Int, String), numbered(Int, String, String), task(Int, Bool, String), text(String) }
 
     private func block(_ line: String) -> Block {
         if let m = match(Self.img, line) { return .picture(m.0, m.1) }
         if let m = match(Self.file, line) { return .file(m.0.replacingOccurrences(of: "📎", with: "").trimmingCharacters(in: .whitespaces), m.1) }
         if line.trimmingCharacters(in: .whitespaces).isEmpty { return .gap }
         if let r = line.range(of: "^#{1,6} ", options: .regularExpression) { return .heading(line[r].count - 1, String(line[r.upperBound...])) }
-        if let r = line.range(of: #"^\s*[-*] "#, options: .regularExpression) { return .bullet(String(line[r.upperBound...])) }
-        if let r = line.range(of: #"^\s*\d+\. "#, options: .regularExpression) { return .numbered(String(line[r]).trimmingCharacters(in: .whitespaces), String(line[r.upperBound...])) }
+        let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+        if let g = Md.groups(Md.task, line) { return .task(indent, g[2] != " ", g[3]) }
+        if let r = line.range(of: #"^\s*[-*] "#, options: .regularExpression) { return .bullet(indent, String(line[r.upperBound...])) }
+        if let r = line.range(of: #"^\s*\d+\. "#, options: .regularExpression) { return .numbered(indent, String(line[r]).trimmingCharacters(in: .whitespaces), String(line[r.upperBound...])) }
         return .text(line)
     }
 
     var body: some View {
-        let blocks = text.components(separatedBy: "\n").map(block)
+        // Renumbering keeps every line where it is, so indexes still match the note.
+        let blocks = Md.renumber(text).components(separatedBy: "\n").map(block)
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, b in
                 switch b {
                 case .picture(let name, let id): NotePicture(id: id, name: name, open: open)
                 case .file(let name, let id): FileChip(name: name) { if let f = store.file(id) { open(f) } }
                 case .gap: Spacer().frame(height: 4)
                 case .heading(let level, let t): Text(inlineMd(t)).font(H.mono(level == 1 ? 24 : level == 2 ? 20 : 17, bold: true)).foregroundStyle(H.fg)
-                case .bullet(let t): HStack(alignment: .top, spacing: 0) { T("•  ", 15, H.muted); Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg) }
-                case .numbered(let n, let t): HStack(alignment: .top, spacing: 0) { T(n + " ", 15, H.muted); Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg) }
+                case .bullet(let indent, let t): HStack(alignment: .top, spacing: 0) { T("•  ", 15, H.muted); Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg) }.padding(.leading, CGFloat(indent * 6))
+                case .numbered(let indent, let n, let t): HStack(alignment: .top, spacing: 0) { T(n + " ", 15, H.muted); Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg) }.padding(.leading, CGFloat(indent * 6))
+                case .task(let indent, let done, let t): TaskRow(done: done, text: t, toggle: onToggle.map { f in { f(index) } }).padding(.leading, CGFloat(indent * 6))
                 case .text(let t): Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// One to-do: a square box (filled and ticked when done), then the item.
+private struct TaskRow: View {
+    let done: Bool
+    let text: String
+    let toggle: (() -> Void)?
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Button { toggle?() } label: {
+                ZStack {
+                    Rectangle().fill(done ? H.accent : .clear)
+                        .overlay(Rectangle().stroke(done ? H.accent : H.muted, lineWidth: 1))
+                    if done { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(H.bg) }
+                }
+                .frame(width: 20, height: 20)
+                .padding(.top, 1)
+                .contentShape(Rectangle().inset(by: -8)) // a bigger target than the box
+            }
+            .buttonStyle(.plain)
+            .disabled(toggle == nil)
+            Text(inlineMd(text)).font(H.mono(15)).foregroundStyle(done ? H.muted : H.fg).strikethrough(done)
+        }
     }
 }
 

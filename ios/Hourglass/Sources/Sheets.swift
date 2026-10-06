@@ -517,6 +517,7 @@ struct SettingsSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     T(store.account ?? "", 15)
                     T(store.syncState == "synced" ? "Omarchy Music account · synced \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline. Changes are kept on the phone and sent later." : "Omarchy Music account", 12, H.muted)
+                    T("Hourglass \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")", 12, H.faint)
                 }
                 Spacer()
                 HButton("Sign out") { confirmSignOut = true }

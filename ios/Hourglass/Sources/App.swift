@@ -17,7 +17,7 @@ struct HourglassApp: App {
     }
 }
 
-enum Route: Hashable { case note(String), course(String) }
+enum Route: Hashable { case note(String), course(String), assistant }
 
 // Sheets any screen can open.
 final class Sheets: ObservableObject {
@@ -51,6 +51,9 @@ struct RootView: View {
                     PixelLogo(cell: 2.6)
                     T("Hourglass", 18, bold: true)
                     Spacer()
+                    Button { path.append(.assistant) } label: {
+                        Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 18)).foregroundStyle(H.muted).frame(width: 44, height: 44)
+                    }
                     Button { sheets.settings = true } label: {
                         Image(systemName: "gearshape").font(.system(size: 19)).foregroundStyle(H.muted).frame(width: 44, height: 44)
                     }
@@ -102,6 +105,7 @@ struct RootView: View {
                 switch r {
                 case .note(let id): NoteView(id: id)
                 case .course(let id): NotesView(path: $path, sel: id)
+                case .assistant: AssistantView()
                 }
             }
             .background(H.bg)
