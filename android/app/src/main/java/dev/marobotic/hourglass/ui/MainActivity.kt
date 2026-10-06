@@ -1,5 +1,8 @@
 package dev.marobotic.hourglass.ui
 
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import dev.marobotic.hourglass.data.Updates
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -174,6 +177,25 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                         ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse("package:" + ctx.packageName)))
                     }.padding(horizontal = 18.dp, vertical = 10.dp),
                 ) { T("Allow full-screen alarms so they show over the lock screen  →", 13) }
+                // A newer Hourglass is on marobotic.dev (Updates.kt).
+                val upd by Updates.state.collectAsState()
+                LaunchedEffect(Unit) { Updates.check() }
+                val updScope = rememberCoroutineScope()
+                upd.available?.let { a ->
+                    val allowed = Updates.canInstall(ctx)
+                    Row(
+                        Modifier.fillMaxWidth().background(HColors.teal.copy(alpha = 0.18f)).clickable(enabled = !upd.downloading) {
+                            if (!allowed) Updates.allowInstalls(ctx) else updScope.launch { Updates.install(ctx) }
+                        }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    ) {
+                        T(when {
+                            upd.downloading -> "Downloading Hourglass ${a.version}…  ${(upd.progress * 100).toInt()}%"
+                            upd.error != null -> "${upd.error}. Tap to try again"
+                            !allowed -> "Hourglass ${a.version} is ready. Tap to allow installing it  →"
+                            else -> "Hourglass ${a.version} is ready. Tap to install  →"
+                        }, 13)
+                    }
+                }
                 Box(Modifier.weight(1f)) {
                     when (nav.tab) {
                         0 -> NowScreen(nav, version, clock)

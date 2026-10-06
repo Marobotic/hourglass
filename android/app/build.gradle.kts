@@ -1,7 +1,13 @@
 import java.util.Properties
 
-// Sync server and token come from local.properties (never committed), so a
-// fresh install syncs with the droplet without typing a token on the phone.
+// Build settings from local.properties (never committed). Builds carry the
+// server address only - never an account token: everyone signs in. The
+// release signing key lives outside the repo; without it, release builds
+// fall back to the debug key (fine locally, but those can't update a
+// published install).
+//   hourglass.server=https://marobotic.dev/hourglass   (this is the default)
+//   release.keystore=C:/Users/Maro/.marobotic/keys/marobotic-release.jks
+//   release.storePassword=...  release.keyAlias=marobotic  release.keyPassword=...
 val local = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
 
 plugins {
@@ -21,13 +27,20 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "0.2.0"
-        buildConfigField("String", "SERVER", "\"${local.getProperty("hourglass.server", "")}\"")
-        // Scrambled, not plain text; decoded once on first run and sealed with the Keystore.
-        val salt = "dev.marobotic.hourglass"
-        val tok = local.getProperty("hourglass.token", "").toByteArray()
-        val scrambled = tok.mapIndexed { i, b -> "%02x".format((b.toInt() xor salt[i % salt.length].code) and 0xff) }.joinToString("")
-        buildConfigField("String", "TOKEN_X", "\"$scrambled\"")
-        buildConfigField("String", "TOKEN_SALT", "\"$salt\"")
+        buildConfigField("String", "SERVER", "\"${local.getProperty("hourglass.server", "https://marobotic.dev/hourglass")}\"")
+        // Where the app looks for a newer build (see Updates.kt).
+        buildConfigField("String", "UPDATE_FEED", "\"https://marobotic.dev/apps/hourglass/latest.json\"")
+    }
+
+    signingConfigs {
+        local.getProperty("release.keystore")?.takeIf { file(it).exists() }?.let { path ->
+            create("release") {
+                storeFile = file(path)
+                storePassword = local.getProperty("release.storePassword")
+                keyAlias = local.getProperty("release.keyAlias")
+                keyPassword = local.getProperty("release.keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -36,7 +49,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

@@ -47,7 +47,7 @@ ApplicationWindow {
         onTriggered: {
             // popups live on the overlay layer, so grab the open one's content instead
             const open = [eventDialog, courseDialog, sessionDialog].find(d => d.visible);
-            (open ? open.contentItem : shell).grabToImage(r => { r.saveToFile(app.shotPath); Qt.quit(); });
+            (open ? open.contentItem : shell).grabToImage(r => { r.saveToFile(app.shotPath); app.quit(); });
         }
     }
     readonly property bool narrow: width < 980
@@ -114,10 +114,15 @@ ApplicationWindow {
     // Quit from the tray ends the service too (it owns this window). If the
     // service is an older one without /api/quit, just close the window.
     function quitAll() {
-        Api.request("POST", "/api/quit", {}, () => Qt.quit(), true);
+        Api.request("POST", "/api/quit", {}, () => app.quit(), true);
         quitFallback.start();
     }
-    Timer { id: quitFallback; interval: 1500; onTriggered: Qt.quit() }
+    Timer { id: quitFallback; interval: 1500; onTriggered: app.quit() }
+
+    // Qt 6 asks every window to close before quitting, and X only hides this
+    // one - so a real quit has to say so, or onClosing cancels it.
+    property bool quitting: false
+    function quit() { quitting = true; Qt.quit(); }
 
     // Opening Hourglass from the Start menu while the window sits in the tray:
     // the launcher asks the service, which bumps show_seq, and the window comes
@@ -136,6 +141,7 @@ ApplicationWindow {
     }
 
     onClosing: close => {
+        if (app.quitting) return;
         // Hide to the tray rather than close: the sidecar and any ringing
         // alarms must stay alive. Use the tray icon's "Quit" to exit.
         close.accepted = false;
@@ -303,6 +309,51 @@ ApplicationWindow {
                             Text { Layout.fillWidth: true; text: parent.parent.a ? parent.parent.a.title : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                         }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.go(0) }
+                    }
+
+                    // A newer Hourglass is out (the service reads marobotic.dev/apps).
+                    Rectangle {
+                        id: updateCard
+                        readonly property var u: app.appState.update || null
+                        property bool asked: false
+                        visible: !!u
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: 10
+                        implicitHeight: app.narrow ? 38 : updateCol.implicitHeight + 20
+                        color: Theme.alpha(Theme.teal, 0.12)
+                        border.color: Theme.alpha(Theme.teal, 0.45)
+                        ColumnLayout {
+                            id: updateCol
+                            visible: !app.narrow
+                            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                            spacing: 6
+                            Text { text: "UPDATE READY"; color: Theme.teal; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1 }
+                            Text {
+                                Layout.fillWidth: true
+                                text: updateCard.u ? "Hourglass " + updateCard.u.version : ""
+                                color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                visible: text !== ""
+                                text: updateCard.u ? updateCard.u.notes : ""
+                                color: Theme.muted; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight
+                                font.family: Theme.sans; font.pixelSize: 12
+                            }
+                            Btn {
+                                Layout.fillWidth: true
+                                compact: true
+                                kind: "primary"
+                                enabled: !(updateCard.asked || (updateCard.u && updateCard.u.installing))
+                                text: updateCard.asked || (updateCard.u && updateCard.u.installing) ? "Installing…" : "Install and restart"
+                                onClicked: {
+                                    updateCard.asked = true;
+                                    Api.request("POST", "/api/update/install", {}, (d, err) => { if (!d) updateCard.asked = false; }, true);
+                                }
+                            }
+                        }
+                        Icon { visible: app.narrow; anchors.centerIn: parent; name: "download"; color: Theme.teal }
+                        MouseArea { visible: app.narrow; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.width = Math.max(app.width, 1000) }
                     }
 
                     // Who is signed in, and which Hourglass this is

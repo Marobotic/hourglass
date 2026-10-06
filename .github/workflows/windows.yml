@@ -25,62 +25,81 @@ jobs:
           modules: qtmultimedia   # Drive pages play audio and video
           cache: true
 
+      # The package mirrors the repo, so the app finds its parts by the same
+      # relative paths it uses in a checkout: windows\sidecar imports ..\..\core,
+      # the window is windows\qt\bin\Hourglass.exe. No config.json and no token:
+      # the server is built in, and everyone signs in.
       - name: Assemble package
         shell: pwsh
-        env:
-          HOURGLASS_SERVER: ${{ secrets.HOURGLASS_SERVER }}
-          HOURGLASS_TOKEN: ${{ secrets.HOURGLASS_TOKEN }}
         run: |
           $d = "dist\Hourglass"
-          New-Item -ItemType Directory -Force "$d\node", "$d\qt", "$d\linux\app\fonts" | Out-Null
-          Copy-Item (Get-Command node).Source "$d\node\node.exe"
+          $w = "$d\windows"
+          New-Item -ItemType Directory -Force "$w\node", "$w\qt\bin", "$w\app\fonts" | Out-Null
           Push-Location server; npm ci --omit=dev --no-audit --no-fund; Pop-Location
           Copy-Item core "$d\core" -Recurse
           Copy-Item server "$d\server" -Recurse
           Copy-Item assets "$d\assets" -Recurse
           Remove-Item "$d\core\test", "$d\server\test" -Recurse -Force
-          Copy-Item linux\sidecar "$d\linux\sidecar" -Recurse
-          Copy-Item linux\app\* "$d\linux\app" -Recurse
-          Copy-Item windows\* $d
+          foreach ($x in "app", "sidecar", "bin", "share", "tools") { Copy-Item "windows\$x" $w -Recurse -Force }
+          Copy-Item windows\Hourglass.ps1, windows\Hourglass.vbs, windows\Install.ps1, windows\hourglass.ico, windows\README.txt $w
+          Copy-Item (Get-Command node).Source "$w\node\node.exe"
           # Full Nerd Font: the app's icons are Nerd Font glyphs.
           Invoke-WebRequest https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip -OutFile jbm.zip
           Expand-Archive jbm.zip jbm
-          Copy-Item jbm\JetBrainsMonoNerdFont-Regular.ttf, jbm\JetBrainsMonoNerdFont-Bold.ttf "$d\linux\app\fonts"
-          Copy-Item "$env:QT_ROOT_DIR\bin\qml.exe" "$d\qt"
-          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --qmldir linux\app --release --no-translations --no-system-d3d-compiler "$d\qt\qml.exe"
-          if ($env:HOURGLASS_SERVER) {
-            @{ server = $env:HOURGLASS_SERVER; token = $env:HOURGLASS_TOKEN } | ConvertTo-Json | Set-Content "$d\config.json"
-          }
+          Copy-Item jbm\JetBrainsMonoNerdFont-Regular.ttf, jbm\JetBrainsMonoNerdFont-Bold.ttf "$w\app\fonts"
+          Copy-Item "$env:QT_ROOT_DIR\bin\qml.exe" "$w\qt\bin"
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --qmldir windows\app --release --no-translations --no-system-d3d-compiler "$w\qt\bin\qml.exe"
+          # windeployqt leaves out the media backend: without it Drive cannot play audio or video.
+          New-Item -ItemType Directory -Force "$w\qt\bin\multimedia" | Out-Null
+          Copy-Item "$env:QT_ROOT_DIR\plugins\multimedia\*.dll" "$w\qt\bin\multimedia"
+          Copy-Item "$env:QT_ROOT_DIR\bin\av*.dll", "$env:QT_ROOT_DIR\bin\sw*.dll" "$w\qt\bin"
+          # Hourglass.exe / hourglassd.exe: named copies, so Task Manager says Hourglass.
+          & "$w\tools\brand.ps1"
+          if (-not (Test-Path "$w\qt\bin\Hourglass.exe") -or -not (Test-Path "$w\node\hourglassd.exe")) { throw "branding failed" }
+          "version=$(node -p "require('fs').readFileSync('server/app.js','utf8').match(/VERSION = \x22([^\x22]+)/)[1]")" >> $env:GITHUB_ENV
 
-      # Start the service with a throwaway profile (no sync) and render the app
-      # offscreen, so a broken package fails here rather than on your PC.
+      # Start the service with a throwaway profile (no sync, no update check) and
+      # render the app offscreen, so a broken package fails here rather than on a PC.
       - name: Smoke test
         shell: pwsh
         run: |
-          $d = "dist\Hourglass"
+          $w = "dist\Hourglass\windows"
           $env:HOURGLASS_CONFIG = "$env:RUNNER_TEMP\hg-conf"
           $env:HOURGLASS_DATA = "$env:RUNNER_TEMP\hg-data"
           $env:HOURGLASS_PORT = "8941"
           $env:HOURGLASS_SILENT = "1"
-          $p = Start-Process -PassThru -NoNewWindow "$d\node\node.exe" "$d\linux\sidecar\hourglassd.js"
+          $env:HOURGLASS_UPDATE_FEED = "off"
+          $p = Start-Process -PassThru -NoNewWindow "$w\node\hourglassd.exe" "$w\sidecar\hourglassd.js"
           for ($i = 0; $i -lt 50; $i++) { try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8941/health | Out-Null; break } catch { Start-Sleep -Milliseconds 300 } }
           $t = (Get-Content "$env:HOURGLASS_CONFIG\token" -Raw).Trim()
-          $h = @{ Authorization = "Bearer $t" }
-          Invoke-RestMethod -Method Post -Headers $h -ContentType 'application/json' -Uri http://127.0.0.1:8941/api/actions/add_course `
-            -Body '{"name":"Typography (1)","code":"GD 471","location":"B729","teacher":"Ms. Amera","schedule":[{"day":"Thu","start":"08:30","end":"09:30"},{"day":"Thu","start":"09:30","end":"13:30","kind":"tutorial"}]}' | Out-Null
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:QT_QUICK_CONTROLS_STYLE = "Basic"
           $env:QT_FORCE_STDERR_LOGGING = "1"
           foreach ($page in 0, 1) {
-            & "$d\qt\qml.exe" -I "$d\linux\app" "$d\linux\app\Main.qml" -- --port 8941 --token $t --page $page --screenshot "shot-$page.png" --size 1300x820
+            $q = Start-Process -PassThru -NoNewWindow "$w\qt\bin\Hourglass.exe" -ArgumentList @('-I', "$w\app", "$w\app\Main.qml", '--', '--port', '8941', '--token', $t, '--page', $page, '--screenshot', "shot-$page.png", '--size', '1300x820')
+            if (-not $q.WaitForExit(60000)) { $q.Kill(); throw "page $page did not exit" }
             if (-not (Test-Path "shot-$page.png")) { throw "page $page did not render" }
           }
           Stop-Process -Id $p.Id
 
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DAppVersion=$env:version" "/DPackage=..\..\dist\Hourglass" windows\installer\Hourglass.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-ChildItem dist\*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hourglass-setup
+          path: dist/Hourglass-*-setup.exe
+
       - uses: actions/upload-artifact@v4
         with:
           name: Hourglass-windows
-          path: dist
+          path: dist/Hourglass
 
       - uses: actions/upload-artifact@v4
         if: always()

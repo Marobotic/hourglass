@@ -1,11 +1,14 @@
 Hourglass for Windows
 =====================
 
-1. Unzip this folder somewhere permanent, e.g. C:\Users\<you>\Hourglass
-2. Right-click Install.ps1 > Run with PowerShell (adds a Start menu entry,
-   puts bin\ on your PATH, and starts the background service at sign-in, so
-   alarms ring with the window closed)
-3. Open Hourglass from the Start menu, or double-click Hourglass.vbs
+Install: run Hourglass-<version>-setup.exe from https://marobotic.dev. It installs
+for you only (no admin prompt) into %LOCALAPPDATA%\Programs\Hourglass, adds a
+Start menu entry, and starts the background service at sign-in so alarms ring
+with the window closed. Hourglass tells you when a new version is out and
+installs it with one click.
+
+From a folder instead (a checkout or the CI zip): right-click Install.ps1 >
+Run with PowerShell, then open Hourglass from the Start menu.
 
 Your data syncs with marobotic.dev, the same as the Linux app and the phones.
 Settings live in %APPDATA%\Hourglass, data in %LOCALAPPDATA%\Hourglass.

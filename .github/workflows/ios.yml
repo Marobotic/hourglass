@@ -20,12 +20,7 @@ jobs:
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
 
       - name: Generate project
-        env:
-          HOURGLASS_SERVER: ${{ secrets.HOURGLASS_SERVER }}
-          HOURGLASS_TOKEN: ${{ secrets.HOURGLASS_TOKEN }}
         run: |
-          # Ship the token XOR-scrambled, not as plain text (Keychain.unscramble).
-          export HOURGLASS_TOKEN_X=$(python3 -c 'import os;s=b"dev.marobotic.hourglass";t=os.environ.get("HOURGLASS_TOKEN","").encode();print("".join("%02x"%(b^s[i%len(s)]) for i,b in enumerate(t)))')
           brew install xcodegen
           xcodegen generate
 

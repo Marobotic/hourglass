@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Drive files this phone downloaded, handed to other apps to open. -->
+<!-- Drive files this phone downloaded, handed to other apps to open; and a
+     downloaded update, handed to the package installer. -->
 <paths>
     <cache-path name="drive" path="drive/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

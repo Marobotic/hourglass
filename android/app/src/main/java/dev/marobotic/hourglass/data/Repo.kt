@@ -98,10 +98,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         if (autoConfigure) runCatching {
             // Older builds kept the token in plain text; seal it and drop the copy.
             store.meta("token")?.let { store.setMeta("token_sealed", Vault.seal(it)); store.setMeta("token", null) }
-            if (store.meta("token_sealed") == null) {
-                val t = Vault.unscramble(BuildConfig.TOKEN_X, BuildConfig.TOKEN_SALT)
-                if (t.isNotEmpty()) store.setMeta("token_sealed", Vault.seal(t))
-            }
+            // Builds no longer ship a token: a fresh install signs in.
             store.setMeta("server", null)
         }
         syncEnabled = autoConfigure

@@ -41,6 +41,7 @@ struct RootView: View {
     @State private var tab = 0
     @State private var scheduleSub = 0
     @State private var timeSub = 0
+    @StateObject private var update = UpdateCheck()
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -59,6 +60,18 @@ struct RootView: View {
                     }
                 }
                 .padding(.leading, 18).padding(.trailing, 8).padding(.top, 4)
+                // A newer build is on marobotic.dev: SideStore installs it.
+                if let v = update.version {
+                    Button { update.open() } label: {
+                        HStack(spacing: 0) {
+                            T("Hourglass \(v) is ready. Update it in SideStore  →", 13)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 18).padding(.vertical, 10)
+                        .background(H.teal.opacity(0.18))
+                    }
+                    .buttonStyle(.plain)
+                }
                 Group {
                     switch tab {
                     case 0: NowView(path: $path)
@@ -98,6 +111,7 @@ struct RootView: View {
                 }
                 .background(H.surface.ignoresSafeArea(edges: .bottom))
             }
+            .task { await update.check() }
             // Our own header: iOS 26 wraps toolbar items in round glass
             // bubbles, which clipped the name.
             .toolbar(.hidden, for: .navigationBar)

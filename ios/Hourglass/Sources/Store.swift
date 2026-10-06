@@ -60,13 +60,10 @@ final class Store: ObservableObject {
     private var syncTask: Task<Void, Never>?
 
     init() {
-        // The token ships scrambled in Info.plist and is moved into the Keychain
-        // on first launch; older builds kept it in UserDefaults.
-        if Keychain.get("sync-token") == nil {
-            let legacy = UserDefaults.standard.string(forKey: "token") ?? ""
-            let shipped = Keychain.unscramble(Bundle.main.object(forInfoDictionaryKey: "HourglassTokenX") as? String ?? "")
-            let t = legacy.isEmpty ? shipped : legacy
-            if !t.isEmpty { Keychain.set("sync-token", t) }
+        // Builds no longer ship a token (a fresh install signs in). Older builds
+        // kept one in UserDefaults: move it into the Keychain.
+        if Keychain.get("sync-token") == nil, let legacy = UserDefaults.standard.string(forKey: "token"), !legacy.isEmpty {
+            Keychain.set("sync-token", legacy)
         }
         UserDefaults.standard.removeObject(forKey: "token")
         UserDefaults.standard.removeObject(forKey: "server")

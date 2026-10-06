@@ -6,12 +6,12 @@
 //   data:   ~/.local/share/hourglass/         (Windows: %LOCALAPPDATA%\Hourglass)
 //   config.json: { "server": "https://...", "token": "..." }
 import { createServer } from "node:http";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
@@ -606,12 +606,85 @@ function quitAll() {
   process.exit(0);
 }
 
+// --- updates (Windows) ---------------------------------------------------------------
+// marobotic.dev/apps/hourglass/latest.json says what the newest build is. The
+// window shows "Update available"; Install downloads that setup.exe, checks its
+// SHA-256 against the feed, runs it silently and exits - the installer replaces
+// the files and starts Hourglass again. HOURGLASS_UPDATE_FEED points tests at
+// another feed; "off" turns checking off.
+const UPDATE_FEED = process.env.HOURGLASS_UPDATE_FEED || "https://marobotic.dev/apps/hourglass/latest.json";
+const update = { checked_at: null, latest: null, installing: false, error: null };
+
+// "0.2.10" > "0.2.9": compared number by number.
+function newer(a, b) {
+  const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d > 0;
+  }
+  return false;
+}
+
+async function checkUpdate() {
+  if (!WIN || UPDATE_FEED === "off") return;
+  try {
+    const r = await fetch(UPDATE_FEED, { signal: AbortSignal.timeout(15000), headers: { "cache-control": "no-cache" } });
+    if (!r.ok) throw new Error(`feed ${r.status}`);
+    const feed = await r.json();
+    const win = feed.windows;
+    update.latest = win && win.url && newer(feed.version, VERSION)
+      ? { version: feed.version, notes: feed.notes || "", url: win.url, sha256: win.sha256 || "", size: win.size || 0 }
+      : null;
+    update.error = null;
+  } catch (e) {
+    update.error = e.message;
+  }
+  update.checked_at = Date.now();
+}
+
+async function installUpdate() {
+  const u = update.latest;
+  if (!u) throw Object.assign(new Error("no update to install"), { status: 409 });
+  if (update.installing) return;
+  update.installing = true;
+  try {
+    const r = await fetch(u.url, { signal: AbortSignal.timeout(1800000) });
+    if (!r.ok) throw new Error(`download ${r.status}`);
+    const file = join(tmpdir(), `Hourglass-${u.version}-setup.exe`);
+    await pipeline(Readable.fromWeb(r.body), createWriteStream(file));
+    if (u.sha256) {
+      const hash = createHash("sha256").update(readFileSync(file)).digest("hex");
+      if (hash.toLowerCase() !== u.sha256.toLowerCase()) { rmSync(file, { force: true }); throw new Error("the download did not match the release"); }
+    }
+    // The installer closes this service and the window itself, then starts Hourglass again.
+    spawn(file, ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/RELAUNCH"], { detached: true, stdio: "ignore" }).unref();
+    setTimeout(quitAll, 500);
+  } catch (e) {
+    update.installing = false;
+    update.error = e.message;
+    throw Object.assign(e, { status: 502 });
+  }
+}
+
+if (WIN) {
+  setTimeout(() => checkUpdate(), 20000);
+  setInterval(() => checkUpdate(), 6 * 3600 * 1000);
+}
+
 async function extra(req, res, url, path) {
   if (await driveRoutes(req, res, url, path)) return true;
   if (WIN && path === "/api/window" && req.method === "GET") return json(res, 200, { show_seq: showSeq, open: !!ui }), true;
   if (WIN && path === "/api/window/show" && req.method === "POST") {
     const r = openWindow();
     return json(res, r.error ? 500 : 200, r), true;
+  }
+  if (WIN && path === "/api/update" && req.method === "GET") {
+    if (url.searchParams.get("check") === "1") await checkUpdate();
+    return json(res, 200, { current: VERSION, ...update }), true;
+  }
+  if (WIN && path === "/api/update/install" && req.method === "POST") {
+    await installUpdate();
+    return json(res, 200, { ok: true }), true;
   }
   if (WIN && path === "/api/quit" && req.method === "POST") {
     json(res, 200, { ok: true });
@@ -627,6 +700,7 @@ async function extra(req, res, url, path) {
       account: account(),
       tz_offset_min: tzOffsetMin(),
       version: VERSION,
+      update: update.latest ? { version: update.latest.version, notes: update.latest.notes, installing: update.installing } : null,
     }), true;
   }
   if (path === "/api/ring/stop" && req.method === "POST") {
