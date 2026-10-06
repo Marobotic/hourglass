@@ -1,64 +1,33 @@
 #!/usr/bin/env bash
-# Sets up opencode for the Hourglass assistant on the server. Safe to run again.
+# Sets up the server for the Hourglass assistant. Safe to run again.
 #
 #   sudo bash server/assistant-setup.sh
 #
-# opencode runs as its own system user, on localhost only, behind a password the
-# Hourglass server reads from <data>/assistant_password. It can only write in
-# /var/lib/hourglass-assistant. Each account's workspace there allows nothing but
-# the Hourglass MCP tools (see assistant.js).
+# Each message runs stock `opencode run` on opencode's free models, in its own
+# throwaway systemd sandbox, as the unprivileged hourglass-ai user (see
+# assistant.js). This creates that user and the folder the per-account
+# sandboxes live in, and removes the always-on `opencode serve` an earlier
+# version of the assistant used.
 #
-# Afterwards, give opencode a model provider as that user, then tell Hourglass:
-#   sudo -u hourglass-ai HOME=/var/lib/hourglass-assistant/home opencode auth login
-#   HOURGLASS_ASSISTANT_MODEL=<provider/model> in the Hourglass server's environment
+# Then start the Hourglass server with HOURGLASS_ASSISTANT=on.
 set -euo pipefail
 
-PORT="${ASSISTANT_PORT:-4590}"
 BASE=/var/lib/hourglass-assistant
 DATA="${HOURGLASS_DATA:-/var/lib/hourglass}"
 OPENCODE="$(command -v opencode)"
 
-id hourglass-ai >/dev/null 2>&1 || useradd --system --home-dir "$BASE/home" --shell /usr/sbin/nologin hourglass-ai
-install -d -o hourglass-ai -g hourglass-ai -m 700 "$BASE/home" "$BASE/home/.config" "$BASE/home/.config/opencode"
-# Workspaces: written by the Hourglass server (root), read and used by opencode (the group).
-install -d -o root -g hourglass-ai -m 2770 "$BASE/workspaces"
+id hourglass-ai >/dev/null 2>&1 || useradd --system --home-dir "$BASE" --shell /usr/sbin/nologin hourglass-ai
+# The Hourglass server (root) makes one folder per account here and hands it to hourglass-ai.
+install -d -o root -g root -m 755 "$BASE"
+install -d -o root -g root -m 711 "$BASE/accounts"
 
-# Nothing global to pick up: no auto-update, no sharing.
-cat > "$BASE/home/.config/opencode/opencode.json" <<JSON
-{ "\$schema": "https://opencode.ai/config.json", "autoupdate": false, "share": "disabled" }
-JSON
-chown hourglass-ai:hourglass-ai "$BASE/home/.config/opencode/opencode.json"
+# The earlier design: a long-running opencode serve behind a password.
+if systemctl list-unit-files hourglass-assistant.service >/dev/null 2>&1; then
+  systemctl disable --now hourglass-assistant.service 2>/dev/null || true
+  rm -f /etc/systemd/system/hourglass-assistant.service
+  systemctl daemon-reload
+fi
+rm -f /etc/hourglass-assistant.env "$DATA/assistant_password"
+rm -rf "$BASE/workspaces" "$BASE/home"
 
-PW="$DATA/assistant_password"
-if [ ! -s "$PW" ]; then (umask 077; head -c 32 /dev/urandom | base64 | tr -d '/+=\n' > "$PW"); fi
-(umask 077; printf 'OPENCODE_SERVER_PASSWORD=%s\n' "$(cat "$PW")" > /etc/hourglass-assistant.env)
-
-cat > /etc/systemd/system/hourglass-assistant.service <<UNIT
-[Unit]
-Description=opencode for the Hourglass assistant
-After=network-online.target
-
-[Service]
-User=hourglass-ai
-Group=hourglass-ai
-Environment=HOME=$BASE/home
-EnvironmentFile=/etc/hourglass-assistant.env
-WorkingDirectory=$BASE/workspaces
-ExecStart=$OPENCODE serve --hostname 127.0.0.1 --port $PORT
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=$BASE
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now hourglass-assistant
-systemctl restart hourglass-assistant
-echo "opencode for Hourglass on 127.0.0.1:$PORT"
-echo "Hourglass server env: HOURGLASS_ASSISTANT_URL=http://127.0.0.1:$PORT HOURGLASS_ASSISTANT_DIR=$BASE/workspaces HOURGLASS_ASSISTANT_MODEL=<provider/model>"
+echo "Ready. Start Hourglass with HOURGLASS_ASSISTANT=on HOURGLASS_ASSISTANT_BIN=$OPENCODE"

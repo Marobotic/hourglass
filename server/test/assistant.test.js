@@ -1,92 +1,19 @@
-// The assistant tab, end to end against the real server and a stand-in opencode.
-//
-// The stand-in does what opencode does with a message: it reads the account's
-// workspace config and calls the Hourglass MCP tools through the URL in it. So
-// these tests prove the workspace, the key and the routes - everything but the
-// model itself.
+// The assistant tab, end to end against the real server and a stand-in for
+// `opencode run` (fake-opencode.mjs), which does what opencode does with a
+// message: read the account's config and call the Hourglass MCP tools.
+// These tests prove the account folder, the key, the chat and the routes -
+// everything but the model itself and the systemd sandbox.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const TOKEN = "owner-token-for-tests";
-const PASSWORD = "oc-password";
-let fake, fakeUrl, hg, hgOff, base, baseOff, data, dataOff;
-
-// --- a stand-in for `opencode serve` ------------------------------------------
-
-const sessions = new Map(); // id -> { dir, busy, messages: [] }
-let seq = 0;
-
-async function readJson(req) {
-  let b = "";
-  for await (const c of req) b += c;
-  return b ? JSON.parse(b) : {};
-}
-
-async function work(s, text) {
-  const config = JSON.parse(readFileSync(join(s.dir, "opencode.json"), "utf8"));
-  const client = new Client({ name: "fake-opencode", version: "1" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(config.mcp.hourglass.url)));
-  const r = await client.callTool({ name: "add_note", arguments: { title: "From assistant", body: text } });
-  await client.close();
-  s.messages.push({
-    info: { id: `msg_${++seq}`, role: "assistant", time: { created: Date.now() } },
-    parts: [
-      { type: "tool", tool: "hourglass_add_note", state: { status: r.isError ? "error" : "completed" } },
-      { type: "text", text: "Done." },
-    ],
-  });
-  s.busy = false;
-}
-
-function fakeOpencode() {
-  return createServer(async (req, res) => {
-    const url = new URL(req.url, "http://x");
-    const send = (status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(body === undefined ? "" : JSON.stringify(body)); };
-    if (req.headers.authorization !== "Basic " + Buffer.from(`opencode:${PASSWORD}`).toString("base64")) return send(401, { error: "auth" });
-    const dir = url.searchParams.get("directory");
-    if (!dir) return send(400, { error: "no directory" });
-    const p = url.pathname;
-    if (p === "/session" && req.method === "POST") {
-      const id = `ses_${++seq}`;
-      sessions.set(id, { dir, busy: false, messages: [] });
-      return send(200, { id });
-    }
-    if (p === "/session/status") {
-      return send(200, Object.fromEntries([...sessions].filter(([, s]) => s.busy).map(([id]) => [id, { type: "busy" }])));
-    }
-    const m = /^\/session\/([^/]+)(\/.*)?$/.exec(p);
-    const s = m && sessions.get(m[1]);
-    if (!s) return send(404, { error: "no session" });
-    if (s.dir !== dir) return send(403, { error: "wrong workspace" });
-    const rest = m[2] || "";
-    if (rest === "" && req.method === "GET") return send(200, { id: m[1] });
-    if (rest === "" && req.method === "DELETE") { sessions.delete(m[1]); return send(200, true); }
-    if (rest === "/message" && req.method === "GET") return send(200, s.messages);
-    if (rest === "/abort") { s.busy = false; return send(200, true); }
-    if (rest === "/prompt_async" && req.method === "POST") {
-      const body = await readJson(req);
-      // Built-in tools must be switched off on every message, not only in the config.
-      if (body.tools?.bash !== false || body.tools?.edit !== false || body.tools?.webfetch !== false) return send(400, { error: "built-in tools left on" });
-      if (body.agent !== "hourglass" || !/It is \w+day \d{4}-\d\d-\d\d/.test(body.system || "")) return send(400, { error: "no agent or context" });
-      const text = body.parts[0].text;
-      s.messages.push({ info: { id: `msg_${++seq}`, role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text }] });
-      s.busy = true;
-      setTimeout(() => work(s, text).catch((e) => { s.busy = false; console.error(e); }), 50);
-      res.writeHead(204);
-      return res.end();
-    }
-    send(404, { error: "unknown" });
-  });
-}
-
-// --- the real server -------------------------------------------------------
+const FAKE = join(import.meta.dirname, "fake-opencode.mjs");
+let hg, hgOff, base, baseOff, data, dataOff, accounts;
 
 async function freePort() {
   const s = createServer();
@@ -96,17 +23,17 @@ async function freePort() {
   return port;
 }
 
-async function startHourglass(dataDir, extraEnv) {
+async function startHourglass(dataDir, extraEnv = {}) {
   const port = await freePort();
+  const url = `http://127.0.0.1:${port}`;
+  const env = { ...process.env, HOURGLASS_DATA: dataDir, HOURGLASS_PORT: String(port), HOURGLASS_HOST: "127.0.0.1", HOURGLASS_TOKEN: TOKEN, MARO_ACCOUNT_URL: "http://127.0.0.1:9", HOURGLASS_URL: url };
+  delete env.HOURGLASS_ASSISTANT;
   return new Promise((resolveStart, reject) => {
-    const child = spawn(process.execPath, ["--no-warnings", join(import.meta.dirname, "..", "server.js")], {
-      env: { ...process.env, HOURGLASS_DATA: dataDir, HOURGLASS_PORT: String(port), HOURGLASS_HOST: "127.0.0.1", HOURGLASS_TOKEN: TOKEN, MARO_ACCOUNT_URL: "http://127.0.0.1:9", ...extraEnv },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(process.execPath, ["--no-warnings", join(import.meta.dirname, "..", "server.js")], { env: { ...env, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     child.stdout.on("data", (d) => {
       out += d;
-      if (out.includes(`127.0.0.1:${port}`)) resolveStart({ child, base: `http://127.0.0.1:${port}` });
+      if (out.includes(`127.0.0.1:${port}`)) resolveStart({ child, base: url });
     });
     child.stderr.on("data", (d) => (out += d));
     child.on("exit", (code) => reject(new Error(`server exited ${code}: ${out}`)));
@@ -114,13 +41,17 @@ async function startHourglass(dataDir, extraEnv) {
 }
 
 before(async () => {
-  fake = fakeOpencode();
-  await new Promise((r) => fake.listen(0, "127.0.0.1", r));
-  fakeUrl = `http://127.0.0.1:${fake.address().port}`;
   data = mkdtempSync(join(tmpdir(), "hg-assistant-"));
   dataOff = mkdtempSync(join(tmpdir(), "hg-assistant-off-"));
-  ({ child: hg, base } = await startHourglass(data, { HOURGLASS_ASSISTANT_URL: fakeUrl, HOURGLASS_ASSISTANT_PASSWORD: PASSWORD, HOURGLASS_ASSISTANT_MODEL: "test/model" }));
-  ({ child: hgOff, base: baseOff } = await startHourglass(dataOff, {}));
+  accounts = join(data, "assistant-accounts");
+  ({ child: hg, base } = await startHourglass(data, {
+    HOURGLASS_ASSISTANT: "on",
+    HOURGLASS_ASSISTANT_RUNNER: "direct",
+    HOURGLASS_ASSISTANT_BIN: FAKE,
+    HOURGLASS_ASSISTANT_MODELS: "fake/down,fake/good",
+    HOURGLASS_ASSISTANT_DIR: accounts,
+  }));
+  ({ child: hgOff, base: baseOff } = await startHourglass(dataOff));
 });
 
 // Wait for the servers to exit before deleting: Windows keeps an open database locked.
@@ -128,7 +59,6 @@ const stop = (child) => new Promise((r) => { if (!child || child.exitCode !== nu
 
 after(async () => {
   await Promise.all([stop(hg), stop(hgOff)]);
-  fake?.close();
   rmSync(data, { recursive: true, force: true, maxRetries: 5 });
   rmSync(dataOff, { recursive: true, force: true, maxRetries: 5 });
 });
@@ -139,13 +69,16 @@ const call = async (method, path, body, at = base) => {
 };
 
 async function waitIdle() {
-  for(let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     const r = await call("GET", "/api/assistant");
-    if (!r.body.busy && r.body.messages.some((m) => m.role === "assistant")) return r.body;
+    if (!r.body.busy) return r.body;
     await new Promise((r) => setTimeout(r, 50));
   }
   throw new Error("assistant never finished");
 }
+
+const accountDir = () => join(accounts, readdirSync(accounts)[0]);
+const calls = () => readFileSync(join(accountDir(), "work", "calls.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 
 // --- tests ----------------------------------------------------------------------
 
@@ -157,48 +90,59 @@ test("off until configured", async () => {
 });
 
 test("needs an account", async () => {
-  const r = await fetch(base + "/api/assistant");
-  assert.equal(r.status, 401);
+  assert.equal((await fetch(base + "/api/assistant")).status, 401);
 });
 
-test("a message runs, calls the Hourglass tools, and the result lands in the account's data", async () => {
+test("a message runs opencode, which works on the account's data through the Hourglass tools", async () => {
   const empty = await call("GET", "/api/assistant");
-  assert.deepEqual(empty.body, { enabled: true, model: "test/model", busy: false, messages: [] });
+  assert.deepEqual(empty.body, { enabled: true, model: "fake/down", busy: false, messages: [] });
 
-  const sent = await call("POST", "/api/assistant/message", { text: "Buy eggs and milk" });
-  assert.equal(sent.status, 202, JSON.stringify(sent.body));
-
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Buy eggs and milk" })).status, 202);
   const chat = await waitIdle();
   assert.deepEqual(chat.messages.map((m) => m.role), ["user", "assistant"]);
   assert.equal(chat.messages[0].text, "Buy eggs and milk");
+  // The answer is the last step's text, not what was said before the tool call.
   assert.equal(chat.messages[1].text, "Done.");
   assert.deepEqual(chat.messages[1].tools, [{ tool: "add_note", status: "completed", label: "Wrote a note" }]);
+  assert.equal(chat.messages[1].error, null);
 
   const notes = await call("POST", "/api/actions/get_notes", { limit: 5 });
   assert.ok(notes.body.some((n) => n.title === "From assistant" && n.body === "Buy eggs and milk"), JSON.stringify(notes.body));
+
+  // The first model was down, so the next one was used. The first message of a
+  // conversation carries the full instructions and the time.
+  const c = calls();
+  assert.deepEqual(c.map((x) => x.model), ["fake/down", "fake/good"]);
+  assert.equal(c[1].session, null);
+  assert.match(c[1].prompt, /You are the assistant built into Hourglass/);
+  assert.match(c[1].prompt, /hourglass_whats_now/);
+  assert.match(c[1].prompt, /It is \w+day \d{4}-\d\d-\d\d/);
+  assert.equal(c[1].home, join(accountDir(), "home"));
 });
 
-test("the workspace allows only the Hourglass tools", async () => {
-  const { readdirSync } = await import("node:fs");
-  const root = join(data, "assistant");
-  const [dir] = readdirSync(root);
-  const config = JSON.parse(readFileSync(join(root, dir, "opencode.json"), "utf8"));
-  assert.equal(config.tools["*"], false);
-  for (const t of ["bash", "edit", "write", "read", "webfetch", "task"]) assert.equal(config.tools[t], false, t);
-  assert.equal(config.tools["hourglass_*"], true);
-  assert.deepEqual(config.permission, { edit: "deny", bash: "deny", webfetch: "deny" });
-  assert.equal(config.agent.hourglass.mode, "primary");
-  assert.equal(config.agent.build.disable, true);
-  assert.match(config.agent.hourglass.prompt, /You can only act through the hourglass tools/);
-  assert.match(config.agent.hourglass.prompt, /whats_now/); // the skill reference is included
+test("the account folder's config is stock opencode plus the Hourglass MCP server", async () => {
+  const config = JSON.parse(readFileSync(join(accountDir(), "work", "opencode.json"), "utf8"));
+  // Anything else (tools, permissions, agents) and the free models refuse to answer.
+  assert.deepEqual(Object.keys(config).sort(), ["$schema", "mcp"]);
+  assert.deepEqual(Object.keys(config.mcp), ["hourglass"]);
   assert.match(config.mcp.hourglass.url, /\/mcp\/hg_as_[A-Za-z0-9_-]{20,}$/);
+});
+
+test("the next message continues the same opencode session, with a short reminder", async () => {
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Second note" })).status, 202);
+  const chat = await waitIdle();
+  assert.equal(chat.messages.length, 4);
+  const last = calls().at(-1);
+  assert.equal(last.session, "ses_fake1");
+  assert.doesNotMatch(last.prompt, /You are the assistant built into Hourglass/);
+  assert.match(last.prompt, /You are the Hourglass assistant/);
 });
 
 test("the assistant keeps working after the user's AI link is deleted", async () => {
   const link = await call("POST", "/api/ai");
   assert.match(link.body.key, /^hg_/);
   assert.equal((await call("DELETE", "/api/ai")).status, 200);
-  assert.equal((await call("POST", "/api/assistant/message", { text: "Second note" })).status, 202);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Third note" })).status, 202);
   const chat = await waitIdle();
   assert.equal(chat.messages.at(-1).tools[0].status, "completed");
 });
@@ -211,8 +155,12 @@ test("one message at a time, and empty or huge messages are refused", async () =
   await waitIdle();
 });
 
-test("a new chat starts empty", async () => {
+test("a new chat starts empty, and its first message starts a new session", async () => {
   assert.equal((await call("POST", "/api/assistant/new")).status, 200);
-  const r = await call("GET", "/api/assistant");
-  assert.deepEqual(r.body.messages, []);
+  assert.deepEqual((await call("GET", "/api/assistant")).body.messages, []);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Fresh start" })).status, 202);
+  await waitIdle();
+  const last = calls().at(-1);
+  assert.equal(last.session, null);
+  assert.match(last.prompt, /You are the assistant built into Hourglass/);
 });

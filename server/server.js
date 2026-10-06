@@ -111,9 +111,8 @@ function tenant(email) {
 }
 
 const assistant = createAssistant({
-  dataDir,
   rootDir: resolve(import.meta.dirname, ".."),
-  localUrl: `http://127.0.0.1:${port}`,
+  publicUrl: process.env.HOURGLASS_URL,
   registerKey: (key, t) => aiKeys.set(key, t.email),
 });
 

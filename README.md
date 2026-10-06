@@ -71,21 +71,23 @@ HOURGLASS_DATA=/var/lib/hourglass HOURGLASS_PORT=8930 node server.js
 ### Assistant
 
 The Assistant tab lets anyone signed in ask Hourglass to do things ("tidy my
-latest note", "wake me at 7:30 on weekdays"). The server hands the message to
-[opencode](https://opencode.ai) running on the same machine; opencode works on
-that account's data through the Hourglass MCP tools, with a key the server makes
-for it, so no AI link is needed. Each account gets its own workspace whose config
-switches off every built-in opencode tool (shell, files, web).
+latest note", "wake me at 7:30 on weekdays"). Each message runs stock
+[opencode](https://opencode.ai) (`opencode run`) on its free models. opencode
+works on that account's data through the Hourglass MCP tools, with a key the
+server makes for it, so no AI link is needed.
+
+The free models only answer an unmodified opencode, so its own tools stay on.
+Instead, each run gets a throwaway systemd sandbox as the `hourglass-ai` user. The
+sandbox sees only that account's folder, can't reach localhost (Hourglass is
+reached through its public URL), and is capped in memory, CPU and time.
 
 ```bash
-sudo bash server/assistant-setup.sh       # opencode as its own user, localhost only
-sudo -u hourglass-ai HOME=/var/lib/hourglass-assistant/home opencode auth login
-# then run the server with:
-HOURGLASS_ASSISTANT_URL=http://127.0.0.1:4590 HOURGLASS_ASSISTANT_DIR=/var/lib/hourglass-assistant/workspaces HOURGLASS_ASSISTANT_MODEL=<provider/model> node server.js
+sudo bash server/assistant-setup.sh       # the sandbox user and folders
+HOURGLASS_ASSISTANT=on node server.js     # plus the server's usual settings
 ```
 
-opencode's free models refuse requests from `opencode serve`, so it needs a real
-provider key.
+Optional: `HOURGLASS_ASSISTANT_MODELS` (tried in order, default
+`opencode/big-pickle,opencode/space-bunny-free`), `HOURGLASS_ASSISTANT_BIN`.
 
 ## Android
 
