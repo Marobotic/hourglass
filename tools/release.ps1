@@ -38,6 +38,8 @@ function Edit-File($path, $pattern, $replacement) {
   [IO.File]::WriteAllText($path, ([regex]::Replace($text, $pattern, $replacement)))
 }
 function Sha($f) { (Get-FileHash -Algorithm SHA256 $f).Hash.ToLower() }
+# JSON without a byte-order mark (Windows PowerShell's utf8 adds one, and Android's parser rejects it).
+function Write-Json($obj, $path) { [IO.File]::WriteAllText($path, ($obj | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding $false)) }
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version looks like 1.2.3" }
 if ((git branch --show-current) -ne 'main') { throw "release from main" }
@@ -132,7 +134,7 @@ $feed = [ordered]@{
   ios = [ordered]@{ url = "$dir/$(Split-Path -Leaf $ipa)"; sha256 = (Sha $ipa); size = (Get-Item $ipa).Length; version = $Version; build = "$build" }
   linux = [ordered]@{ url = "$dir/$(Split-Path -Leaf $linux)"; sha256 = (Sha $linux); size = (Get-Item $linux).Length }
 }
-$feed | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$out\latest.json"
+Write-Json $feed "$out\latest.json"
 
 # SideStore (AltStore source format): every marobotic iOS app in one source.
 $source = try { Invoke-RestMethod "$Base/sidestore.json" -TimeoutSec 15 } catch { $null }
@@ -149,7 +151,7 @@ $entry = [pscustomobject]@{
 }
 $others = @($source.apps | Where-Object { $_.bundleIdentifier -ne 'dev.marobotic.hourglass' })
 $source.apps = @($others + $entry)
-$source | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 "$out\sidestore.json"
+Write-Json $source "$out\sidestore.json"
 
 Get-ChildItem $out -File | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } | Format-Table -AutoSize
 if ($DryRun) {
