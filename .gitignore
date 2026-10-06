@@ -13,3 +13,4 @@ ios/*.xcodeproj/
 # Windows: the bundled runtimes (download them; see windows/README.txt)
 windows/node/
 windows/qt/
+android/app/hourglass.json.tmp
