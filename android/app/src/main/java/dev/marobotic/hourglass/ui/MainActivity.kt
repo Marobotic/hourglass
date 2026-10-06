@@ -56,6 +56,7 @@ import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
@@ -85,6 +86,7 @@ import org.json.JSONObject
 sealed interface Route {
     data class NoteR(val id: String) : Route
     data class CourseR(val id: String) : Route
+    data object AssistantR : Route
 }
 
 // Sheets and dialogs any screen can open.
@@ -151,6 +153,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
         when (top) {
             is Route.NoteR -> NoteScreen(nav, top.id, version)
             is Route.CourseR -> Box(Modifier.statusBarsPadding()) { NotesScreen(nav, version, top.id) }
+            is Route.AssistantR -> AssistantScreen(nav)
             null -> Column(Modifier.fillMaxSize()) {
                 // Header
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 6.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -158,6 +161,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
                     Spacer(Modifier.width(12.dp))
                     T("Hourglass", 18, bold = true)
                     Grow()
+                    IconButton({ nav.push(Route.AssistantR) }) { Icon(Icons.Outlined.Forum, "Assistant", tint = HColors.muted) }
                     IconButton({ nav.sheets.settings = true }) { Icon(Icons.Outlined.Settings, "Settings", tint = HColors.muted) }
                 }
                 // Alarms can only take over the screen with this permission (Android 14+).

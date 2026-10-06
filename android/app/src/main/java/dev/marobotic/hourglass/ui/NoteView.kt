@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.foundation.layout.size
+import dev.marobotic.hourglass.core.Md
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,14 +65,19 @@ fun inlineMd(s: String): AnnotatedString = buildAnnotatedString {
     append(s.substring(i))
 }
 
-// A note as it reads: headings, lists, inline styles, and its pictures and files.
+// A note as it reads: headings, lists counted 1, 2, 3, to-dos with boxes to
+// tick, inline styles, and its pictures and files. onToggleTask gets the line
+// of the note a ticked box is on; without it the boxes only show.
 @Composable
-fun NoteView(body: String, opener: FileOpener, modifier: Modifier = Modifier) {
+fun NoteView(body: String, opener: FileOpener, modifier: Modifier = Modifier, onToggleTask: ((Int) -> Unit)? = null) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (line in body.split("\n")) {
+        // Renumbering keeps every line where it is, so indexes still match the body.
+        for ((index, line) in Md.renumber(body).split("\n").withIndex()) {
             val img = IMG.find(line)
             val file = FILE.find(line)
+            val task = Md.TASK.find(line)
             when {
+                task != null -> TaskRow(task.groupValues[1].length, task.groupValues[2] != " ", task.groupValues[3], onToggleTask?.let { cb -> { cb(index) } })
                 img != null -> NotePicture(img.groupValues[2], img.groupValues[1], opener)
                 file != null -> FileChip(file.groupValues[1].removePrefix("📎").trim()) {
                     opener.repo.store.get("files", file.groupValues[2])?.let { opener.open(it) } ?: run { opener.error = "That file is no longer in the Drive." }
@@ -77,18 +85,38 @@ fun NoteView(body: String, opener: FileOpener, modifier: Modifier = Modifier) {
                 line.isBlank() -> Spacer(Modifier.height(4.dp))
                 else -> {
                     val h = Regex("^(#{1,6}) (.*)").find(line)
-                    val ul = Regex("^\\s*[-*] (.*)").find(line)
-                    val ol = Regex("^\\s*(\\d+)\\. (.*)").find(line)
+                    val ul = Regex("^(\\s*)[-*] (.*)").find(line)
+                    val ol = Regex("^(\\s*)(\\d+)\\. (.*)").find(line)
                     when {
                         h != null -> Text(inlineMd(h.groupValues[2]), color = HColors.fg, fontFamily = Mono, fontWeight = FontWeight.Bold,
                             fontSize = when (h.groupValues[1].length) { 1 -> 24.sp; 2 -> 20.sp; else -> 17.sp })
-                        ul != null -> Row { Text("•  ", color = HColors.muted, fontFamily = Mono, fontSize = 15.sp); Text(inlineMd(ul.groupValues[1]), color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp) }
-                        ol != null -> Row { Text(ol.groupValues[1] + ". ", color = HColors.muted, fontFamily = Mono, fontSize = 15.sp); Text(inlineMd(ol.groupValues[2]), color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp) }
+                        ul != null -> Row(Modifier.padding(start = (ul.groupValues[1].length * 6).dp)) { Text("•  ", color = HColors.muted, fontFamily = Mono, fontSize = 15.sp); Text(inlineMd(ul.groupValues[2]), color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp) }
+                        ol != null -> Row(Modifier.padding(start = (ol.groupValues[1].length * 6).dp)) { Text(ol.groupValues[2] + ". ", color = HColors.muted, fontFamily = Mono, fontSize = 15.sp); Text(inlineMd(ol.groupValues[3]), color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp) }
                         else -> Text(inlineMd(line), color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp)
                     }
                 }
             }
         }
+    }
+}
+
+// One to-do: a square box (filled and ticked when done), then the item.
+@Composable
+private fun TaskRow(indent: Int, done: Boolean, text: String, onToggle: (() -> Unit)?) {
+    Row(Modifier.padding(start = (indent * 6).dp), verticalAlignment = Alignment.Top) {
+        Box(
+            Modifier.padding(top = 2.dp).size(20.dp)
+                .background(if (done) HColors.accent else androidx.compose.ui.graphics.Color.Transparent)
+                .border(1.dp, if (done) HColors.accent else HColors.muted)
+                .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier),
+            contentAlignment = Alignment.Center,
+        ) { if (done) Icon(Icons.Outlined.Check, "Done", tint = HColors.bg, modifier = Modifier.size(15.dp)) }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            inlineMd(text), fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp,
+            color = if (done) HColors.muted else HColors.fg,
+            textDecoration = if (done) TextDecoration.LineThrough else null,
+        )
     }
 }
 

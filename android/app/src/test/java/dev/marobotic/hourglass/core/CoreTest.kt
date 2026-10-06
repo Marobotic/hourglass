@@ -76,4 +76,26 @@ class CoreTest {
         assertEquals(at("2026-09-29", "07:45"), Alarms.next(a("lead_course_id" to "c1", "lead_minutes" to 15), c, e, from, zone))
         assertNull(Alarms.next(a("time" to "07:00", "enabled" to 0), c, e, from, zone))
     }
+
+    // Same cases as the desktop's Util.renumber.
+    @Test fun notesRenumber() {
+        assertEquals("1. a\n2. b\n3. c", Md.renumber("1. a\n1. b\n1. c"))
+        assertEquals("1. a\n2. b\n   - sub\n   - sub2\n3. c", Md.renumber("1. a\n2. b\n   - sub\n   - sub2\n7. c"))
+        assertEquals("1. a\n   1. x\n   2. y\n2. b\n   1. z", Md.renumber("1. a\n   1. x\n   1. y\n2. b\n   1. z"))
+        assertEquals("1. a\n\n2. b", Md.renumber("1. a\n\n1. b"))
+        assertEquals("1. a\ntext\n1. b", Md.renumber("1. a\ntext\n1. b"))
+        assertEquals("5. a\n6. b", Md.renumber("5. a\n5. b"))
+    }
+
+    @Test fun notesTasksAndLists() {
+        assertEquals("- [x] a\n- [ ] b", Md.toggleTask("- [ ] a\n- [ ] b", 0))
+        assertEquals("- [ ] a", Md.toggleTask("- [X] a", 0))
+        assertEquals("plain", Md.toggleTask("plain", 0))
+        // Enter after a to-do starts an unticked one; after a number, the next number.
+        assertEquals("- [x] a\n- [ ] " to 14, Md.continueList("- [x] a", 7))
+        assertEquals("1. a\n2. \n3. b" to 8, Md.continueList("1. a\n2. b", 4)) // the rest counts on
+        // Enter on an empty item ends the list.
+        assertEquals("- a\n" to 4, Md.continueList("- a\n- ", 6))
+        assertNull(Md.continueList("text", 4))
+    }
 }

@@ -60,7 +60,9 @@ import androidx.compose.material.icons.outlined.FormatStrikethrough
 import androidx.compose.material.icons.outlined.FormatUnderlined
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Title
-import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.CheckBox
+import androidx.compose.material.icons.outlined.Check
+import dev.marobotic.hourglass.core.Md
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 
@@ -85,16 +87,31 @@ fun prefixLines(v: TextFieldValue, kind: String): TextFieldValue {
     var b = t.indexOf('\n', maxOf(v.selection.max - if (v.selection.max > v.selection.min) 1 else 0, a))
     if (b < 0) b = t.length
     val rows = t.substring(a, b).split("\n")
-    val re = when (kind) { "ul" -> Regex("^[-*] "); "ol" -> Regex("^\\d+\\. "); else -> Regex("^#{1,6} ") }
-    val on = rows.all { re.containsMatchIn(it) }
-    val out = rows.mapIndexed { i, r ->
-        if (on) r.replaceFirst(re, "")
-        else (when (kind) { "ul" -> "- "; "ol" -> "${i + 1}. "; else -> "## " }) + r.replaceFirst(Regex("^([-*] |\\d+\\. |#{1,6} )"), "")
-    }.joinToString("\n")
-    return TextFieldValue(t.substring(0, a) + out + t.substring(b), TextRange(a + out.length))
+    val re = when (kind) {
+        "ul" -> Regex("^[-*] (?!\\[[ xX]] )")
+        "todo" -> Regex("^[-*] \\[[ xX]] ")
+        "ol" -> Regex("^\\d+\\. ")
+        else -> Regex("^#{1,6} ")
+    }
+    val any = Regex("^([-*] \\[[ xX]] |[-*] |\\d+\\. |#{1,6} )")
+    val filled = rows.filter { it.isNotBlank() }
+    val on = filled.isNotEmpty() && filled.all { re.containsMatchIn(it) }
+    var n = 0
+    val out = rows.joinToString("\n") { r ->
+        when {
+            r.isBlank() -> r
+            on -> r.replaceFirst(re, "")
+            else -> (when (kind) { "ul" -> "- "; "todo" -> "- [ ] "; "ol" -> "${++n}. "; else -> "## " }) + r.replaceFirst(any, "")
+        }
+    }
+    val text = t.substring(0, a) + out + t.substring(b)
+    val pos = a + out.length
+    return if (kind == "ol") Md.renumberKeeping(text, pos).let { (x, p) -> TextFieldValue(x, TextRange(p)) } else TextFieldValue(text, TextRange(pos))
 }
 
-// Markdown note editor. Autosaves 700 ms after the last keystroke and on exit.
+// A note, two ways: formatted to read (to-dos tick right there), or as Markdown
+// to edit. Save shows it formatted; the pencil goes back to editing. While
+// editing it autosaves 700 ms after the last keystroke, and on exit.
 @Composable
 fun NoteScreen(nav: Nav, id: String, version: Int) {
     val repo = nav.repo
@@ -104,10 +121,20 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
     var body by remember(id) { mutableStateOf(initial.optString("body")) }
     var dirty by remember(id) { mutableStateOf(false) }
     var field by remember(id) { mutableStateOf(TextFieldValue(initial.optString("body"))) }
-    var preview by remember(id) { mutableStateOf(false) }
+    // A note with something in it opens ready to read; a new one opens to write.
+    var preview by remember(id) { mutableStateOf(initial.optString("body").isNotBlank()) }
     var uploading by remember { mutableStateOf<String?>(null) }
     val opener = rememberFileOpener(repo)
     fun edit(v: TextFieldValue) { field = v; if (v.text != body) { body = v.text; dirty = true } }
+    // Typing: Enter on a list line starts the next item, like the desktop.
+    fun type(v: TextFieldValue) {
+        val old = field
+        val at = v.selection.start - 1
+        if (v.text.length == old.text.length + 1 && v.selection.collapsed && at >= 0 && v.text[at] == '\n' && v.text.removeRange(at, at + 1) == old.text) {
+            Md.continueList(old.text, at)?.let { (t, pos) -> edit(TextFieldValue(t, TextRange(pos))); return }
+        }
+        edit(v)
+    }
     // Pictures and files: uploaded to the Drive (the note's course folder, or
     // "Note attachments"), then a line in the note where the cursor is.
     fun attach(uris: List<android.net.Uri>) {
@@ -141,6 +168,17 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
         dirty = false
     }
     LaunchedEffect(title, body) { if (dirty) { delay(700); save() } }
+    // Save: numbered lists counted again, saved now, shown formatted.
+    fun saveAndView() {
+        val tidy = Md.renumber(field.text)
+        if (tidy != field.text) edit(TextFieldValue(tidy, TextRange(tidy.length)))
+        save()
+        preview = true
+    }
+    fun toggleTask(line: Int) {
+        val t = Md.toggleTask(body, line)
+        if (t != body) { edit(TextFieldValue(t)); save() }
+    }
     DisposableEffect(id) { onDispose { save() } }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
@@ -148,9 +186,8 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
             IconButton({ save(); nav.pop() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = HColors.fg) }
             Grow()
             T(uploading ?: if (dirty) "Edited" else "Saved", 11, if (uploading != null) HColors.gold else HColors.faint)
-            IconButton({ save(); preview = !preview }) {
-                Icon(if (preview) Icons.Outlined.Edit else Icons.Outlined.Visibility, if (preview) "Edit" else "Preview", tint = if (preview) HColors.accent else HColors.muted)
-            }
+            if (preview) IconButton({ preview = false }) { Icon(Icons.Outlined.Edit, "Edit", tint = HColors.fg) }
+            else HButton("Save", Modifier.padding(horizontal = 4.dp), primary = true, icon = Icons.Outlined.Check) { saveAndView() }
             IconButton({ repo.updateNote(id, mapOf("pinned" to if (live.optInt("pinned") == 1) 0 else 1)) }) {
                 Icon(Icons.Outlined.PushPin, "Pin", tint = if (live.optInt("pinned") == 1) HColors.gold else HColors.muted)
             }
@@ -198,8 +235,8 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
                 decorationBox = { inner -> if (title.isEmpty()) T("Title", 26, HColors.faint, bold = true); inner() },
             )
             Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
-            // Formatting and attachments, like the desktop's toolbar.
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            // Formatting and attachments, like the desktop's toolbar; only while editing.
+            if (!preview) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                 val tools = listOf(
                     Icons.Outlined.FormatBold to { edit(wrapSel(field, "**", "**")) },
                     Icons.Outlined.FormatItalic to { edit(wrapSel(field, "*", "*")) },
@@ -208,18 +245,19 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
                     Icons.Outlined.Title to { edit(prefixLines(field, "h")) },
                     Icons.Outlined.FormatListBulleted to { edit(prefixLines(field, "ul")) },
                     Icons.Outlined.FormatListNumbered to { edit(prefixLines(field, "ol")) },
+                    Icons.Outlined.CheckBox to { edit(prefixLines(field, "todo")) },
                 )
-                for ((icon, act) in tools) IconButton({ if (preview) preview = false; act() }, enabled = !preview) { Icon(icon, null, tint = if (preview) HColors.faint else HColors.muted) }
+                for ((icon, act) in tools) IconButton({ act() }) { Icon(icon, null, tint = HColors.muted) }
                 Box(Modifier.width(1.dp).height(24.dp).background(HColors.border))
                 IconButton({ pickPictures.launch("image/*") }) { Icon(Icons.Outlined.Image, "Add pictures", tint = HColors.muted) }
                 IconButton({ pickFiles.launch(arrayOf("*/*")) }) { Icon(Icons.Outlined.AttachFile, "Attach files", tint = HColors.muted) }
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+            if (!preview) Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
             Spacer(Modifier.height(12.dp))
             if (preview) {
-                NoteView(body, opener, Modifier.fillMaxSize().verticalScroll(rememberScrollState()))
+                NoteView(body.ifBlank { "*Nothing written yet. Tap the pencil to write.*" }, opener, Modifier.fillMaxSize().verticalScroll(rememberScrollState()), onToggleTask = { toggleTask(it) })
             } else BasicTextField(
-                field, { edit(it) }, Modifier.fillMaxSize(),
+                field, { type(it) }, Modifier.fillMaxSize(),
                 textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp),
                 cursorBrush = SolidColor(HColors.accent),
                 decorationBox = { inner -> if (body.isEmpty()) T("Write here. The toolbar formats it; pictures and files attach.", 15, HColors.faint); inner() },

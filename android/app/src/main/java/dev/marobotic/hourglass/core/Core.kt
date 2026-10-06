@@ -292,3 +292,74 @@ object Alarms {
 
 val PALETTE = listOf("#B14242", "#D66E36", "#F0BE66", "#4A8B8B", "#7E6BAF", "#5B8C4A", "#C2587E", "#8A8A8A")
 val KINDS = listOf("lecture", "lab", "tutorial", "exam", "event")
+
+// Note Markdown rules shared with the desktop (windows/app/Hourglass/Util.qml).
+object Md {
+    // A to-do: "- [ ] buy milk" / "- [x] buy milk". Groups: indent, mark, text.
+    val TASK = Regex("""^(\s*)[-*] \[([ xX])] ?(.*)$""")
+    // Any list line. Groups: indent, marker, number (numbered items only).
+    val LIST = Regex("""^(\s*)([-*] \[[ xX]] |[-*] |(\d+)\. )""")
+    private val OL = Regex("""^(\s*)(\d+)\. """)
+
+    // Numbered lists count 1, 2, 3 again: each run of "N. " lines at one indent
+    // is renumbered from its first number. Deeper lines and blank lines keep the
+    // run going; any other line ends it.
+    fun renumber(text: String): String {
+        val lines = text.split("\n").toMutableList()
+        val runs = sortedMapOf<Int, Int>() // indent -> next number
+        for (i in lines.indices) {
+            val line = lines[i]
+            if (line.isBlank()) continue
+            val indent = line.length - line.trimStart().length
+            runs.keys.filter { it > indent }.forEach { runs.remove(it) }
+            val m = OL.find(line)
+            if (m == null) { runs.remove(indent); continue }
+            val n = runs.getOrPut(indent) { m.groupValues[2].toInt() }
+            runs[indent] = n + 1
+            lines[i] = m.groupValues[1] + n + ". " + line.substring(m.value.length)
+        }
+        return lines.joinToString("\n")
+    }
+
+    // Flips the to-do on line `index`. Unchanged text if that line is not one.
+    fun toggleTask(text: String, index: Int): String {
+        val lines = text.split("\n").toMutableList()
+        val m = lines.getOrNull(index)?.let { TASK.find(it) } ?: return text
+        lines[index] = lines[index].replaceFirst(Regex("""\[[ xX]]"""), if (m.groupValues[2] == " ") "[x]" else "[ ]")
+        return lines.joinToString("\n")
+    }
+
+    // After typing Enter on a list line: the next line starts the next item
+    // (a new to-do unticked, a number counted on). Enter on an empty item ends
+    // the list instead. Returns null when the Enter was not on a list line.
+    // `cursor` is where the newline was inserted in `before`.
+    fun continueList(before: String, cursor: Int): Pair<String, Int>? {
+        val start = before.lastIndexOf('\n', cursor - 1) + 1
+        val line = before.substring(start, cursor)
+        val m = LIST.find(line) ?: return null
+        val rest = before.substring(cursor)
+        if (line.trim() == m.groupValues[2].trim()) return before.substring(0, start) + rest.removePrefix("\n").let { if (rest.isEmpty()) "" else it } to start
+        val marker = m.groupValues[2]
+        val next = when {
+            marker.contains('[') -> marker.replace(Regex("""\[[xX]]"""), "[ ]")
+            m.groupValues[3].isNotEmpty() -> "${m.groupValues[3].toInt() + 1}. "
+            else -> marker
+        }
+        val insert = "\n" + m.groupValues[1] + next
+        val text = before.substring(0, cursor) + insert + rest
+        val pos = cursor + insert.length
+        return if (m.groupValues[3].isNotEmpty()) renumberKeeping(text, pos) else text to pos
+    }
+
+    // Renumbers, keeping the cursor at the same place in its line.
+    fun renumberKeeping(text: String, cursor: Int): Pair<String, Int> {
+        val out = renumber(text)
+        if (out == text) return text to cursor
+        val line = text.substring(0, cursor).count { it == '\n' }
+        val col = cursor - (text.lastIndexOf('\n', cursor - 1) + 1)
+        val before = text.split("\n")[line]; val after = out.split("\n")[line]
+        val shift = (OL.find(after)?.value?.length ?: 0) - (OL.find(before)?.value?.length ?: 0)
+        val start = out.split("\n").take(line).sumOf { it.length + 1 }
+        return out to (start + (col + shift).coerceIn(0, after.length))
+    }
+}

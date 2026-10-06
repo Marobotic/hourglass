@@ -6,6 +6,13 @@ import dev.marobotic.hourglass.core.Dates
 import dev.marobotic.hourglass.core.id
 import dev.marobotic.hourglass.data.Repo
 import dev.marobotic.hourglass.data.Slot
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.core.app.ActivityOptionsCompat
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -35,6 +42,16 @@ class Shots {
         return repo
     }
 
+    @Composable
+    private fun WithPickers(content: @Composable () -> Unit) {
+        val owner = object : ActivityResultRegistryOwner {
+            override val activityResultRegistry = object : ActivityResultRegistry() {
+                override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {}
+            }
+        }
+        CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner, content = content)
+    }
+
     @Test fun now() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 0) } }
     @Test fun week() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 1) } }
     @Test fun notes() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 2) } }
@@ -53,6 +70,22 @@ class Shots {
     @Test fun note() {
         val repo = demo()
         val n = repo.notes().first { it.optString("title") == "Dynamic programming" }
-        paparazzi.snapshot { HourglassTheme { HourglassApp(repo, 0, Route.NoteR(n.id)) } }
+        paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(repo, 0, Route.NoteR(n.id)) } } }
     }
+    // Opens formatted: numbers counted, to-dos with boxes.
+    @Test fun noteChecklist() {
+        val repo = demo()
+        val body = listOf("# Shopping", "1. eggs", "1. milk", "1. bread", "", "Steps:", "1. Open the kit", "2. Measure twice", "   - use the ruler", "3. Cut once", "", "## To do", "- [ ] call mom", "- [x] buy milk", "- [ ] finish **lab report**").joinToString(NL)
+        val n = repo.addNote(null, null, null, "Lab day", body)
+        paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(repo, 0, Route.NoteR(n.id)) } } }
+    }
+    // An empty note opens for writing, with Save and the toolbar.
+    @Test fun noteEditing() {
+        val repo = demo()
+        val n = repo.addNote(null, null, null, "New note", "")
+        paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(repo, 0, Route.NoteR(n.id)) } } }
+    }
+    @Test fun assistant() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 0, Route.AssistantR) } }
 }
+
+private val NL = 10.toChar().toString()

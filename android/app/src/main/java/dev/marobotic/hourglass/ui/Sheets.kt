@@ -349,6 +349,7 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
                             "offline" -> "Offline. Changes are kept on the phone and sent later."
                             else -> "Omarchy Music account"
                         }, 12, HColors.muted)
+                        T("Hourglass ${dev.marobotic.hourglass.BuildConfig.VERSION_NAME}", 12, HColors.faint)
                     }
                     HButton("Sign out") { nav.sheets.confirm = Triple("Sign out?", "This phone stops syncing until you sign in again.") { repo.signOut(); tick++ } }
                 }

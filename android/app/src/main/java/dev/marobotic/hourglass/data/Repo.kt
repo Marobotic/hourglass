@@ -499,6 +499,17 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
     }
 
+    // The Assistant tab: opencode on the server works on this account's data
+    // (server/assistant.js). path: "" to read the chat, "/message", "/stop", "/new".
+    fun assistant(method: String, path: String = "", body: JSONObject? = null, done: (JSONObject?, String?) -> Unit) = scope.launch {
+        val r = runCatching {
+            val t = token?.takeIf { signedIn } ?: error("Sign in to use the assistant.")
+            val text = http(method, "${BuildConfig.SERVER}/api/assistant$path", t, body?.toString() ?: if (method == "POST") "{}" else null)
+            JSONObject(text.ifBlank { "{}" })
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+
     fun signOut() = scope.launch {
         token?.takeIf { signedIn }?.let { t -> runCatching { http("POST", "${BuildConfig.SERVER}/auth/logout", t, "{}") } }
         store.setMeta("session_sealed", null)
