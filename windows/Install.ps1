@@ -1,5 +1,6 @@
-# Adds Hourglass to the Start menu, and starts the background service at
-# sign-in so alarms and timers ring even when the window is closed.
+# Adds Hourglass to the Start menu, adds bin\ to the user PATH (hourglass and
+# hourglass-cli), and starts the background service at sign-in so alarms and
+# timers ring even when the window is closed.
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $shell = New-Object -ComObject WScript.Shell
 function New-Link($path, $target, $arguments) {
@@ -11,7 +12,11 @@ function New-Link($path, $target, $arguments) {
   $l.Save()
 }
 $menu = [Environment]::GetFolderPath('Programs')
-$startup = [Environment]::GetFolderPath('Startup')
 New-Link "$menu\Hourglass.lnk" "wscript.exe" "`"$root\Hourglass.vbs`""
-New-Link "$startup\Hourglass service.lnk" "$root\node\node.exe" "`"$root\linux\sidecar\hourglassd.js`""
+& "$root\share\hourglass-service.ps1"
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($userPath -notlike "*$root\bin*") {
+  [Environment]::SetEnvironmentVariable('Path', ($userPath.TrimEnd(';') + ";$root\bin").Trim(';'), 'User')
+  Write-Host "Added $root\bin to your PATH."
+}
 Write-Host "Hourglass is in the Start menu. The service now starts when you sign in."

@@ -9,3 +9,7 @@ android/app/build/
 android/local.properties
 ios/*.xcodeproj/
 .DS_Store
+
+# Windows: the bundled runtimes (download them; see windows/README.txt)
+windows/node/
+windows/qt/

@@ -17,6 +17,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the model, sync and UX rules.
 | `core/` | Shared rules in JS: dates, recurrence, "now", alarms, model. Plus the SQLite store and service used by server and Linux | 11 tests |
 | `server/` | Node server: REST, sync, iCal feed, MCP endpoint, OpenAPI for Custom GPTs | 8 tests |
 | `linux/` | QML app + Node sidecar (local replica, alarms, sync). Follows the Omarchy theme | Installed |
+| `windows/` | Same QML app + Node sidecar. `app/`, `sidecar/`, `tools/` are byte-identical copies of the Linux ones | Builds |
 | `android/` | Kotlin + Compose. Offline store, sync, exact alarms with a full-screen ring | Builds; 6 Kotlin core tests; Paparazzi screenshots in `app/src/test/snapshots` |
 | `ios/` | SwiftUI, XcodeGen, built by GitHub Actions | Needs a CI run |
 | `skill/hourglass/` | Agent skill: the model, the tools, examples | Linked for Claude, Codex, agents |
@@ -40,6 +41,19 @@ and serves the same REST and MCP API as the server. Data lives in
 ```json
 { "server": "https://example.com/hourglass", "token": "..." }
 ```
+
+## Windows
+
+```powershell
+cd windows
+# add node\node.exe and qt\qml.exe to this folder (or have node/qml on PATH)
+.\Install.ps1       # Start menu entry, bin\ on PATH, service at sign-in
+# then: hourglass / hourglass-cli now
+```
+
+Same keys, same sidecar port, same sync as Linux. The UI is the same QML
+(`windows\app` is a byte-identical copy of `linux\app`), and alarms ring via
+Windows notifications with `node:sqlite` storage handled by the sidecar.
 
 ## Server
 

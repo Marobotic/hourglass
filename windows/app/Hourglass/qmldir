@@ -1,0 +1,34 @@
+module Hourglass
+singleton Theme 1.0 Theme.qml
+singleton Api 1.0 Api.qml
+singleton Util 1.0 Util.qml
+Icon 1.0 Icon.qml
+Btn 1.0 Btn.qml
+Card 1.0 Card.qml
+Chip 1.0 Chip.qml
+Field 1.0 Field.qml
+Area 1.0 Area.qml
+Section 1.0 Section.qml
+Logo 1.0 Logo.qml
+DayToggles 1.0 DayToggles.qml
+NoteCard 1.0 NoteCard.qml
+Picker 1.0 Picker.qml
+Modal 1.0 Modal.qml
+NowPage 1.0 NowPage.qml
+SchedulePage 1.0 SchedulePage.qml
+SettingsPage 1.0 SettingsPage.qml
+WorldClockPage 1.0 WorldClockPage.qml
+NotesPage 1.0 NotesPage.qml
+FolderRow 1.0 FolderRow.qml
+TimePage 1.0 TimePage.qml
+NoteEditor 1.0 NoteEditor.qml
+EventDialog 1.0 EventDialog.qml
+CourseDialog 1.0 CourseDialog.qml
+SessionDialog 1.0 SessionDialog.qml
+ConfirmDialog 1.0 ConfirmDialog.qml
+LoginPage 1.0 LoginPage.qml
+TimersPage 1.0 TimersPage.qml
+NoteView 1.0 NoteView.qml
+DrivePage 1.0 DrivePage.qml
+AttendancePage 1.0 AttendancePage.qml
+ContextMenu 1.0 ContextMenu.qml
