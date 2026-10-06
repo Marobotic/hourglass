@@ -24,6 +24,8 @@ Item {
 
     function load() {
         Api.request("GET", "/api/assistant", null, (d, err) => {
+            // An older background service has no assistant: it needs a restart.
+            if (!d && err === "not found") d = { enabled: false, busy: false, messages: [], reason: "Restart Hourglass to use the assistant: its background service is older than this window." };
             if (!d) return;
             page.chat = d;
             if (page.pending !== "" && (d.messages || []).some(m => m.role === "user" && m.text === page.pending)) page.pending = "";

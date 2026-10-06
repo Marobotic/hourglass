@@ -11,6 +11,10 @@ function New-Link($path, $target, $arguments) {
   $l.IconLocation = "$root\hourglass.ico"
   $l.Save()
 }
+# Name the window and the service "Hourglass" in Task Manager.
+if (-not (Test-Path "$root\qt\bin\Hourglass.exe") -or -not (Test-Path "$root\node\hourglassd.exe")) {
+  try { & "$root\tools\brand.ps1" } catch { Write-Host "Could not name the processes (they will show as QML Runtime / Node.js): $_" }
+}
 $menu = [Environment]::GetFolderPath('Programs')
 New-Link "$menu\Hourglass.lnk" "wscript.exe" "`"$root\Hourglass.vbs`""
 & "$root\share\hourglass-service.ps1"

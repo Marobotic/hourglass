@@ -7,7 +7,10 @@ $conf = Join-Path $env:APPDATA 'Hourglass'
 $port = 8931
 $node = Join-Path $root 'node\node.exe'
 if (-not (Test-Path $node)) { $node = (Get-Command node -ErrorAction Stop).Source }
-$qml = Join-Path $root 'qt\bin\qml.exe'
+# Hourglass.exe is qml.exe with Hourglass's name and icon (tools\brand.ps1), so
+# Task Manager says Hourglass rather than QML Runtime.
+$qml = Join-Path $root 'qt\bin\Hourglass.exe'
+if (-not (Test-Path $qml)) { $qml = Join-Path $root 'qt\bin\qml.exe' }
 if (-not (Test-Path $qml)) { $qml = Join-Path $root 'qt\qml.exe' }
 if (-not (Test-Path $qml)) { $qml = (Get-Command qml -ErrorAction Stop).Source }
 
@@ -57,7 +60,7 @@ public static class HgWindow {
   }
 }
 '@
-$running = @(Get-Process qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
+$running = @(Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
 if ($running) {
   [HgWindow]::ShowWindow($running.MainWindowHandle, 9) | Out-Null
   [HgWindow]::SetForegroundWindow($running.MainWindowHandle) | Out-Null
@@ -73,14 +76,14 @@ Start-Process -FilePath $qml -ArgumentList @('-I', "`"$root\app`"", "`"$root\app
 $hwnd = [IntPtr]::Zero
 for ($i = 0; $i -lt 50 -and $hwnd -eq [IntPtr]::Zero; $i++) {
   Start-Sleep -Milliseconds 200
-  $p = @(Get-Process qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
+  $p = @(Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
   if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) { $hwnd = $p.MainWindowHandle }
 }
 if ($hwnd -ne [IntPtr]::Zero) {
   [HgWindow]::SetIcon($hwnd, "$root\hourglass.ico")
   for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 500
-    $p = Get-Process qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' } | Select-Object -First 1
+    $p = Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' } | Select-Object -First 1
     if (-not $p) { break }
     [HgWindow]::SetIcon($p.MainWindowHandle, "$root\hourglass.ico")
   }
