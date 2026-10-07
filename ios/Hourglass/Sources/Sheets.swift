@@ -291,7 +291,7 @@ struct AlarmSheet: View {
 
 // Preferences for this phone. The sync server is built in; nothing to type.
 // Signed out, this is the whole app: sign in or create an account. Same page
-// as the Omarchy Music phone app's (one account for both), in Hourglass colours.
+// as the Jukebox phone app's (one account for both), in Hourglass colours.
 struct LoginView: View {
     @EnvironmentObject var store: Store
     @State private var creating = false
@@ -340,7 +340,7 @@ struct LoginView: View {
                         .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                     Spacer().frame(height: 8)
-                    text(creating ? "At least 8 characters." : "The same account as Omarchy Music. Your other devices use it too.",
+                    text(creating ? "At least 8 characters." : "The same account as Jukebox. Your other devices use it too.",
                          12, H.muted, align: .leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -567,7 +567,7 @@ struct SettingsSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     T(store.account ?? "", 15)
-                    T(store.syncState == "synced" ? "Omarchy Music account · synced \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline. Changes are kept on the phone and sent later." : "Omarchy Music account", 12, H.muted)
+                    T(store.syncState == "synced" ? "Jukebox account · synced \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline. Changes are kept on the phone and sent later." : "Jukebox account", 12, H.muted)
                     T("Hourglass \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")", 12, H.faint)
                 }
                 Spacer()
@@ -592,7 +592,7 @@ struct SettingsSheet: View {
                 }
             }
             if let error { T(error, 13, H.accent) }
-            T("Add songs from Omarchy Music: open a song's menu and pick Set as alarm.", 12, H.faint)
+            T("Add songs from Jukebox: open a song's menu and pick Set as alarm.", 12, H.faint)
             HStack { T("Alarm sound", 15); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
 
             SectionLabel(text: "Time")

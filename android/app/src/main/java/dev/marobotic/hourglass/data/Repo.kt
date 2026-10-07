@@ -50,7 +50,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val sync: StateFlow<SyncState> = _sync
     private var pending: Job? = null
     private var syncEnabled = true
-    // The Omarchy Music session once signed in; before that the build's
+    // The Jukebox session once signed in; before that the build's
     // legacy key. Both sealed with the Keystore.
     private val token: String? get() = store.meta("session_sealed")?.let { Vault.open(it) }
         ?: store.meta("token_sealed")?.takeIf { store.meta("signed_out") == null }?.let { Vault.open(it) }
@@ -493,9 +493,9 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
     }
 
-    // --- account (Omarchy Music) ---
+    // --- account (Jukebox) ---
 
-    // A new Omarchy Music account, made from here: signed in once created.
+    // A new Jukebox account, made from here: signed in once created.
     fun register(email: String, password: String, done: (String?) -> Unit) = signIn(email, password, done, "/auth/register")
 
     fun signIn(email: String, password: String, done: (String?) -> Unit, path: String = "/auth/login") = scope.launch {

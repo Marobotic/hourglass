@@ -85,7 +85,7 @@ struct Clock: Codable, Identifiable, Hashable {
     var dirty: Int? = 0
 }
 
-// Alarm sounds of the account: uploads and songs from Omarchy Music.
+// Alarm sounds of the account: uploads and songs from Jukebox.
 struct Ringtone: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString.lowercased()
     var name: String = ""

@@ -4,13 +4,13 @@
 //   HOURGLASS_PORT   default 8930
 //   HOURGLASS_HOST   default 127.0.0.1 (put nginx/Caddy in front for TLS)
 //   HOURGLASS_URL    public base URL, used in openapi.json
-//   MARO_ACCOUNT_URL the Omarchy Music server whose accounts sign in here
+//   MARO_ACCOUNT_URL the Jukebox server whose accounts sign in here
 //                    (default http://127.0.0.1:8900)
 //   MARO_CACHE_DIR   its data dir, for songs used as ringtones
 //                    (default /var/lib/maro-cache)
 //   HOURGLASS_ASSISTANT_*  the in-app assistant (opencode); see assistant.js
 //
-// Accounts: sign in with the Omarchy Music email and password; its session is
+// Accounts: sign in with the Jukebox email and password; its session is
 // the bearer here too. Each account has its own data; the account named in
 // <data>/owner keeps the top-level data, which the legacy token also opens.
 import { createServer } from "node:http";
@@ -171,7 +171,7 @@ async function who(req) {
   return await sessionEmail(bearer);
 }
 
-// Sign-in goes to the Omarchy Music server: same accounts, same sessions.
+// Sign-in goes to the Jukebox server: same accounts, same sessions.
 // Forgot and reset (a link by email) go there too.
 async function proxyAuth(req, res, path) {
   const body = await readRaw(req, 4096);
@@ -215,7 +215,7 @@ async function addRingtone(t, input, fields, select) {
   return { ...row, selected: !!select };
 }
 
-// Songs come from the Omarchy Music cache, by video id or Spotify track id.
+// Songs come from the Jukebox cache, by video id or Spotify track id.
 function songFile(id) {
   const dir = join(maroDir, "audio");
   const find = (x) => SONG_EXTS.map((e) => join(dir, x + e)).find((p) => existsSync(p) && statSync(p).size > 0);

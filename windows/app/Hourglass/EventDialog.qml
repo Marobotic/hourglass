@@ -17,7 +17,7 @@ Modal {
     function edit(e, defaults) {
         ev = e;
         const d = defaults || {};
-        const today = app.nowData ? app.nowData.now.date : Util.fmt(Date.now());
+        const today = app.nowData ? app.nowData.now.date : Util.fmt(app.clock);
         titleF.text = e ? e.title : "";
         courseId = e ? e.course_id : (d.course || null);
         kind = e ? e.kind : (courseId ? "lecture" : "event");

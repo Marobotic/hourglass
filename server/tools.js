@@ -305,7 +305,7 @@ export const TOOLS = [
   {
     name: "list_ringtones",
     title: "List alarm ringtones",
-    description: "Alarm sounds: the built-in ones plus uploads and songs from Omarchy Music. selected marks the one alarms ring with on every device.",
+    description: "Alarm sounds: the built-in ones plus uploads and songs from Jukebox. selected marks the one alarms ring with on every device.",
     input: {},
     readOnly: true,
     run: (s) => s.listRingtones(),

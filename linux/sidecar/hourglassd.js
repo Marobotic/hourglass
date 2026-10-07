@@ -55,7 +55,7 @@ function token() {
   return t;
 }
 
-// The sync server is built in. Sign-in is the Omarchy Music account: its
+// The sync server is built in. Sign-in is the Jukebox account: its
 // session is the bearer. Credentials never sit on disk in plain text: Linux
 // keeps them in the Secret Service keyring (GNOME Keyring), Windows in DPAPI
 // blobs only this Windows user can decrypt. On Linux a signed-in Omarchy
@@ -202,7 +202,7 @@ async function signOut() {
   return account();
 }
 
-// A signed-in Omarchy Music player on this PC signs Hourglass in too.
+// A signed-in Jukebox player on this PC signs Hourglass in too.
 async function adoptMusicSession() {
   if (WIN || cred?.kind === "session" || readConfig().signed_out) return;
   let session;
@@ -210,7 +210,7 @@ async function adoptMusicSession() {
   if (!session) return;
   try {
     const { email } = await remote("/api/account", { bearer: session });
-    log("signed in with the Omarchy Music account", email);
+    log("signed in with the Jukebox account", email);
     await signIn(session, email);
   } catch (e) {
     log("music session not usable:", e.message);

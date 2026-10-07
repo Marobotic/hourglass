@@ -310,7 +310,7 @@ private fun AlarmSheet(nav: Nav, onDismiss: () -> Unit) {
 
 // ------------------------------------------------------------------ settings
 
-// Preferences. The account is the Omarchy Music one; ringtones and the
+// Preferences. The account is the Jukebox one; ringtones and the
 // chosen one sync to every device.
 @Composable
 private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
@@ -345,9 +345,9 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
                     Column(Modifier.weight(1f)) {
                         T(repo.account ?: "", 15)
                         T(when (sync.state) {
-                            "synced" -> "Omarchy Music account · synced ${Dates.clock(sync.lastOk, repo.zone)}"
+                            "synced" -> "Jukebox account · synced ${Dates.clock(sync.lastOk, repo.zone)}"
                             "offline" -> "Offline. Changes are kept on the phone and sent later."
-                            else -> "Omarchy Music account"
+                            else -> "Jukebox account"
                         }, 12, HColors.muted)
                         T("Hourglass ${dev.marobotic.hourglass.BuildConfig.VERSION_NAME}", 12, HColors.faint)
                     }
@@ -392,7 +392,7 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
                 }
             }
-            T("Add songs from Omarchy Music: open a song's menu and pick Set as alarm.", 12, HColors.faint)
+            T("Add songs from Jukebox: open a song's menu and pick Set as alarm.", 12, HColors.faint)
             Row(verticalAlignment = Alignment.CenterVertically) { T("Alarm sound", 15, modifier = Modifier.weight(1f)); Toggle(repo.sound) { set("sound", it.toString()) } }
             Row(verticalAlignment = Alignment.CenterVertically) { T("Vibrate", 15, modifier = Modifier.weight(1f)); Toggle(repo.vibrate) { set("vibrate", it.toString()) } }
 

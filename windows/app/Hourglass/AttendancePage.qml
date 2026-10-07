@@ -22,7 +22,7 @@ Item {
             const to = [ends[ends.length - 1], Util.addDays(page.today, 183)].sort()[0];
             Api.get("/api/schedule?from=" + starts[0] + "&to=" + (to > page.today ? to : page.today), r => {
                 if (!r) return;
-                const now = Date.now();
+                const now = app.clock;
                 const by = {};
                 for (const o of r.occurrences) {
                     if (!o.course_id) continue;

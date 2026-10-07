@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
 
-// Preferences. The account is the Omarchy Music one; ringtones and the
+// Preferences. The account is the Jukebox one; ringtones and the
 // chosen one sync to every device.
 Item {
     id: page
@@ -97,7 +97,7 @@ Item {
                 }
                 SettingRow {
                     label: "Ringtone"
-                    hint: "Rings on every device. Upload an MP3 or pick a song in Omarchy Music: Set as alarm."
+                    hint: "Rings on every device. Upload an MP3 or pick a song in Jukebox: Set as alarm."
                     Btn { icon: "folder-open"; text: page.busy ? "Uploading…" : "Upload audio file"; enabled: !page.busy && !!page.account.signed_in; onClicked: picker.open() }
                 }
                 ColumnLayout {
@@ -181,7 +181,7 @@ Item {
                 SettingRow {
                     visible: !!page.account.signed_in
                     label: page.account.email || ""
-                    hint: "Your Omarchy Music account. " + (page.sync.state === "synced" ? "Synced " + Util.clock(page.sync.last_ok || Date.now()) + ", shared with your phones."
+                    hint: "Your Jukebox account. " + (page.sync.state === "synced" ? "Synced " + Util.clock(page.sync.last_ok || Date.now()) + ", shared with your phones."
                         : page.sync.state === "offline" ? "Offline: changes are kept here and sent when the connection is back." : "")
                     Btn { icon: "sync"; text: "Sync now"; onClicked: Api.post("/api/sync/now", {}, () => page.app.pollState()) }
                     Btn { text: "Sign out"; kind: "subtle"; onClicked: page.app.confirm("Sign out?", "This computer stops syncing until you sign in again.", "Sign out", () => Api.post("/api/account/logout", {}, () => page.app.pollState())) }

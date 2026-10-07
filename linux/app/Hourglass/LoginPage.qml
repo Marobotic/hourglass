@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 // Signed out, this is the whole app: sign in or create an account (the
-// Omarchy Music account, one for both), same shape as the phone apps.
+// Jukebox account, one for both), same shape as the phone apps.
 Rectangle {
     id: login
     property var app
@@ -138,7 +138,7 @@ Rectangle {
                 Text {
                     visible: !login.forgot
                     Layout.fillWidth: true; wrapMode: Text.Wrap
-                    text: login.creating ? "At least 8 characters." : "The same account as Omarchy Music. Your other devices use it too."
+                    text: login.creating ? "At least 8 characters." : "The same account as Jukebox. Your other devices use it too."
                     color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12
                 }
                 Text { visible: login.notice !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap; text: login.notice; color: Theme.teal; font.family: Theme.mono; font.pixelSize: 13; lineHeight: 1.2 }

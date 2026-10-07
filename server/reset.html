@@ -53,7 +53,7 @@
     <input id="pw" type="password" autocomplete="new-password" required minlength="8" maxlength="256" autofocus>
     <label for="pw2">CONFIRM PASSWORD</label>
     <input id="pw2" type="password" autocomplete="new-password" required>
-    <div class="hint">At least 8 characters. One account for <span class="both">Hourglass and Omarchy Music</span>: both use the new password.</div>
+    <div class="hint">At least 8 characters. One account for <span class="both">Hourglass and Jukebox</span>: both use the new password.</div>
     <div class="error" id="error" hidden></div>
     <button id="go" type="submit">Set password</button>
   </form>
@@ -70,13 +70,13 @@
 </main>
 <script>
   const token = decodeURIComponent(location.hash.slice(1));
-  // ?app=music: the mail came from Omarchy Music (the same account).
+  // ?app=music: the mail came from Jukebox (the same account).
   const music = new URLSearchParams(location.search).get("app") === "music";
   if (music) {
-    document.getElementById("app").textContent = "Omarchy Music";
-    document.title = "Reset password · Omarchy Music";
+    document.getElementById("app").textContent = "Jukebox";
+    document.title = "Reset password · Jukebox";
     document.querySelector(".brand svg").remove();
-    document.querySelector(".both").textContent = "Omarchy Music and Hourglass";
+    document.querySelector(".both").textContent = "Jukebox and Hourglass";
   }
   // Drop the token from the address bar and history as soon as it is read.
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);

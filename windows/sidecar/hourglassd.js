@@ -55,7 +55,7 @@ function token() {
   return t;
 }
 
-// The sync server is built in. Sign-in is the Omarchy Music account: its
+// The sync server is built in. Sign-in is the Jukebox account: its
 // session is the bearer. Credentials never sit on disk in plain text: Linux
 // keeps them in the Secret Service keyring (GNOME Keyring), Windows in DPAPI
 // blobs only this Windows user can decrypt. On Linux a signed-in Omarchy
@@ -119,10 +119,27 @@ const config = () => {
   return cred.token ? { server: SERVER, token: cred.token } : {};
 };
 
+// What time it really is. The PC's clock can be hours off (a Linux dual boot leaves the hardware
+// clock in UTC and Windows reads it as local time), so every answer from the server, whose clock
+// is right, updates how far off this one is, and the sidecar and the window use now() instead.
+let skewMs = 0;
+const now = () => Date.now() + skewMs;
+function learnClock(r, sentAt) {
+  const server = Date.parse(r.headers.get("date") || "");
+  if (!server) return;
+  // The header has whole seconds: compare with the middle of the request, half a second in.
+  const skew = server + 500 - (sentAt + Date.now()) / 2;
+  const next = Math.abs(skew) < 2000 ? 0 : Math.round(skew / 1000) * 1000;
+  if (Math.abs(next - skewMs) < 2000) return;
+  log(next ? `this PC's clock is ${(-next / 60000).toFixed(1)} min off; using the server's time` : "this PC's clock is right again");
+  skewMs = next;
+  dirtyUpcoming = true;
+}
+
 adoptToken();
 const SCHEMA = 5; // bump when a table is added: forces one full pull
-const store = new Store(join(DATA_DIR, "hourglass.db"), { replica: true });
-const service = new Service(store);
+const store = new Store(join(DATA_DIR, "hourglass.db"), { replica: true, clock: now });
+const service = new Service(store, { clock: now });
 const TOKEN = token();
 if (store.meta("schema", 1) !== SCHEMA) {
   store.setMeta("cursor", 0);
@@ -152,7 +169,9 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
   // fails at once: try once more before telling anyone.
   for (let attempt = 0; ; attempt++) {
     try {
+      const sentAt = Date.now();
       r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
+      learnClock(r, sentAt);
       break;
     } catch (e) {
       const slow = e.name === "TimeoutError";
@@ -202,7 +221,7 @@ async function signOut() {
   return account();
 }
 
-// A signed-in Omarchy Music player on this PC signs Hourglass in too.
+// A signed-in Jukebox player on this PC signs Hourglass in too.
 async function adoptMusicSession() {
   if (WIN || cred?.kind === "session" || readConfig().signed_out) return;
   let session;
@@ -210,7 +229,7 @@ async function adoptMusicSession() {
   if (!session) return;
   try {
     const { email } = await remote("/api/account", { bearer: session });
-    log("signed in with the Omarchy Music account", email);
+    log("signed in with the Jukebox account", email);
     await signIn(session, email);
   } catch (e) {
     log("music session not usable:", e.message);
@@ -258,12 +277,14 @@ async function syncOnce() {
       }
     }
     const since = store.meta("cursor", 0);
+    const sentAt = Date.now();
     const r = await fetch(`${server}/api/sync?since=${since}`, { headers, signal: AbortSignal.timeout(15000) });
+    learnClock(r, sentAt);
     if (!r.ok) throw new Error(`pull ${r.status}`);
     const { rev, changes } = await r.json();
     for (const t of TABLE_NAMES) for (const row of changes[t] ?? []) store.write(t, row, { mode: "remote" });
     store.setMeta("cursor", rev);
-    Object.assign(sync, { state: "synced", last_ok: Date.now(), error: null, pending: 0 });
+    Object.assign(sync, { state: "synced", last_ok: now(), error: null, pending: 0 });
     if (!store.meta("account", null)) store.setMeta("account", (await remote("/api/account")).email);
     await fetchSounds();
   } catch (e) {
@@ -298,7 +319,7 @@ setInterval(() => scheduleSync(0), 30000);
 // --- alarms & timers ------------------------------------------------------------------
 
 const ringing = new Map(); // id -> { kind, id, label, at, sound }
-let lastCheck = Date.now();
+let lastCheck = now();
 
 function notify(item) {
   if (SILENT) return;
@@ -350,7 +371,7 @@ function ring(item) {
   if (item.kind === "timer") service.updateTimer({ timer_id: item.id, action: "done" });
   if (item.kind === "alarm") {
     const a = data.alarms.find((x) => x.id === item.id);
-    if (a && isSpent(a, data, Date.now() + 1000, service.tz)) store.upsert("alarms", { id: a.id, enabled: 0 });
+    if (a && isSpent(a, data, now() + 1000, service.tz)) store.upsert("alarms", { id: a.id, enabled: 0 });
   }
 }
 
@@ -375,21 +396,22 @@ store.onChange(() => { dirtyUpcoming = true; });
 setInterval(() => { dirtyUpcoming = true; }, 60000);
 
 setInterval(() => {
-  const now = Date.now();
-  if (now - lastCheck > 5 * 60000) dirtyUpcoming = true; // woke from suspend
-  if (dirtyUpcoming) refreshUpcoming(now);
+  const t = now();
+  // woke from suspend, or the clock was corrected: look again from where we are now
+  if (Math.abs(t - lastCheck) > 5 * 60000) { dirtyUpcoming = true; lastCheck = Math.min(lastCheck, t); }
+  if (dirtyUpcoming) refreshUpcoming(t);
   // ring what fell due since the last check, but nothing older than 10 min
-  const from = Math.max(lastCheck, now - 10 * 60000);
-  for (const item of upcoming) if (item.at > from && item.at <= now) ring(item);
-  lastCheck = now;
+  const from = Math.max(lastCheck, t - 10 * 60000);
+  for (const item of upcoming) if (item.at > from && item.at <= t) ring(item);
+  lastCheck = t;
 }, 1000);
 
 // Minutes the user's zone is ahead of UTC right now; the QML clock uses it so
 // the app shows Hourglass time even when the system zone differs.
 function tzOffsetMin() {
-  const now = Date.now();
-  const p = localParts(now, service.tz);
-  return Math.round((parseDate(p.date) + p.minutes * 60000 + p.seconds * 1000 - now) / 60000);
+  const t = now();
+  const p = localParts(t, service.tz);
+  return Math.round((parseDate(p.date) + p.minutes * 60000 + p.seconds * 1000 - t) / 60000);
 }
 
 // --- HTTP ------------------------------------------------------------------------
@@ -789,6 +811,7 @@ async function extra(req, res, url, path) {
       settings: service.settings(),
       account: account(),
       tz_offset_min: tzOffsetMin(),
+      clock_skew_ms: skewMs,
       version: VERSION,
       update: update.latest ? { version: update.latest.version, notes: update.latest.notes, installing: update.installing } : null,
     }), true;

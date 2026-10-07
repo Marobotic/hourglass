@@ -46,7 +46,7 @@ final class Store: ObservableObject {
 
     // Built in at build time; not user-editable.
     let server: String = (Bundle.main.object(forInfoDictionaryKey: "HourglassServer") as? String) ?? ""
-    // The Omarchy Music session once signed in; before that the build's legacy key.
+    // The Jukebox session once signed in; before that the build's legacy key.
     private var token: String { Keychain.get("session") ?? (UserDefaults.standard.bool(forKey: "signed_out") ? "" : Keychain.get("sync-token") ?? "") }
     @Published var signedIn = Keychain.get("session") != nil
     var account: String? { UserDefaults.standard.string(forKey: "account") }
@@ -351,9 +351,9 @@ final class Store: ObservableObject {
         await syncSoon()
     }
 
-    // MARK: account (Omarchy Music)
+    // MARK: account (Jukebox)
 
-    // A new Omarchy Music account, made from here; signed in once created.
+    // A new Jukebox account, made from here; signed in once created.
     func register(email: String, password: String) async throws {
         try await signIn(email: email, password: password, path: "auth/register")
     }

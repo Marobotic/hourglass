@@ -66,7 +66,7 @@ export const TABLES = {
     ["persistent", "bool", 0], // saved timer: back to idle when it finishes
     ["start_at", "int", null], // scheduled: counts down from here (ends_at = start_at + duration)
   ],
-  // Alarm sounds of the account: uploaded files and songs from Omarchy Music.
+  // Alarm sounds of the account: uploaded files and songs from Jukebox.
   // The audio (a 30 s WAV) lives on the server: GET /api/ringtones/<id>/audio.
   ringtones: [
     ["name", "text", ""],

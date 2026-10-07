@@ -12,8 +12,10 @@ const VERSION_CAP = 40;
 export class Store {
   // replica: a client copy. Local changes keep the server rev and are marked
   // dirty until pushed, instead of taking a new rev.
-  constructor(path, { replica = false } = {}) {
+  // clock: what time it is (the Windows sidecar passes one corrected by the server's clock).
+  constructor(path, { replica = false, clock = () => Date.now() } = {}) {
     this.replica = replica;
+    this.clock = clock;
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
@@ -100,14 +102,14 @@ export class Store {
     const existing = patch.id ? this.get(table, patch.id) : null;
     // Writing to a deleted row brings it back (marks reuse one id per day:
     // clear a day, mark it again, and it must not stay deleted).
-    const merged = normalize(table, { ...(existing ?? {}), ...patch, deleted: patch.deleted ? 1 : 0, updated_at: Math.max(Date.now(), (existing?.updated_at ?? 0) + 1) });
+    const merged = normalize(table, { ...(existing ?? {}), ...patch, deleted: patch.deleted ? 1 : 0, updated_at: Math.max(this.clock(), (existing?.updated_at ?? 0) + 1) });
     return this.write(table, merged, opts).row;
   }
 
   remove(table, id, opts) {
     const existing = this.get(table, id);
     if (!existing) return null;
-    return this.write(table, { ...existing, deleted: 1, updated_at: Math.max(Date.now(), existing.updated_at + 1) }, opts).row;
+    return this.write(table, { ...existing, deleted: 1, updated_at: Math.max(this.clock(), existing.updated_at + 1) }, opts).row;
   }
 
   // Save a note's current text as a version. An edit keeps at most one per
@@ -121,7 +123,7 @@ export class Store {
       .map((r) => this.decode("note_versions", r));
     const last = mine[0];
     if (last && last.body === note.body && last.title === note.title) return null;
-    if (!force && reason === "edit" && last && Date.now() - last.updated_at < VERSION_GAP) return null;
+    if (!force && reason === "edit" && last && this.clock() - last.updated_at < VERSION_GAP) return null;
     const v = this.write("note_versions", normalize("note_versions", { note_id: note.id, title: note.title, body: note.body, saved_at: note.updated_at, reason }));
     for (const old of mine.slice(VERSION_CAP - 1)) this.remove("note_versions", old.id);
     return v.row;

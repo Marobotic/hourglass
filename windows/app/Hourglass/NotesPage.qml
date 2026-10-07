@@ -11,7 +11,7 @@ Item {
     property var notes: []
     property string query: ""
     readonly property var course: app.courses.find(c => c.id === sel) || null
-    readonly property string today: app.nowData ? app.nowData.now.date : Util.dayOf(Date.now())
+    readonly property string today: app.nowData ? app.nowData.now.date : Util.dayOf(app.clock)
     readonly property int cols: Math.max(1, Math.floor((width - 80 + 12) / (280 + 12)))
 
     function load() {

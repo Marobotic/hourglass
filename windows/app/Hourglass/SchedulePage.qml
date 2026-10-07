@@ -7,7 +7,7 @@ Item {
     id: page
     property var app
     property string mode: app.scheduleMode // week | month
-    readonly property string today: app.nowData ? app.nowData.now.date : Util.dayOf(Date.now())
+    readonly property string today: app.nowData ? app.nowData.now.date : Util.dayOf(app.clock)
     property string anchor: today // any date inside the shown week or month
     property var occ: []
     readonly property int gutter: 88

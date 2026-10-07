@@ -244,7 +244,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
 }
 
 // Signed out, this is the whole app: sign in or create an account. Same page
-// as the Omarchy Music phone app's (one account for both), in Hourglass colours.
+// as the Jukebox phone app's (one account for both), in Hourglass colours.
 private val EMAIL = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 
 @Composable
@@ -334,7 +334,7 @@ fun LoginScreen(repo: Repo) {
             }
             Spacer(Modifier.height(8.dp))
             LoginText(
-                if (creating) "At least 8 characters." else "The same account as Omarchy Music. Your other devices use it too.",
+                if (creating) "At least 8 characters." else "The same account as Jukebox. Your other devices use it too.",
                 12.sp, HColors.muted, modifier = Modifier.fillMaxWidth(), align = TextAlign.Start,
             )
             }

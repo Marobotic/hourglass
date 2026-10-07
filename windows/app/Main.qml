@@ -18,6 +18,8 @@ ApplicationWindow {
     property var nowData: null
     property var appState: ({ ringing: [], sync: { state: "local" } })
     property var courses: []
+    // The sidecar's correction for a wrong PC clock (it compares with the server's time).
+    property double clockSkew: 0
     property double clock: Date.now()
     property var editingNote: null
     property bool loaded: false
@@ -172,6 +174,10 @@ ApplicationWindow {
                 app.settings = d.settings;
             }
             if (d.tz_offset_min !== undefined) Util.offsetMin = d.tz_offset_min;
+            if (d.clock_skew_ms !== undefined && d.clock_skew_ms !== app.clockSkew) {
+                app.clockSkew = d.clock_skew_ms;
+                app.clock = Date.now() + app.clockSkew;
+            }
             // Rebind appState only when it actually changed: pages such as the
             // sign-in form bind their fields to appState, and a fresh API
             // response would clear whatever the user is typing.
@@ -189,7 +195,7 @@ ApplicationWindow {
     // Signed out, the sign-in page shows its own errors; pages loading behind it
     // would only toast "sign in first". Before the first state arrives (boot) too.
     Connections { target: Api; function onError(message) { if (app.appState.account && app.appState.account.signed_in) toast.show(message); } }
-    Timer { interval: 1000; running: true; repeat: true; onTriggered: app.clock = Date.now() }
+    Timer { interval: 1000; running: true; repeat: true; onTriggered: app.clock = Date.now() + app.clockSkew }
     Timer { interval: 15000; running: true; repeat: true; onTriggered: app.refresh() }
     Timer { interval: 2000; running: true; repeat: true; onTriggered: app.pollState() }
 

@@ -291,7 +291,7 @@ Rectangle {
                 text: ed.dated ? Util.longDate(ed.note.session_date) : "Not tied to a day"
                 color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14
             }
-            Btn { compact: true; kind: "subtle"; text: ed.dated ? "Clear date" : "Today"; onClicked: ed.move({ session_date: ed.dated ? null : Util.dayOf(Date.now()) }) }
+            Btn { compact: true; kind: "subtle"; text: ed.dated ? "Clear date" : "Today"; onClicked: ed.move({ session_date: ed.dated ? null : Util.dayOf(ed.app ? ed.app.clock : Date.now()) }) }
         }
 
         TextField {

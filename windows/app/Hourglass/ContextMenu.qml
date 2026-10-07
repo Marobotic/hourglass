@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 
-// Right-click menu in the app's own look (the same shape as Omarchy Music's):
+// Right-click menu in the app's own look (the same shape as Jukebox's):
 // a dark panel with an accent border, the item's name on top, rows that
 // light up on hover, danger rows in red. A row with `sub` opens its list in
 // place, with a "‹ Back" row.
@@ -37,7 +37,7 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: Rectangle {
-        color: Qt.darker(Theme.fg, 3.0) // as Omarchy Music's menu
+        color: Qt.darker(Theme.fg, 3.0) // as Jukebox's menu
         border.width: 1
         border.color: Theme.accent
         radius: 4
