@@ -28,6 +28,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
+# [IO.File] resolves relative paths against the process's directory, not Set-Location's.
+[Environment]::CurrentDirectory = $repo
 
 $Key = 'C:\Users\Maro\Documents\Droplets\id_ed25519_claude'
 $Droplet = 'root@157.245.131.195'
