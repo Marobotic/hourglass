@@ -247,9 +247,20 @@ const thumbPath = (t, id) => join(t.dir, "thumbs", `${id}.jpg`);
 const thumbing = new Map(); // path -> promise, one ffmpeg per file at a time
 const canThumb = (f) => (/^image\//.test(f.mime) && !/svg/.test(f.mime)) || /^video\//.test(f.mime);
 
+// The droplet has 2 GB of RAM for everything: previews are made one at a time,
+// on one thread, and a picture so big that decoding it would take hundreds of
+// MB gets none (the apps show its icon).
+const THUMB_MAX_IMAGE = 40 * 1024 * 1024;
+let thumbQueue = Promise.resolve();
+function oneAtATime(job) {
+  const run = thumbQueue.then(job, job);
+  thumbQueue = run.catch(() => {});
+  return run;
+}
+
 function ffmpegFrame(src, out, seek) {
-  return new Promise((resolve, reject) => {
-    const args = ["-hide_banner", "-nostdin", "-v", "error", ...(seek ? ["-ss", "1"] : []), "-i", src, "-frames:v", "1",
+  return oneAtATime(() => new Promise((resolve, reject) => {
+    const args = ["-hide_banner", "-nostdin", "-v", "error", "-threads", "1", ...(seek ? ["-ss", "1"] : []), "-i", src, "-frames:v", "1", "-threads", "1",
       "-vf", `scale=${THUMB}:${THUMB}:force_original_aspect_ratio=increase,crop=${THUMB}:${THUMB}`, "-q:v", "5", "-y", out];
     const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
     let err = "";
@@ -260,7 +271,7 @@ function ffmpegFrame(src, out, seek) {
       clearTimeout(kill);
       code === 0 && existsSync(out) && statSync(out).size > 0 ? resolve() : reject(new Error(err.trim().split("\n").pop() || `ffmpeg exited ${code}`));
     });
-  });
+  }));
 }
 
 async function thumbnail(t, row) {
@@ -362,6 +373,7 @@ async function driveRoutes(t, req, res, url, path) {
   if (th && m === "GET") {
     const row = t.store.get("files", th[1]);
     if (!row || row.deleted || !existsSync(drivePath(t, row.id)) || !canThumb(row)) return send(res, 404, { error: "no preview" }), true;
+    if (/^image\//.test(row.mime) && (row.size || 0) > THUMB_MAX_IMAGE) return send(res, 404, { error: "no preview" }), true;
     let f;
     try { f = await thumbnail(t, row); } catch { return send(res, 404, { error: "no preview" }), true; }
     res.writeHead(200, { "content-type": "image/jpeg", "content-length": statSync(f).size, "cache-control": "private, max-age=300" });
