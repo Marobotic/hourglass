@@ -148,11 +148,18 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
   const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
   if (body !== undefined && !raw) headers["content-type"] = "application/json";
   let r;
-  try {
-    r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
-  } catch (e) {
-    const slow = e.name === "TimeoutError";
-    throw Object.assign(new Error(slow ? "The Hourglass server took too long to answer. Try again." : "Can't reach the Hourglass server. Check your internet connection."), { status: slow ? 504 : 503 });
+  // A dropped connection (the server restarted, a kept-alive socket went stale)
+  // fails at once: try once more before telling anyone.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
+      break;
+    } catch (e) {
+      const slow = e.name === "TimeoutError";
+      if (!slow && attempt === 0) { await new Promise((ok) => setTimeout(ok, 800)); continue; }
+      log(`server ${method} ${path}: ${e.cause?.code || e.cause?.message || e.message}`);
+      throw Object.assign(new Error(slow ? "The Hourglass server took too long to answer. Try again in a moment." : "Can't connect to the Hourglass server right now. Check that this computer is online, then try again."), { status: slow ? 504 : 503 });
+    }
   }
   const out = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(remoteError(r.status, out, !!bearer)), { status: r.status < 500 ? r.status : 502 });
