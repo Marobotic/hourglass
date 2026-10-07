@@ -44,7 +44,7 @@
 <main>
   <div class="brand">
     <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" shape-rendering="crispEdges"><rect width="512" height="512" rx="115" fill="#121212"/><rect x="94" y="76" width="36" height="36" fill="#B14242"/><rect x="130" y="76" width="36" height="36" fill="#B14242"/><rect x="166" y="76" width="36" height="36" fill="#B14242"/><rect x="202" y="76" width="36" height="36" fill="#B14242"/><rect x="238" y="76" width="36" height="36" fill="#B14242"/><rect x="274" y="76" width="36" height="36" fill="#B14242"/><rect x="310" y="76" width="36" height="36" fill="#B14242"/><rect x="346" y="76" width="36" height="36" fill="#B14242"/><rect x="382" y="76" width="36" height="36" fill="#B14242"/><rect x="130" y="112" width="36" height="36" fill="#B14242"/><rect x="346" y="112" width="36" height="36" fill="#B14242"/><rect x="130" y="148" width="36" height="36" fill="#B14242"/><rect x="166" y="148" width="36" height="36" fill="#F0BE66"/><rect x="202" y="148" width="36" height="36" fill="#F0BE66"/><rect x="238" y="148" width="36" height="36" fill="#F0BE66"/><rect x="274" y="148" width="36" height="36" fill="#F0BE66"/><rect x="310" y="148" width="36" height="36" fill="#F0BE66"/><rect x="346" y="148" width="36" height="36" fill="#B14242"/><rect x="166" y="184" width="36" height="36" fill="#B14242"/><rect x="202" y="184" width="36" height="36" fill="#F0BE66"/><rect x="238" y="184" width="36" height="36" fill="#F0BE66"/><rect x="274" y="184" width="36" height="36" fill="#F0BE66"/><rect x="310" y="184" width="36" height="36" fill="#B14242"/><rect x="202" y="220" width="36" height="36" fill="#B14242"/><rect x="238" y="220" width="36" height="36" fill="#F0BE66"/><rect x="274" y="220" width="36" height="36" fill="#B14242"/><rect x="202" y="256" width="36" height="36" fill="#B14242"/><rect x="238" y="256" width="36" height="36" fill="#F0BE66"/><rect x="274" y="256" width="36" height="36" fill="#B14242"/><rect x="166" y="292" width="36" height="36" fill="#B14242"/><rect x="238" y="292" width="36" height="36" fill="#F0BE66"/><rect x="310" y="292" width="36" height="36" fill="#B14242"/><rect x="130" y="328" width="36" height="36" fill="#B14242"/><rect x="202" y="328" width="36" height="36" fill="#F0BE66"/><rect x="238" y="328" width="36" height="36" fill="#F0BE66"/><rect x="274" y="328" width="36" height="36" fill="#F0BE66"/><rect x="346" y="328" width="36" height="36" fill="#B14242"/><rect x="130" y="364" width="36" height="36" fill="#B14242"/><rect x="166" y="364" width="36" height="36" fill="#F0BE66"/><rect x="202" y="364" width="36" height="36" fill="#F0BE66"/><rect x="238" y="364" width="36" height="36" fill="#F0BE66"/><rect x="274" y="364" width="36" height="36" fill="#F0BE66"/><rect x="310" y="364" width="36" height="36" fill="#F0BE66"/><rect x="346" y="364" width="36" height="36" fill="#B14242"/><rect x="94" y="400" width="36" height="36" fill="#B14242"/><rect x="130" y="400" width="36" height="36" fill="#B14242"/><rect x="166" y="400" width="36" height="36" fill="#B14242"/><rect x="202" y="400" width="36" height="36" fill="#B14242"/><rect x="238" y="400" width="36" height="36" fill="#B14242"/><rect x="274" y="400" width="36" height="36" fill="#B14242"/><rect x="310" y="400" width="36" height="36" fill="#B14242"/><rect x="346" y="400" width="36" height="36" fill="#B14242"/><rect x="382" y="400" width="36" height="36" fill="#B14242"/></svg>
-    <h1>Hourglass</h1>
+    <h1 id="app">Hourglass</h1>
     <p>Choose a new password</p>
   </div>
 
@@ -53,25 +53,33 @@
     <input id="pw" type="password" autocomplete="new-password" required minlength="8" maxlength="256" autofocus>
     <label for="pw2">CONFIRM PASSWORD</label>
     <input id="pw2" type="password" autocomplete="new-password" required>
-    <div class="hint">At least 8 characters. The same account as Omarchy Music: both use the new password.</div>
+    <div class="hint">At least 8 characters. One account for <span class="both">Hourglass and Omarchy Music</span>: both use the new password.</div>
     <div class="error" id="error" hidden></div>
     <button id="go" type="submit">Set password</button>
   </form>
 
   <div class="card" id="done" hidden>
     <div class="ok"><b>Password changed.</b></div>
-    <div class="hint">Sign in with it in Hourglass on each of your devices; they were all signed out.</div>
+    <div class="hint">Sign in with it on each of your devices; they were all signed out.</div>
   </div>
 
   <div class="card" id="bad" hidden>
     <div class="error">This link is not complete.</div>
-    <div class="hint">Open the link from the email again, or ask for a new one: in Hourglass, choose “Forgot password?” on the sign-in screen.</div>
+    <div class="hint">Open the link from the email again, or ask for a new one: in the app, choose “Forgot password?” on the sign-in screen.</div>
   </div>
 </main>
 <script>
   const token = decodeURIComponent(location.hash.slice(1));
+  // ?app=music: the mail came from Omarchy Music (the same account).
+  const music = new URLSearchParams(location.search).get("app") === "music";
+  if (music) {
+    document.getElementById("app").textContent = "Omarchy Music";
+    document.title = "Reset password · Omarchy Music";
+    document.querySelector(".brand svg").remove();
+    document.querySelector(".both").textContent = "Omarchy Music and Hourglass";
+  }
   // Drop the token from the address bar and history as soon as it is read.
-  if (location.hash) history.replaceState(null, "", location.pathname);
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   const $ = (id) => document.getElementById(id);
   if (!/^[A-Za-z0-9_-]{20,}$/.test(token)) { $("form").hidden = true; $("bad").hidden = false; }
 
