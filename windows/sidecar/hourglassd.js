@@ -133,8 +133,8 @@ mkdirSync(CUSTOM_DIR, { recursive: true });
 // --- account ---------------------------------------------------------------------
 
 // The server's terse errors, in words for the window's toast and sign-in page.
-function remoteError(status, out) {
-  if (status === 401 && out.error === "unauthorized") return "Your sign-in has expired. Sign in again.";
+function remoteError(status, out, signedIn) {
+  if (status === 401 && out.error === "unauthorized") return signedIn ? "Your sign-in has expired. Sign in again." : "The server turned that down. Try again in a moment.";
   if (status === 401 && /invalid email or password/.test(out.error)) return "Wrong email or password.";
   if (status === 409 && /already registered/.test(out.error)) return "That email already has an account. Sign in instead.";
   if (status === 429) return out.retryIn ? `Too many attempts. Try again in ${out.retryIn} seconds.` : "Too many attempts. Try again in a minute.";
@@ -155,7 +155,7 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
     throw Object.assign(new Error(slow ? "The Hourglass server took too long to answer. Try again." : "Can't reach the Hourglass server. Check your internet connection."), { status: slow ? 504 : 503 });
   }
   const out = await r.json().catch(() => ({}));
-  if (!r.ok) throw Object.assign(new Error(remoteError(r.status, out)), { status: r.status < 500 ? r.status : 502 });
+  if (!r.ok) throw Object.assign(new Error(remoteError(r.status, out, !!bearer)), { status: r.status < 500 ? r.status : 502 });
   return out;
 }
 
