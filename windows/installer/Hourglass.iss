@@ -8,7 +8,9 @@
 ;
 ; Per user, no admin prompt: %LOCALAPPDATA%\Programs\Hourglass. Settings and data
 ; stay in %APPDATA%\Hourglass and %LOCALAPPDATA%\Hourglass and survive updates and
-; uninstalling. The app updates itself by running a newer setup.exe with
+; uninstalling (the account stays signed in). Any older Hourglass goes first: its
+; window and service are stopped wherever they run from (a git checkout too), the
+; old program files are deleted, and PATH entries an old Install.ps1 added go. The app updates itself by running a newer setup.exe with
 ; /VERYSILENT /RELAUNCH (see the service's installUpdate()).
 
 #ifndef AppVersion
@@ -44,11 +46,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [InstallDelete]
-; Code from the old version goes first, so a file a release removed does not linger.
-Type: filesandordirs; Name: "{app}\core"
-Type: filesandordirs; Name: "{app}\server"
-Type: filesandordirs; Name: "{app}\windows\app"
-Type: filesandordirs; Name: "{app}\windows\sidecar"
+; The whole old version goes first, so nothing of it lingers.
+Type: filesandordirs; Name: "{app}\*"
 
 [Files]
 Source: "{#Package}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -80,9 +79,28 @@ begin
   Sleep(800);
 end;
 
+// An older Hourglass that is not this install: one run from a checkout or an
+// old folder (node.exe / qml.exe under ...\hourglass\windows\), anything still
+// holding the service's port, and the PATH entries an old Install.ps1 added.
+procedure RemoveOldHourglass;
+var
+  Code: Integer;
+  Ps, Script: String;
+begin
+  Ps := 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match "\\hourglass\\windows\\(node|qt)\\" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; ' +
+    '$c = Get-NetTCPConnection -LocalPort 8931 -State Listen -ErrorAction SilentlyContinue; if ($c) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }; ' +
+    '$p = [Environment]::GetEnvironmentVariable("Path", "User"); if ($p) { $n = ($p -split ";" | Where-Object { $_ -and $_ -notmatch "\\hourglass\\windows\\bin\\?$" }) -join ";"; if ($n -ne $p) { [Environment]::SetEnvironmentVariable("Path", $n, "User") } }';
+  // As a file: its quotes would not survive a -Command line.
+  Script := ExpandConstant('{tmp}\remove-old-hourglass.ps1');
+  SaveStringToFile(Script, Ps, False);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + Script + '"', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(500);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopHourglass;
+  RemoveOldHourglass;
   Result := '';
 end;
 
