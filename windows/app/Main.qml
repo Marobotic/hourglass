@@ -205,6 +205,7 @@ ApplicationWindow {
         const day = occ.session_date || occ.date;
         newNote({ course: occ.course_id, date: day, title: Util.shortDate(day) });
     }
+    function showToast(message) { toast.show(message); }
     function startTimer(minutes, label) { Api.action("start_timer", { minutes: minutes, label: label }); }
     function openSession(occ) { sessionDialog.show(occ); }
     function editEvent(ev, defaults) { eventDialog.edit(ev, defaults); }

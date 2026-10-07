@@ -513,6 +513,37 @@ async function watchDrive() {
 }
 setInterval(() => watchDrive().catch((e) => log("drive watch:", e.message)), 3000);
 
+// GET /thumbs/<id>?k=<FILE_KEY>: a small JPEG for the file list, made on the
+// server, so listing a folder never downloads the files in it. Kept in
+// data/thumbs under the row's updated_at; a newer one replaces it.
+const THUMB_DIR = join(DATA_DIR, "thumbs");
+const thumbing = new Map();
+async function serveThumb(req, res, url) {
+  const m = /^\/thumbs\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (!m || url.searchParams.get("k") !== FILE_KEY) return json(res, 403, { error: "forbidden" });
+  const row = store.get("files", m[1]);
+  if (!row || row.deleted) return json(res, 404, { error: "not found" });
+  const f = join(THUMB_DIR, `${row.id}.${String(row.updated_at).replace(/[^0-9a-zA-Z]/g, "")}.jpg`);
+  try {
+    if (!existsSync(f)) {
+      if (!thumbing.has(f)) thumbing.set(f, (async () => {
+        const { server, token } = config();
+        if (!server) throw Object.assign(new Error("signed out"), { status: 401 });
+        const r = await fetch(`${server}/api/files/${row.id}/thumb`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60000) });
+        if (!r.ok) throw Object.assign(new Error("no preview"), { status: 404 });
+        mkdirSync(THUMB_DIR, { recursive: true });
+        for (const n of readdirSync(THUMB_DIR)) if (n.startsWith(row.id + ".")) rmSync(join(THUMB_DIR, n), { force: true });
+        writeFileSync(f, Buffer.from(await r.arrayBuffer()));
+      })().finally(() => thumbing.delete(f)));
+      await thumbing.get(f);
+    }
+    res.writeHead(200, { "content-type": "image/jpeg", "content-length": statSync(f).size, "cache-control": "private, max-age=60" });
+    createReadStream(f).pipe(res);
+  } catch (e) {
+    json(res, e.status || 500, { error: e.message });
+  }
+}
+
 // GET /files/<id>?k=<FILE_KEY>: the bytes, for pictures and videos in the
 // window (with Range, so a video can seek). No API token.
 async function serveFile(req, res, url) {
@@ -538,7 +569,7 @@ async function serveFile(req, res, url) {
 
 async function driveRoutes(req, res, url, path) {
   const m = req.method;
-  if (path === "/api/drive/info" && m === "GET") return json(res, 200, { file_base: `http://127.0.0.1:${PORT}/files/`, key: FILE_KEY }), true;
+  if (path === "/api/drive/info" && m === "GET") return json(res, 200, { file_base: `http://127.0.0.1:${PORT}/files/`, thumb_base: `http://127.0.0.1:${PORT}/thumbs/`, key: FILE_KEY }), true;
   if (path === "/api/drive/usage" && m === "GET") return json(res, 200, await remote("/api/drive/usage")), true;
   // Upload a file from this computer: { path, folder, course, note }. Streams to the server.
   if (path === "/api/files/upload" && m === "POST") {
@@ -585,6 +616,35 @@ async function driveRoutes(req, res, url, path) {
     if (WIN) spawn("explorer.exe", ["/select,", f], { detached: true, stdio: "ignore" }).unref();
     else spawn("xdg-open", [dirname(f)], { detached: true, stdio: "ignore" }).unref();
     return json(res, 200, { path: f }), true;
+  }
+  // "Download…": a copy saved where the user chose ({ path }), straight from
+  // the server (or this computer's open copy, when it is current). Not kept
+  // track of: it is the user's file now.
+  const save = /^\/api\/files\/([0-9a-f-]{36})\/save$/.exec(path);
+  if (save && m === "POST") {
+    const b = await readBody(req);
+    const to = decodeURIComponent(String(b.path || "").replace(/^file:\/\/\/?/, WIN ? "" : "/"));
+    if (!to || !existsSync(dirname(to))) return json(res, 400, { error: "Choose a folder that exists." }), true;
+    const row = store.get("files", save[1]);
+    if (!row || row.deleted) return json(res, 404, { error: "That file is gone." }), true;
+    const have = index[row.id];
+    if (have && existsSync(have.path) && have.updated_at >= row.updated_at) {
+      copyFileSync(have.path, to);
+      return json(res, 200, { path: to }), true;
+    }
+    const { server, token } = config();
+    if (!server) return json(res, 401, { error: "Sign in to download files." }), true;
+    const r = await fetch(`${server}/api/files/${row.id}/raw`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3600000) });
+    if (!r.ok) return json(res, 502, { error: `Could not download it (${r.status}).` }), true;
+    const tmp = to + ".part";
+    try {
+      await pipeline(Readable.fromWeb(r.body), createWriteStream(tmp));
+      renameSync(tmp, to);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
+    return json(res, 200, { path: to }), true;
   }
   if (path === "/api/ai" && m === "DELETE") return json(res, 200, await remote("/api/ai", { method: "DELETE" })), true;
   return false;
@@ -817,6 +877,7 @@ createServer((req, res) => {
   res.writeHead = (status, ...rest) => writeHead.call(res, QT_UNREADABLE.has(status) ? 400 : status, ...rest);
   const url = new URL(req.url, "http://local");
   if (url.pathname.startsWith("/files/")) return serveFile(req, res, url);
+  if (url.pathname.startsWith("/thumbs/")) return serveThumb(req, res, url);
   return handler(req, res);
 }).listen(PORT, "127.0.0.1", async () => {
   log(`hourglassd on http://127.0.0.1:${PORT} (data ${DATA_DIR}, tz ${service.tz})`);

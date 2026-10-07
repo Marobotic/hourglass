@@ -14,6 +14,7 @@
 // the bearer here too. Each account has its own data; the account named in
 // <data>/owner keeps the top-level data, which the legacy token also opens.
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
@@ -229,9 +230,59 @@ function songFile(id) {
 
 const drivePath = (t, id) => join(t.dir, "drive", id);
 
-// Drop the bytes of files deleted here or by a device's sync.
+// Drop the bytes (and preview) of files deleted here or by a device's sync.
 function sweepDrive(t) {
-  for (const f of t.store.all("files", { withDeleted: true })) if (f.deleted) rmSync(drivePath(t, f.id), { force: true });
+  for (const f of t.store.all("files", { withDeleted: true })) {
+    if (!f.deleted) continue;
+    rmSync(drivePath(t, f.id), { force: true });
+    rmSync(thumbPath(t, f.id), { force: true });
+  }
+}
+
+// A small square JPEG of a picture, or of a video's first second, for the
+// apps' file lists: they show this instead of downloading the file itself.
+// Made by ffmpeg on first ask and kept until the file changes.
+const THUMB = 144;
+const thumbPath = (t, id) => join(t.dir, "thumbs", `${id}.jpg`);
+const thumbing = new Map(); // path -> promise, one ffmpeg per file at a time
+const canThumb = (f) => (/^image\//.test(f.mime) && !/svg/.test(f.mime)) || /^video\//.test(f.mime);
+
+function ffmpegFrame(src, out, seek) {
+  return new Promise((resolve, reject) => {
+    const args = ["-hide_banner", "-nostdin", "-v", "error", ...(seek ? ["-ss", "1"] : []), "-i", src, "-frames:v", "1",
+      "-vf", `scale=${THUMB}:${THUMB}:force_original_aspect_ratio=increase,crop=${THUMB}:${THUMB}`, "-q:v", "5", "-y", out];
+    const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    const kill = setTimeout(() => p.kill("SIGKILL"), 30000);
+    p.stderr.on("data", (c) => (err += c));
+    p.on("error", (e) => { clearTimeout(kill); reject(e); });
+    p.on("close", (code) => {
+      clearTimeout(kill);
+      code === 0 && existsSync(out) && statSync(out).size > 0 ? resolve() : reject(new Error(err.trim().split("\n").pop() || `ffmpeg exited ${code}`));
+    });
+  });
+}
+
+async function thumbnail(t, row) {
+  const src = drivePath(t, row.id);
+  const out = thumbPath(t, row.id);
+  if (existsSync(out) && statSync(out).mtimeMs >= statSync(src).mtimeMs) return out;
+  if (!thumbing.has(out)) {
+    thumbing.set(out, (async () => {
+      mkdirSync(join(t.dir, "thumbs"), { recursive: true });
+      const tmp = out + ".part.jpg";
+      const video = /^video\//.test(row.mime);
+      try {
+        // A video shorter than a second has nothing at 1 s: take its first frame.
+        await ffmpegFrame(src, tmp, video).catch((e) => (video ? ffmpegFrame(src, tmp, false) : Promise.reject(e)));
+        renameSync(tmp, out);
+      } finally {
+        rmSync(tmp, { force: true });
+      }
+      return out;
+    })().finally(() => thumbing.delete(out)));
+  }
+  return thumbing.get(out);
 }
 
 function diskUsage(t) {
@@ -306,6 +357,16 @@ async function driveRoutes(t, req, res, url, path) {
     }
     renameSync(tmp, drivePath(t, row.id));
     return send(res, 200, t.store.upsert("files", { id: row.id, size })), true;
+  }
+  const th = /^\/api\/files\/([0-9a-f-]{36})\/thumb$/.exec(path);
+  if (th && m === "GET") {
+    const row = t.store.get("files", th[1]);
+    if (!row || row.deleted || !existsSync(drivePath(t, row.id)) || !canThumb(row)) return send(res, 404, { error: "no preview" }), true;
+    let f;
+    try { f = await thumbnail(t, row); } catch { return send(res, 404, { error: "no preview" }), true; }
+    res.writeHead(200, { "content-type": "image/jpeg", "content-length": statSync(f).size, "cache-control": "private, max-age=300" });
+    createReadStream(f).pipe(res);
+    return true;
   }
   const raw = /^\/api\/files\/([0-9a-f-]{36})\/raw$/.exec(path);
   if (raw && m === "GET") {

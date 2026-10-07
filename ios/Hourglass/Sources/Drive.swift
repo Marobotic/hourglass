@@ -116,6 +116,7 @@ struct DriveView: View {
     @State private var naming: (String, (String) -> Void)?
     @State private var nameText = ""
     @State private var deleting: (String, () -> Void)?
+    @State private var saving: URL? // "Download…": a copy waiting for the Files picker
 
     var body: some View {
         let view = store.drive(folderId, course: courseId)
@@ -167,6 +168,7 @@ struct DriveView: View {
                     row(f.mime.hasPrefix("image/") ? "photo" : f.mime.hasPrefix("video/") ? "film" : "doc", f.name, fmtBytes(f.size), H.muted) { opener.open(f, store) }
                         .contextMenu {
                             Button("Open") { opener.open(f, store) }
+                            Button("Download…") { download(f) }
                             Button("Rename") { ask("Rename file", f.name) { s in if !s.isEmpty { var f = f; f.name = s; store.save(f) } } }
                             Menu("Put in a course") {
                                 ForEach(store.courses) { c in Button(c.name) { store.setFileCourse(f.id, c.id) } }
@@ -186,6 +188,12 @@ struct DriveView: View {
             upload(urls)
         }
         .quickLookPreview($opener.url)
+        .fileMover(isPresented: Binding(get: { saving != nil }, set: { if !$0 { saving = nil } }), file: saving) { r in
+            switch r {
+            case .success(let to): status = "Saved \(to.lastPathComponent)"
+            case .failure(let e): status = "Download failed: \(e.localizedDescription)"
+            }
+        }
         .alert(naming?.0 ?? "", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
             TextField("Name", text: $nameText)
             Button("Save") { naming?.1(nameText.trimmingCharacters(in: .whitespaces)); naming = nil }
@@ -207,6 +215,25 @@ struct DriveView: View {
     private func ask(_ title: String, _ initial: String = "", _ done: @escaping (String) -> Void) {
         nameText = initial
         naming = (title, done)
+    }
+
+    // "Download…": fetch the file (or use this phone's copy), then let the
+    // Files picker put a copy wherever the user chooses.
+    private func download(_ f: DriveFile) {
+        status = "Downloading \(f.name)…"
+        Task {
+            do {
+                let src = try await store.download(f)
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let copy = dir.appendingPathComponent(f.name.isEmpty ? "file" : f.name)
+                try FileManager.default.copyItem(at: src, to: copy)
+                status = nil
+                saving = copy
+            } catch {
+                status = "Download failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func upload(_ urls: [URL]) {

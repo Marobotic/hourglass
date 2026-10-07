@@ -143,6 +143,16 @@ fun DriveScreen(nav: Nav, version: Int) {
     fun up() { if (courseId != null) courseId = null else folderId = view.path.dropLast(1).lastOrNull()?.id }
     BackHandler(enabled = folderId != null || courseId != null) { up() }
 
+    // "Download…": the system's save picker (Downloads, Drive, any folder), then the copy.
+    var saving by remember { mutableStateOf<JSONObject?>(null) }
+    val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val f = saving
+        saving = null
+        if (uri == null || f == null) return@rememberLauncherForActivityResult
+        status = "Downloading ${f.optString("name")}…"
+        repo.saveTo(f.id, uri) { err -> status = if (err != null) "Download failed: $err" else "Saved ${f.optString("name")}" }
+    }
+
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         var left = uris.size
@@ -195,6 +205,7 @@ fun DriveScreen(nav: Nav, version: Int) {
                 val courses = repo.courses()
                 DriveRow(icon, f.optString("name"), fmtBytes(f.optLong("size")), HColors.muted, menu = buildList {
                     add("Open" to { opener.open(f) })
+                    add("Download…" to { saving = f; saver.launch(f.optString("name").ifBlank { "file" }) })
                     add("Rename" to { naming = "Rename file" to { s: String -> if (s.isNotBlank()) repo.renameDrive("files", f.id, s) } })
                     for (c in courses) if (c.id != f.str("course_id")) add("Put in ${c.optString("name")}" to { repo.setFileCourse(f.id, c.id) })
                     if (f.str("course_id") != null || f.str("folder_id") != null) add("Move to the top" to { repo.setFileFolder(f.id, null) })

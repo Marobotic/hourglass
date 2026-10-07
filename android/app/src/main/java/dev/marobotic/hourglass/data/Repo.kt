@@ -465,6 +465,30 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
     }
 
+    // "Download…": a copy written where the user chose (a Storage Access
+    // Framework document), from this phone's copy when it is current, else
+    // straight from the server. Not kept track of: it is the user's file now.
+    fun saveTo(id: String, dest: android.net.Uri, done: (String?) -> Unit) = scope.launch {
+        val err = runCatching {
+            val row = store.get("files", id) ?: error("That file is gone")
+            val out = ctx.contentResolver.openOutputStream(dest, "wt") ?: error("Could not write there")
+            out.use { o ->
+                val have = driveCopy(id)
+                if (have != null && have.exists() && have.length() == row.optLong("size")) {
+                    have.inputStream().use { it.copyTo(o, 64 * 1024) }
+                } else {
+                    val c = URL("${BuildConfig.SERVER}/api/files/$id/raw").openConnection() as HttpURLConnection
+                    c.setRequestProperty("Authorization", "Bearer ${token ?: error("Sign in first")}")
+                    c.connectTimeout = 8000
+                    c.readTimeout = 120_000
+                    if (c.responseCode != 200) error("HTTP ${c.responseCode}")
+                    c.inputStream.use { it.copyTo(o, 64 * 1024) }
+                }
+            }
+        }.exceptionOrNull()?.message
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+
     // --- account (Omarchy Music) ---
 
     // A new Omarchy Music account, made from here: signed in once created.

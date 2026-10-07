@@ -1,3 +1,4 @@
+import QtCore
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -10,8 +11,10 @@ import QtMultimedia
 // with its app; right-click for more. The bar on top is the server's disk,
 // live, so you know how much still fits.
 //
-// Opened files stay on this computer and are watched: save an edit in its
-// app (Illustrator, Photoshop, Word...) and it is uploaded again.
+// Nothing is downloaded until it is opened: the list shows small previews
+// made on the server. Opened files stay on this computer and are watched:
+// save an edit in its app (Illustrator, Photoshop, Word...) and it is
+// uploaded again. "Download…" saves a copy wherever you choose.
 Item {
     id: page
     property var app
@@ -21,7 +24,7 @@ Item {
     property var usage: null
     property string busy: ""
     property string problem: ""
-    property var info: null // { file_base, key } for previews
+    property var info: null // { file_base, thumb_base, key } for previews
 
     function load() {
         const args = course ? { course_id: course } : folder ? { folder_id: folder } : {};
@@ -47,6 +50,24 @@ Item {
     function isVideo(f) { return /^video\//.test(f.mime) || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name); }
     function kindIcon(f) { return isImage(f) ? "image" : isVideo(f) ? "play" : "file"; }
     function src(f) { return page.info ? page.info.file_base + f.id + "?k=" + page.info.key + "&v=" + f.updated_at : ""; }
+    // The list's small picture: made on the server, so showing it downloads nothing.
+    function thumb(f) { return page.info && page.info.thumb_base ? page.info.thumb_base + f.id + "?k=" + page.info.key + "&v=" + f.updated_at : ""; }
+
+    // "Download…": ask where, then the service saves a copy there.
+    function download(f) {
+        saver.f = f;
+        saver.selectedFile = saver.currentFolder + "/" + f.name;
+        saver.open();
+    }
+    function saveTo(f, url) {
+        page.busy = "Downloading " + f.name + "…";
+        page.problem = "";
+        Api.request("POST", "/api/files/" + f.id + "/save", { path: url.toString() }, (d, err) => {
+            page.busy = "";
+            if (err) page.problem = err;
+            else page.app.showToast("Saved " + f.name);
+        }, true);
+    }
 
     function upload(urls) {
         if (!urls.length) return;
@@ -79,6 +100,15 @@ Item {
         else
             page.app.confirm("Delete " + it.row.name + "?", "It is deleted from the server and every device" + (it.row.note_id ? ", and stops showing in its note." : "."), "Delete",
                 () => Api.del("/api/files/" + it.row.id, () => page.loadUsage()));
+    }
+
+    FileDialog {
+        id: saver
+        property var f: null
+        title: "Download " + (f ? f.name : "")
+        fileMode: FileDialog.SaveFile
+        currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
+        onAccepted: if (f) page.saveTo(f, selectedFile)
     }
 
     FileDialog {
@@ -125,6 +155,7 @@ Item {
         menu.show(p.x, p.y, f.name, [
             { key: "open", label: "Open" },
             media ? { key: "preview", label: "Preview" } : null,
+            { key: "download", label: "Download…" },
             { key: "reveal", label: "Show in folder" },
             { separator: true },
             { key: "course", label: "Set course", sub: courses.concat([{ separator: true }, { key: "course:", label: "No course", disabled: !f.course_id }]) },
@@ -139,6 +170,7 @@ Item {
             const it = page.menuItem, f = it.row;
             if (key === "open") it.table === "folders" ? page.go(f.id, "") : page.openFile(f);
             else if (key === "preview") preview.show(f);
+            else if (key === "download") page.download(f);
             else if (key === "reveal") page.reveal(f);
             else if (key.startsWith("course:")) page.moveTo(f, key.slice(7) || null);
             else if (key === "rename") nameDlg.ask(it);
@@ -306,16 +338,17 @@ Item {
                             Item {
                                 width: 36; height: 36
                                 Image {
+                                    id: thumbImg
                                     anchors.fill: parent
-                                    visible: !item.isFolder && page.isImage(item.f)
-                                    source: visible ? page.src(item.f) : ""
+                                    visible: !item.isFolder && (page.isImage(item.f) || page.isVideo(item.f))
+                                    source: visible ? page.thumb(item.f) : ""
                                     sourceSize: Qt.size(72, 72)
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                 }
                                 Icon {
                                     anchors.centerIn: parent
-                                    visible: item.isFolder || !page.isImage(item.f)
+                                    visible: item.isFolder || thumbImg.status !== Image.Ready
                                     name: item.isFolder ? "folder" : page.kindIcon(item.f); size: 16
                                     color: item.isFolder ? Theme.accent : Theme.muted
                                 }
