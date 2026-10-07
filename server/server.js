@@ -132,14 +132,20 @@ async function sessionEmail(bearer) {
   const hit = sessions.get(k);
   if (hit && hit.until > Date.now()) return hit.email;
   let email = null;
+  // Only the account server saying no (401/403) signs a session out; it being
+  // down or slow is a 503, never "unauthorized" cached for everyone.
+  const down = () => {
+    if (hit?.email) return hit.email; // keep a known session
+    throw Object.assign(new Error("The account server is not answering. Try again in a moment."), { status: 503 });
+  };
   try {
     const r = await fetch(`${maroUrl}/account`, { headers: { authorization: `Bearer ${bearer}` }, signal: AbortSignal.timeout(8000) });
     if (r.ok) {
       const o = await r.json();
       email = String(o.account?.email || o.email || "").toLowerCase() || null;
-    }
+    } else if (r.status !== 401 && r.status !== 403) return down();
   } catch {
-    if (hit?.email) return hit.email; // account server briefly down: keep a known session
+    return down();
   }
   sessions.set(k, { email, until: Date.now() + (email ? 10 * 60_000 : 30_000) });
   return email;
@@ -162,6 +168,7 @@ async function who(req) {
 }
 
 // Sign-in goes to the Omarchy Music server: same accounts, same sessions.
+// Forgot and reset (a link by email) go there too.
 async function proxyAuth(req, res, path) {
   const body = await readRaw(req, 4096);
   const r = await fetch(maroUrl + path, {
@@ -385,7 +392,12 @@ createServer(async (req, res) => {
       if (!t) return send(res, 403, { error: "bad key" });
       return t.handler(req, res);
     }
-    if ((path === "/auth/login" || path === "/auth/register") && req.method === "POST") return await proxyAuth(req, res, path);
+    if (/^\/auth\/(login|register|forgot|reset)$/.test(path) && req.method === "POST") return await proxyAuth(req, res, path);
+    // The page a password-reset email links to (marobotic.dev/hourglass/reset#<token>).
+    if (path === "/reset" && req.method === "GET") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-frame-options": "DENY" });
+      return res.end(readFileSync(join(import.meta.dirname, "reset.html")));
+    }
     // MCP with the key in the link, for apps that only take a URL (ChatGPT
     // and Claude connectors): https://.../hourglass/mcp/<key>
     const mk = /^\/mcp\/(hg_[A-Za-z0-9_-]{20,})$/.exec(path);

@@ -486,6 +486,12 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
     }
 
+    // Forgot password: the server mails a reset link (the same answer for any email).
+    fun forgotPassword(email: String, done: (String?) -> Unit) = scope.launch {
+        val err = runCatching { http("POST", "${BuildConfig.SERVER}/auth/forgot", null, JSONObject().put("email", email).toString()) }.exceptionOrNull()?.message
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+
     // The account's personal AI key and links. make: replace the key (the old
     // link stops working).
     fun aiLinks(make: Boolean, done: (JSONObject?, String?) -> Unit) = scope.launch {
@@ -566,11 +572,23 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             c.setRequestProperty("Content-Type", if (raw != null) "application/octet-stream" else "application/json")
             c.outputStream.use { it.write(raw ?: body!!.toByteArray()) }
         }
-        val code = c.responseCode
+        val code = try { c.responseCode } catch (e: java.net.SocketTimeoutException) {
+            throw RuntimeException("The Hourglass server took too long to answer. Try again.")
+        } catch (e: java.io.IOException) {
+            throw RuntimeException("Can't reach the Hourglass server. Check your internet connection.")
+        }
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
         if (code !in 200..299) {
-            val msg = runCatching { JSONObject(text).optString("error") }.getOrNull()
-            throw RuntimeException(if (code == 401 && (url.endsWith("/auth/login") || url.endsWith("/auth/register"))) msg ?: "Wrong email or password" else if (code == 401) "HTTP 401" else msg?.ifBlank { null } ?: "HTTP $code")
+            val o = runCatching { JSONObject(text) }.getOrNull()
+            val msg = o?.optString("error")?.ifBlank { null }
+            throw RuntimeException(when {
+                // "HTTP 401" is how syncOnce knows the session is gone.
+                code == 401 && !url.contains("/auth/") -> "HTTP 401"
+                code == 401 -> "Wrong email or password."
+                code == 409 -> "That email already has an account. Sign in instead."
+                code == 429 -> o?.optInt("retryIn")?.takeIf { it > 0 }?.let { "Too many attempts. Try again in $it seconds." } ?: "Too many attempts. Try again in a minute."
+                else -> msg ?: "HTTP $code"
+            })
         }
         return text
     }

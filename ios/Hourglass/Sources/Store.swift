@@ -352,6 +352,32 @@ final class Store: ObservableObject {
         try await signIn(email: email, password: password, path: "auth/register")
     }
 
+    // Forgot password: the server mails a reset link (the same answer for any email).
+    func forgotPassword(email: String) async throws {
+        guard let base = URL(string: server) else { return }
+        var req = URLRequest(url: base.appendingPathComponent("auth/forgot"), timeoutInterval: 15)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(["email": email])
+        let (data, res) = try await URLSession.shared.data(for: req)
+        let code = (res as? HTTPURLResponse)?.statusCode ?? 0
+        if code != 200 {
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            throw NSError(domain: "hourglass", code: code, userInfo: [NSLocalizedDescriptionKey: Store.authMessage(code, obj, fallback: "Could not send the reset link")])
+        }
+    }
+
+    // The server's terse sign-in errors, in words.
+    static func authMessage(_ code: Int, _ obj: [String: Any], fallback: String) -> String {
+        if code == 401 { return "Wrong email or password." }
+        if code == 409 { return "That email already has an account. Sign in instead." }
+        if code == 429 {
+            if let s = obj["retryIn"] as? Int, s > 0 { return "Too many attempts. Try again in \(s) seconds." }
+            return "Too many attempts. Try again in a minute."
+        }
+        return obj["error"] as? String ?? fallback
+    }
+
     // The account's personal AI key and links. make: replace the key.
     func aiLinks(make: Bool) async throws -> [String: Any] {
         guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
@@ -388,7 +414,8 @@ final class Store: ObservableObject {
         let (data, res) = try await URLSession.shared.data(for: req)
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard (res as? HTTPURLResponse)?.statusCode == 200, let session = obj["session"] as? String else {
-            throw NSError(domain: "hourglass", code: 401, userInfo: [NSLocalizedDescriptionKey: obj["error"] as? String ?? (path == "auth/login" ? "Sign-in failed" : "Could not create the account")])
+            let code = (res as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(domain: "hourglass", code: 401, userInfo: [NSLocalizedDescriptionKey: Store.authMessage(code, obj, fallback: path == "auth/login" ? "Sign-in failed" : "Could not create the account")])
         }
         let who = (obj["email"] as? String ?? email).lowercased()
         if let was = account, was != who {

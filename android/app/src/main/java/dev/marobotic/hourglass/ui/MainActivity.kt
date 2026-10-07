@@ -250,6 +250,8 @@ private val EMAIL = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 @Composable
 fun LoginScreen(repo: Repo) {
     var creating by remember { mutableStateOf(false) }
+    var forgot by remember { mutableStateOf(false) } // "Forgot password?": email only, sends a reset link
+    var notice by remember { mutableStateOf<String?>(null) }
     var email by remember { mutableStateOf(repo.account ?: "") }
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
@@ -261,6 +263,18 @@ fun LoginScreen(repo: Repo) {
     fun submit() {
         if (busy) return
         val e = email.trim()
+        notice = null
+        if (forgot) {
+            problem = if (!EMAIL.matches(e)) "Enter a valid email address." else null
+            if (problem != null) return
+            busy = true
+            repo.forgotPassword(e) { err ->
+                busy = false
+                problem = err
+                if (err == null) notice = "If $e has an account, a reset link is on its way. Open it on any device; it works for one hour."
+            }
+            return
+        }
         problem = when {
             !EMAIL.matches(e) -> "Enter a valid email address."
             password.length < 8 -> "The password needs at least 8 characters."
@@ -289,10 +303,17 @@ fun LoginScreen(repo: Repo) {
             LoginText("Your schedule and notes, on every device", 14.sp, HColors.muted)
             Spacer(Modifier.height(28.dp))
 
-            ModeSwitch(creating) { creating = it; problem = null }
+            fun mode(create: Boolean, lost: Boolean) { creating = create; forgot = lost; problem = null; notice = null }
+            if (forgot) {
+                LoginText(
+                    "Forgot your password? Enter your email and we'll send you a link to choose a new one.",
+                    14.sp, HColors.fg, modifier = Modifier.fillMaxWidth(), align = TextAlign.Start,
+                )
+            } else ModeSwitch(creating) { mode(it, false) }
             Spacer(Modifier.height(22.dp))
 
-            LoginField("Email", email, { email = it; problem = null }, keyboard = KeyboardType.Email)
+            LoginField("Email", email, { email = it; problem = null }, keyboard = KeyboardType.Email, last = forgot, onDone = ::submit)
+            if (!forgot) {
             Spacer(Modifier.height(14.dp))
             LoginField(
                 "Password", password, { password = it; problem = null },
@@ -304,11 +325,23 @@ fun LoginScreen(repo: Repo) {
                 Spacer(Modifier.height(14.dp))
                 LoginField("Confirm password", confirm, { confirm = it; problem = null }, keyboard = KeyboardType.Password, hidden = !showPassword, last = true, onDone = ::submit)
             }
+            if (!creating) {
+                Spacer(Modifier.height(10.dp))
+                LoginText(
+                    "Forgot password?", 13.sp, HColors.muted,
+                    modifier = Modifier.align(Alignment.End).clickable { mode(false, true) }.padding(vertical = 4.dp),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             LoginText(
                 if (creating) "At least 8 characters." else "The same account as Omarchy Music. Your other devices use it too.",
                 12.sp, HColors.muted, modifier = Modifier.fillMaxWidth(), align = TextAlign.Start,
             )
+            }
+            notice?.let {
+                Spacer(Modifier.height(14.dp))
+                LoginText(it, 13.sp, HColors.teal, modifier = Modifier.fillMaxWidth(), align = TextAlign.Start)
+            }
             problem?.let {
                 Spacer(Modifier.height(14.dp))
                 LoginText(it, 13.sp, HColors.accent, modifier = Modifier.fillMaxWidth(), align = TextAlign.Start)
@@ -316,6 +349,8 @@ fun LoginScreen(repo: Repo) {
             Spacer(Modifier.height(22.dp))
             PrimaryButton(
                 text = when {
+                    forgot && busy -> "Sending…"
+                    forgot -> "Send reset link"
                     busy && creating -> "Creating account…"
                     busy -> "Signing in…"
                     creating -> "Create account"
@@ -325,10 +360,10 @@ fun LoginScreen(repo: Repo) {
             )
             Spacer(Modifier.height(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                LoginText(if (creating) "Already have an account? " else "New here? ", 14.sp, HColors.muted)
+                LoginText(if (forgot) "Remembered it? " else if (creating) "Already have an account? " else "New here? ", 14.sp, HColors.muted)
                 LoginText(
-                    if (creating) "Sign in" else "Create an account", 14.sp, HColors.accent, bold = true,
-                    modifier = Modifier.clickable { creating = !creating; problem = null },
+                    if (forgot || creating) "Sign in" else "Create an account", 14.sp, HColors.accent, bold = true,
+                    modifier = Modifier.clickable { mode(!creating && !forgot, false) },
                 )
             }
         }

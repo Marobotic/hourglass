@@ -23,6 +23,7 @@ ApplicationWindow {
     property bool loaded: false
     property var settings: ({})
     property bool devLogin: false
+    property string devLoginMode: "" // dev: --login create | forgot
     property string scheduleMode: "week"
     property string shotPath: "" // dev: render, save a PNG, quit
     property string devOpen: ""  // dev: note | course | event | session
@@ -78,7 +79,7 @@ ApplicationWindow {
             if (a[i] === "--screenshot") shotPath = a[i + 1];
             if (a[i] === "--open") devOpen = a[i + 1];
             if (a[i] === "--schedule") scheduleMode = a[i + 1];
-            if (a[i] === "--login") app.devLogin = true;
+            if (a[i] === "--login") { app.devLogin = true; app.devLoginMode = a[i + 1]; }
             if (a[i] === "--size") { const wh = a[i + 1].split("x"); app.width = +wh[0]; app.height = +wh[1]; }
         }
         pollState();
@@ -185,7 +186,9 @@ ApplicationWindow {
     }
 
     Connections { target: Api; function onChanged() { app.refresh(); } }
-    Connections { target: Api; function onError(message) { toast.show(message); } }
+    // Signed out, the sign-in page shows its own errors; pages loading behind it
+    // would only toast "sign in first". Before the first state arrives (boot) too.
+    Connections { target: Api; function onError(message) { if (app.appState.account && app.appState.account.signed_in) toast.show(message); } }
     Timer { interval: 1000; running: true; repeat: true; onTriggered: app.clock = Date.now() }
     Timer { interval: 15000; running: true; repeat: true; onTriggered: app.refresh() }
     Timer { interval: 2000; running: true; repeat: true; onTriggered: app.pollState() }

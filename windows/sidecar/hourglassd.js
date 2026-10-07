@@ -132,12 +132,30 @@ mkdirSync(CUSTOM_DIR, { recursive: true });
 
 // --- account ---------------------------------------------------------------------
 
+// The server's terse errors, in words for the window's toast and sign-in page.
+function remoteError(status, out) {
+  if (status === 401 && out.error === "unauthorized") return "Your sign-in has expired. Sign in again.";
+  if (status === 401 && /invalid email or password/.test(out.error)) return "Wrong email or password.";
+  if (status === 409 && /already registered/.test(out.error)) return "That email already has an account. Sign in instead.";
+  if (status === 429) return out.retryIn ? `Too many attempts. Try again in ${out.retryIn} seconds.` : "Too many attempts. Try again in a minute.";
+  if (status >= 500) return out.error || "The Hourglass server had a problem. Try again in a moment.";
+  return out.error || `server ${status}`;
+}
+
 async function remote(path, { method = "GET", body, bearer = config().token, raw } = {}) {
+  // Signed out: only sign-in itself goes to the server.
+  if (!bearer && !path.startsWith("/auth/")) throw Object.assign(new Error("Sign in to Hourglass first."), { status: 401 });
   const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
   if (body !== undefined && !raw) headers["content-type"] = "application/json";
-  const r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
+  let r;
+  try {
+    r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
+  } catch (e) {
+    const slow = e.name === "TimeoutError";
+    throw Object.assign(new Error(slow ? "The Hourglass server took too long to answer. Try again." : "Can't reach the Hourglass server. Check your internet connection."), { status: slow ? 504 : 503 });
+  }
   const out = await r.json().catch(() => ({}));
-  if (!r.ok) throw Object.assign(new Error(out.error || `server ${r.status}`), { status: r.status < 500 ? r.status : 502 });
+  if (!r.ok) throw Object.assign(new Error(remoteError(r.status, out)), { status: r.status < 500 ? r.status : 502 });
   return out;
 }
 
@@ -728,6 +746,12 @@ async function extra(req, res, url, path) {
     if (!out.session) throw Object.assign(new Error("account created: sign in with it"), { status: 400 });
     return json(res, 200, await signIn(out.session, out.email || String(b.email).toLowerCase())), true;
   }
+  // Forgot password: the server mails a reset link (same answer for any email).
+  if (path === "/api/account/forgot" && req.method === "POST") {
+    const b = await readBody(req);
+    await remote("/auth/forgot", { method: "POST", body: { email: b.email }, bearer: null });
+    return json(res, 200, { ok: true }), true;
+  }
   // The account's personal AI key and links (made on the server).
   if (path === "/api/ai" && (req.method === "GET" || req.method === "POST")) {
     return json(res, 200, await remote("/api/ai", { method: req.method, body: req.method === "POST" ? {} : undefined })), true;
@@ -777,7 +801,13 @@ async function readBody(req) {
 }
 
 const handler = createHandler({ store, service, token: TOKEN, extra });
+// Qt's XMLHttpRequest drops the body of a 407, 409 or 410 and reports status 0,
+// which the window can only call "service is not running": send those as 400.
+const QT_UNREADABLE = new Set([407, 409, 410]);
+
 createServer((req, res) => {
+  const writeHead = res.writeHead;
+  res.writeHead = (status, ...rest) => writeHead.call(res, QT_UNREADABLE.has(status) ? 400 : status, ...rest);
   const url = new URL(req.url, "http://local");
   if (url.pathname.startsWith("/files/")) return serveFile(req, res, url);
   return handler(req, res);

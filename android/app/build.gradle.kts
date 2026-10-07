@@ -44,8 +44,12 @@ android {
     }
 
     buildTypes {
-        // Judge the UI on this build: R8-optimized Compose is far smoother than
-        // debug. Debug-signed so it installs over a debug build.
+        // Every build is signed with the one marobotic release key when it is
+        // here, debug builds too, so any build installs over any other.
+        debug {
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+        }
+        // Judge the UI on this build: R8-optimized Compose is far smoother than debug.
         release {
             isMinifyEnabled = true
             isShrinkResources = true

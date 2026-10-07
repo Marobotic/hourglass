@@ -295,6 +295,8 @@ struct AlarmSheet: View {
 struct LoginView: View {
     @EnvironmentObject var store: Store
     @State private var creating = false
+    @State private var forgot = false // "Forgot password?": email only, sends a reset link
+    @State private var notice: String?
     @State private var email = ""
     @State private var password = ""
     @State private var confirm = ""
@@ -312,21 +314,41 @@ struct LoginView: View {
                 text("Your schedule and notes, on every device", 14, H.muted)
                 Spacer().frame(height: 28)
 
-                modeSwitch
+                if forgot {
+                    text("Forgot your password? Enter your email and we'll send you a link to choose a new one.", 14, H.fg, align: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    modeSwitch
+                }
                 Spacer().frame(height: 22)
 
-                field("Email", $email, secure: false, keyboard: .emailAddress)
-                Spacer().frame(height: 14)
-                field("Password", $password, secure: !showPassword, trailing: showPassword ? "Hide" : "Show",
-                      onTrailing: { showPassword.toggle() }, submitsForm: !creating)
-                if creating {
+                field("Email", $email, secure: false, keyboard: .emailAddress, submitsForm: forgot)
+                if !forgot {
                     Spacer().frame(height: 14)
-                    field("Confirm password", $confirm, secure: !showPassword, submitsForm: true)
+                    field("Password", $password, secure: !showPassword, trailing: showPassword ? "Hide" : "Show",
+                          onTrailing: { showPassword.toggle() }, submitsForm: !creating)
+                    if creating {
+                        Spacer().frame(height: 14)
+                        field("Confirm password", $confirm, secure: !showPassword, submitsForm: true)
+                    }
+                    if !creating {
+                        Spacer().frame(height: 10)
+                        Button { setMode(creating: false, forgot: true) } label: {
+                            text("Forgot password?", 13, H.muted).padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    Spacer().frame(height: 8)
+                    text(creating ? "At least 8 characters." : "The same account as Omarchy Music. Your other devices use it too.",
+                         12, H.muted, align: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer().frame(height: 8)
-                text(creating ? "At least 8 characters." : "The same account as Omarchy Music. Your other devices use it too.",
-                     12, H.muted, align: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let notice {
+                    Spacer().frame(height: 14)
+                    text(notice, 13, H.teal, align: .leading).frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 if let problem {
                     Spacer().frame(height: 14)
@@ -337,7 +359,7 @@ struct LoginView: View {
                 Button(action: submit) {
                     HStack(spacing: 10) {
                         if busy { ProgressView().tint(.white) }
-                        text(busy ? (creating ? "Creating account…" : "Signing in…") : (creating ? "Create account" : "Sign in"), 16, .white, bold: true)
+                        text(buttonTitle, 16, .white, bold: true)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
@@ -348,9 +370,9 @@ struct LoginView: View {
 
                 Spacer().frame(height: 18)
                 HStack(spacing: 0) {
-                    text(creating ? "Already have an account? " : "New here? ", 14, H.muted)
-                    Button { creating.toggle(); problem = nil } label: {
-                        text(creating ? "Sign in" : "Create an account", 14, H.accent, bold: true)
+                    text(forgot ? "Remembered it? " : creating ? "Already have an account? " : "New here? ", 14, H.muted)
+                    Button { setMode(creating: !creating && !forgot, forgot: false) } label: {
+                        text(forgot || creating ? "Sign in" : "Create an account", 14, H.accent, bold: true)
                     }
                     .buttonStyle(.plain)
                 }
@@ -365,10 +387,39 @@ struct LoginView: View {
         .onAppear { if email.isEmpty { email = store.account ?? "" } }
     }
 
+    private var buttonTitle: String {
+        if forgot { return busy ? "Sending…" : "Send reset link" }
+        return busy ? (creating ? "Creating account…" : "Signing in…") : (creating ? "Create account" : "Sign in")
+    }
+
+    private func setMode(creating: Bool, forgot: Bool) {
+        self.creating = creating
+        self.forgot = forgot
+        problem = nil
+        notice = nil
+    }
+
     // Checked here first, so the common mistakes never make a round trip.
     private func submit() {
         if busy { return }
         let e = email.trimmingCharacters(in: .whitespaces)
+        notice = nil
+        if forgot {
+            if e.range(of: #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#, options: .regularExpression) == nil {
+                problem = "Enter a valid email address."
+                return
+            }
+            problem = nil
+            busy = true
+            Task {
+                do {
+                    try await store.forgotPassword(email: e)
+                    notice = "If \(e) has an account, a reset link is on its way. Open it on any device; it works for one hour."
+                } catch { problem = error.localizedDescription }
+                busy = false
+            }
+            return
+        }
         if e.range(of: #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#, options: .regularExpression) == nil {
             problem = "Enter a valid email address."
         } else if password.count < 8 {
@@ -397,7 +448,7 @@ struct LoginView: View {
         HStack(spacing: 0) {
             ForEach([(false, "Sign in"), (true, "Create account")], id: \.1) { value, label in
                 let on = creating == value
-                Button { creating = value; problem = nil } label: {
+                Button { setMode(creating: value, forgot: false) } label: {
                     text(label, 14, on ? H.fg : H.muted, bold: on)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(on ? H.surface2 : Color.clear, in: RoundedRectangle(cornerRadius: 7))
