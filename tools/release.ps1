@@ -3,6 +3,8 @@
 
     .\tools\release.ps1 -Version 0.2.1 -Notes "Drive keeps only the files you open."
     .\tools\release.ps1 -Version 0.2.1 -Notes "..." -DryRun     # build everything, upload nothing
+    .\tools\release.ps1 -Version 0.2.2 -Notes "..." -ExportTo "C:\Users\Maro\Documents\Project Exports\Hourglass"
+                                                       # build it for real, keep it in a folder, publish nothing
 
   1. Bumps the version (server/app.js, Android versionName/versionCode, iOS
      MARKETING_VERSION/CURRENT_PROJECT_VERSION), commits as Marobotic, pushes main.
@@ -19,7 +21,9 @@
 param(
   [Parameter(Mandatory)] [string]$Version,
   [Parameter(Mandatory)] [string]$Notes,
-  [switch]$DryRun
+  [switch]$DryRun,
+  # A real version (committed, built by CI) saved to <ExportTo>\<version>\ and not published.
+  [string]$ExportTo
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -166,6 +170,15 @@ Get-ChildItem $out -File | Select-Object Name, @{ n = 'MB'; e = { [math]::Round(
 if ($DryRun) {
   git checkout -- server/app.js $gradle ios/project.yml
   Step "Dry run: nothing uploaded, version files put back. Files in $out"
+  return
+}
+
+if ($ExportTo) {
+  $dest = Join-Path $ExportTo $Version
+  New-Item -ItemType Directory -Force $dest | Out-Null
+  Copy-Item $exe, $apk, $ipa, $linux, "$out\latest.json" $dest -Force
+  Step "Exported to $dest (not published: marobotic.dev still offers the previous version)"
+  Get-ChildItem $dest -File | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } | Format-Table -AutoSize
   return
 }
 
