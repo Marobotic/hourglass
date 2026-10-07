@@ -244,6 +244,12 @@ final class Store: ObservableObject {
         guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
         let fileName = name ?? url.lastPathComponent
         let mime = mimeOf(fileName)
+        // Too big for one upload (the server says how big, max_file): say so
+        // before sending, not after a dropped connection.
+        let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
+        if let max = await driveUsage()?["max_file"], max > 0, size > max {
+            throw NSError(domain: "hourglass", code: 413, userInfo: [NSLocalizedDescriptionKey: "\(fileName) is over \(max / 1_048_576) MB, the most one upload can be."])
+        }
         let folderId = (note != nil && course == nil) ? await attachmentsFolder() : folder
         var comps = URLComponents(url: base.appendingPathComponent("api/files/upload"), resolvingAgainstBaseURL: false)!
         var q = [URLQueryItem(name: "name", value: fileName), URLQueryItem(name: "mime", value: mime)]

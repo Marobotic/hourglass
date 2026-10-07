@@ -31,7 +31,10 @@ const host = process.env.HOURGLASS_HOST || "127.0.0.1";
 const maroUrl = (process.env.MARO_ACCOUNT_URL || "http://127.0.0.1:8900").replace(/\/+$/, "");
 const maroDir = process.env.MARO_CACHE_DIR || "/var/lib/maro-cache";
 const MAX_UPLOAD = 40 * 1024 * 1024;
-const MAX_FILE = 2 * 1024 * 1024 * 1024; // one Drive upload
+// One Drive upload. The Drive is for notes-sized files (PDFs, slides, photos),
+// and the droplet's 50 GB disk is shared by every account.
+const MAX_FILE = 250 * 1024 * 1024;
+const TOO_BIG = "That file is over 250 MB, the most one upload can be.";
 // Kept free on the droplet: uploads that would go below this are refused.
 const DISK_RESERVE = 2 * 1024 * 1024 * 1024;
 const SONG_EXTS = [".m4a", ".opus", ".webm", ".mp3", ".ogg", ".aac", ".flac"];
@@ -318,7 +321,7 @@ async function driveRoutes(t, req, res, url, path) {
   if (path === "/api/files/upload" && m === "POST") {
     const name = (url.searchParams.get("name") || "file").replace(/[\\/]/g, "_").trim().slice(0, 200) || "file";
     const declared = Number(req.headers["content-length"] || 0);
-    if (declared > MAX_FILE) return send(res, 413, { error: "That file is over 2 GB." }), true;
+    if (declared > MAX_FILE) return send(res, 413, { error: TOO_BIG }), true;
     if (declared && declared > diskUsage(t).usable) return send(res, 507, { error: "Not enough space left on the server." }), true;
     const folder = url.searchParams.get("folder") || null;
     if (folder && !t.store.get("folders", folder)) return send(res, 400, { error: "no folder with that id" }), true;
@@ -330,7 +333,7 @@ async function driveRoutes(t, req, res, url, path) {
       await pipeline(req, async function* (src) {
         for await (const c of src) {
           size += c.length;
-          if (size > MAX_FILE) throw Object.assign(new Error("That file is over 2 GB."), { status: 413 });
+          if (size > MAX_FILE) throw Object.assign(new Error(TOO_BIG), { status: 413 });
           yield c;
         }
       }, createWriteStream(tmp));
@@ -358,7 +361,7 @@ async function driveRoutes(t, req, res, url, path) {
       await pipeline(req, async function* (src) {
         for await (const c of src) {
           size += c.length;
-          if (size > MAX_FILE) throw Object.assign(new Error("That file is over 2 GB."), { status: 413 });
+          if (size > MAX_FILE) throw Object.assign(new Error(TOO_BIG), { status: 413 });
           yield c;
         }
       }, createWriteStream(tmp));

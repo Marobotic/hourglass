@@ -414,6 +414,10 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
                 }
             }
             val mime = cr.getType(uri) ?: "application/octet-stream"
+            // Too big for one upload (the server says how big, max_file): say so
+            // before sending, not after a dropped connection.
+            val maxFile = runCatching { JSONObject(http("GET", "${BuildConfig.SERVER}/api/drive/usage", t, null)).optLong("max_file") }.getOrDefault(0L)
+            if (maxFile > 0 && size > maxFile) error("$name is over ${maxFile / 1_048_576} MB, the most one upload can be.")
             val folder = if (noteId != null && courseId == null) attachmentsFolder() else folderId
             val q = StringBuilder("name=").append(java.net.URLEncoder.encode(name, "UTF-8")).append("&mime=").append(java.net.URLEncoder.encode(mime, "UTF-8"))
             if (courseId != null) q.append("&course=").append(courseId) else if (folder != null) q.append("&folder=").append(folder)

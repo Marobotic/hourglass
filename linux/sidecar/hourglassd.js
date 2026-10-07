@@ -578,6 +578,11 @@ async function driveRoutes(req, res, url, path) {
     if (!existsSync(file)) return json(res, 400, { error: "file not found" }), true;
     const { server, token } = config();
     if (!server) return json(res, 401, { error: "sign in to upload" }), true;
+    // Too big for one upload (the server says how big): say so before sending.
+    const max = (await remote("/api/drive/usage").catch(() => null))?.max_file;
+    if (max && statSync(file).size > max) {
+      return json(res, 413, { error: `${file.split(/[\\/]/).pop()} is over ${Math.round(max / 1048576)} MB, the most one upload can be.` }), true;
+    }
     // A folder or note made a moment ago must reach the server first.
     await syncOnce();
     const name = file.split(/[\\/]/).pop();
