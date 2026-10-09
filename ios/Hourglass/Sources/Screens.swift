@@ -403,10 +403,27 @@ struct NotesView: View {
     }
 }
 
+func ordinal(_ n: Int) -> String {
+    let v = n % 100
+    return "\(n)" + ((11...13).contains(v) ? "th" : ["th", "st", "nd", "rd"][n % 10 < 4 ? n % 10 : 0])
+}
+
+// "Every Tue, Thu", "Daily", "Monthly on the 15th", "Yearly on 2 Nov", "... until Fri 3 Jul 2027"
 func repeatText(_ e: Event) -> String {
     guard let r = e.repeat else { return "Once, " + Dates.short(e.start_date) }
-    var s = r.freq == "daily" ? "Daily" : "Every " + ((r.days?.isEmpty ?? true) ? [Dates.iso(e.start_date)] : r.days!).map { Dates.weekdays[$0 - 1] }.joined(separator: ", ")
-    if let u = r.until { s += " until " + Dates.short(u) }
+    let n = r.interval ?? 1
+    let (_, m, d) = Dates.parts(e.start_date)
+    var s: String
+    switch r.freq {
+    case "daily": s = n > 1 ? "Every \(n) days" : "Daily"
+    case "monthly": s = (n > 1 ? "Every \(n) months" : "Monthly") + " on the " + ordinal(d)
+    case "yearly": s = (n > 1 ? "Every \(n) years" : "Yearly") + " on \(d) " + Dates.months[m - 1]
+    default: s = (n > 1 ? "Every \(n) weeks on " : "Every ") + ((r.days?.isEmpty ?? true) ? [Dates.iso(e.start_date)] : r.days!).map { Dates.weekdays[$0 - 1] }.joined(separator: ", ")
+    }
+    if let u = r.until {
+        s += " until " + Dates.short(u)
+        if r.freq == "monthly" || r.freq == "yearly" { s += " " + String(u.prefix(4)) }
+    }
     return s
 }
 

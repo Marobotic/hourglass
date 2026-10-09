@@ -44,10 +44,17 @@ struct EventSheet: View {
     @State private var repeatMode = "none"
     @State private var days: [Int] = []
     @State private var until: String?
+    @State private var forever = true   // false: the series ends on `until`
     @State private var confirmDelete = false
     @State private var loaded = false
 
-    var valid: Bool { Dates.minutes(end) > Dates.minutes(start) && (!title.trimmingCharacters(in: .whitespaces).isEmpty || courseId != nil) && (repeatMode != "weekly" || !days.isEmpty) }
+    var valid: Bool {
+        Dates.minutes(end) > Dates.minutes(start) && (!title.trimmingCharacters(in: .whitespaces).isEmpty || courseId != nil) && (repeatMode != "weekly" || !days.isEmpty)
+            && (repeatMode == "none" || forever || (until ?? "") >= (date ?? Dates.today()))
+    }
+    var rule: Repeat? {
+        repeatMode == "none" ? nil : Repeat(freq: repeatMode, days: repeatMode == "weekly" ? days : nil, until: forever ? nil : until)
+    }
 
     var body: some View {
         SheetFrame(title: draft.event == nil ? "New event" : "Edit event", subtitle: draft.event?.repeat != nil ? "Changes apply to every session of this series." : nil) {
@@ -60,9 +67,14 @@ struct EventSheet: View {
             HStack(spacing: 16) { TimeField(label: "Start", value: $start); TimeField(label: "End", value: $end) }
             Field(label: "Room (optional)", text: $room)
             T("REPEAT", 11, H.muted)
-            Segmented(options: [("Once", "none"), ("Weekly", "weekly"), ("Daily", "daily")], value: $repeatMode)
+            Segmented(options: [("Once", "none"), ("Daily", "daily"), ("Weekly", "weekly"), ("Monthly", "monthly"), ("Yearly", "yearly")], value: $repeatMode)
             if repeatMode == "weekly" { DayToggles(days: $days) }
-            if repeatMode != "none" { DateField(label: "Until (end of term)", value: $until, clearable: true) }
+            if repeatMode != "none" {
+                T("ENDS", 11, H.muted)
+                Segmented(options: [("Never", true), ("On a date", false)], value: $forever)
+                if !forever { DateField(label: "Last date", value: $until) }
+                T(repeatText(Event(start_date: date ?? Dates.today(), repeat: rule)), 12, H.faint)
+            }
             HStack {
                 if let e = draft.event { HButton(e.repeat != nil ? "Delete series" : "Delete", danger: true) { confirmDelete = true } }
                 Spacer()
@@ -80,7 +92,7 @@ struct EventSheet: View {
         loaded = true
         if let e = draft.event {
             courseId = e.course_id; kind = e.kind; title = e.title; date = e.start_date; start = e.start_time; end = e.end_time
-            room = e.location ?? ""; repeatMode = e.repeat?.freq ?? "none"; days = e.repeat?.days ?? [Dates.iso(e.start_date)]; until = e.repeat?.until
+            room = e.location ?? ""; repeatMode = e.repeat?.freq ?? "none"; days = e.repeat?.days ?? [Dates.iso(e.start_date)]; until = e.repeat?.until; forever = e.repeat?.until == nil
         } else {
             courseId = draft.course
             kind = draft.course != nil ? "lecture" : "event"
@@ -92,7 +104,7 @@ struct EventSheet: View {
 
     private func save() {
         let d = date ?? Dates.today()
-        let rep: Repeat? = repeatMode == "none" ? nil : Repeat(freq: repeatMode, days: repeatMode == "weekly" ? days : nil, until: until)
+        let rep = rule
         var e = draft.event ?? Event()
         e.course_id = courseId; e.kind = kind; e.title = title.trimmingCharacters(in: .whitespaces); e.start_date = d
         e.start_time = start; e.end_time = end; e.location = room.isEmpty ? nil : room; e.repeat = rep

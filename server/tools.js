@@ -8,17 +8,18 @@ const weekday = z.union([z.string(), z.number()]).describe('Weekday: "Mon".."Sun
 const course = z.string().describe("Course name, code or id. Partial names work when unambiguous");
 const repeat = z
   .object({
-    freq: z.enum(["daily", "weekly"]),
+    freq: z.enum(["daily", "weekly", "monthly", "yearly"]).describe("monthly and yearly repeat on the start date's day (yearly: birthdays, anniversaries)"),
     days: z.array(weekday).optional().describe("For weekly; defaults to the start date's weekday"),
-    interval: z.number().int().min(1).optional().describe("2 = every other week/day"),
-    until: date.optional().describe("Last date, inclusive (e.g. end of term)"),
+    interval: z.number().int().min(1).optional().describe("2 = every other day/week/month/year"),
+    until: date.optional().describe("Last date, inclusive (e.g. end of term). Omit to repeat forever"),
   })
   .describe("Omit for a one-off event");
 
 export const INSTRUCTIONS = `Hourglass is the user's calendar, notes, alarms and timers.
 Model: courses are folders (e.g. a university module). Events are one-off or recurring blocks of time, usually lectures of a course. Notes are Markdown, live in a course, and are stamped with a session_date: the date of the lecture they were written for.
-Start with whats_now for anything about "now", "today" or "next"; get_schedule for a week. Times in results are shown in the app's zone (now.tz). Each event also has its own zone (event_tz): its start/end are fixed in that zone, so pass times in the event's zone when you change them (e.g. a Cairo lecture at 08:00 stays "08:00" with tz Africa/Cairo).
+Start with whats_now for anything about "now", "today" or "next"; get_schedule for a week; find_events for a named event at any date ("when is X's birthday", "when is my dentist"). Events are never in notes: do not search notes for them. Times in results are shown in the app's zone (now.tz). Each event also has its own zone (event_tz): its start/end are fixed in that zone, so pass times in the event's zone when you change them (e.g. a Cairo lecture at 08:00 stays "08:00" with tz Africa/Cairo).
 To adjust the schedule: get_schedule or list_courses to find event ids, then update_event / add_event / remove_event. Mark days with mark_session (attended, absent, off).
+Anything that comes back every year (a birthday, an anniversary) is ONE event with repeat {freq: "yearly"} and no until, starting on the next (or the original) date; never add one event per year. The same goes for monthly things (rent, a bill): one event with repeat {freq: "monthly"}.
 When removing a single lecture of a recurring series use remove_event with scope "occurrence" and the date; only use scope "series" when the user wants the whole thing gone.
 Confirm destructive actions (remove_event series, remove_course, delete_note) with the user first.`;
 
@@ -38,6 +39,14 @@ export const TOOLS = [
     input: { from: date.optional(), to: date.optional() },
     readOnly: true,
     run: (s, a) => s.schedule(a),
+  },
+  {
+    name: "find_events",
+    title: "Find events",
+    description: `Find events by name at any date: birthdays, appointments, exams, lectures. Every word of query must appear in the title or course (case and punctuation ignored, "ashwasky" finds "Ashwasky's birthday"). Returns each event's rule (e.g. "yearly on 7 Feb") and its next date. Use this for any "when is ..." question. No query lists every event.`,
+    input: { query: z.string().optional().describe('A name or word from the title, e.g. "ashwasky", "dentist", "birthday"') },
+    readOnly: true,
+    run: (s, a) => s.findEvents(a),
   },
   {
     name: "list_courses",

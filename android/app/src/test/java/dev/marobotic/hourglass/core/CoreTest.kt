@@ -46,6 +46,25 @@ class CoreTest {
         assertEquals(listOf("2026-09-10"), Recurrence.dates(once, d("2026-09-01"), d("2026-09-30")).map { it.toString() })
     }
 
+    @Test fun monthlyAndYearly() {
+        fun ev(start: String, rep: JSONObject, skip: List<String> = emptyList()) =
+            JSONObject(lecture.toString()).put("start_date", start).put("repeat", rep).put("exceptions", JSONArray(skip))
+        fun dates(e: JSONObject, a: String, b: String) = Recurrence.dates(e, d(a), d(b)).map { it.toString() }
+        // same cases as core/test/core.test.js: both copies must agree
+        val rent = ev("2026-08-31", JSONObject().put("freq", "monthly"), listOf("2026-12-31"))
+        assertEquals(listOf("2026-08-31", "2026-10-31", "2027-01-31", "2027-03-31"), dates(rent, "2026-08-01", "2027-03-31"))
+        val quarterly = ev("2026-01-15", JSONObject().put("freq", "monthly").put("interval", 3).put("until", "2026-10-15"))
+        assertEquals(listOf("2026-01-15", "2026-04-15", "2026-07-15", "2026-10-15"), dates(quarterly, "2026-01-01", "2027-12-31"))
+        val birthday = ev("1995-03-14", JSONObject().put("freq", "yearly"))
+        assertEquals(listOf("2026-03-14", "2027-03-14", "2028-03-14"), dates(birthday, "2026-01-01", "2028-12-31"))
+        assertEquals(emptyList<String>(), dates(birthday, "2026-03-15", "2027-03-13"))
+        assertEquals(listOf("1995-03-14", "1996-03-14"), dates(birthday, "1990-01-01", "1996-12-31"))
+        val leap = ev("2024-02-29", JSONObject().put("freq", "yearly"))
+        assertEquals(listOf("2024-02-29", "2028-02-29", "2032-02-29"), dates(leap, "2024-01-01", "2032-12-31"))
+        val ended = ev("1995-03-14", JSONObject().put("freq", "yearly").put("until", "2026-12-31"))
+        assertEquals(listOf("2026-03-14"), dates(ended, "2026-01-01", "2030-12-31"))
+    }
+
     @Test fun duringLectureNotesSurface() {
         val r = Now.resolve(listOf(course), listOf(lecture), notes, at("2026-09-29", "08:30"), zone)
         assertEquals("Algorithms", r.active?.title)

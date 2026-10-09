@@ -300,11 +300,28 @@ fun TimerCard(nav: Nav, t: JSONObject, clock: Long, big: Boolean = false) {
     }
 }
 
+fun ordinal(n: Int): String = n.toString() + when {
+    n % 100 in 11..13 -> "th"
+    n % 10 == 1 -> "st"
+    n % 10 == 2 -> "nd"
+    n % 10 == 3 -> "rd"
+    else -> "th"
+}
+
+// "Every Tue, Thu", "Daily", "Monthly on the 15th", "Yearly on 2 Nov", "... until Fri 3 Jul 2027"
 fun repeatText(e: JSONObject): String {
-    val r = e.optJSONObject("repeat") ?: return "Once, " + Dates.short(e.optString("start_date"))
-    var s = if (r.optString("freq") == "daily") "Daily"
-    else "Every " + r.ints("days").ifEmpty { listOf(Dates.iso(Dates.date(e.optString("start_date")))) }.joinToString(", ") { Dates.WEEKDAYS[it - 1] }
-    r.str("until")?.let { s += " until " + Dates.short(it) }
+    val start = e.optString("start_date")
+    val r = e.optJSONObject("repeat") ?: return "Once, " + Dates.short(start)
+    val n = r.optInt("interval", 1)
+    val d = Dates.date(start)
+    val freq = r.optString("freq")
+    var s = when (freq) {
+        "daily" -> if (n > 1) "Every $n days" else "Daily"
+        "monthly" -> (if (n > 1) "Every $n months" else "Monthly") + " on the " + ordinal(d.dayOfMonth)
+        "yearly" -> (if (n > 1) "Every $n years" else "Yearly") + " on ${d.dayOfMonth} ${Dates.MONTHS[d.monthValue - 1]}"
+        else -> (if (n > 1) "Every $n weeks on " else "Every ") + r.ints("days").ifEmpty { listOf(Dates.iso(d)) }.joinToString(", ") { Dates.WEEKDAYS[it - 1] }
+    }
+    r.str("until")?.let { s += " until " + Dates.short(it) + if (freq == "monthly" || freq == "yearly") " " + it.take(4) else "" }
     return s
 }
 

@@ -121,7 +121,14 @@ private fun EventSheet(nav: Nav, ev: JSONObject?, defaults: Map<String, Any?>, o
     var repeat by remember { mutableStateOf(rep?.optString("freq") ?: if (defaults["weekly"] == true) "weekly" else "none") }
     var days by remember { mutableStateOf(rep?.ints("days")?.ifEmpty { null } ?: listOf(Dates.iso(LocalDate.parse(date)))) }
     var until by remember { mutableStateOf(rep?.str("until")) }
-    val valid = Dates.minutes(end) > Dates.minutes(start) && (title.isNotBlank() || courseId != null) && (repeat != "weekly" || days.isNotEmpty())
+    var forever by remember { mutableStateOf(rep?.str("until") == null) }   // false: ends on `until`
+    val valid = Dates.minutes(end) > Dates.minutes(start) && (title.isNotBlank() || courseId != null) && (repeat != "weekly" || days.isNotEmpty()) &&
+        (repeat == "none" || forever || (until != null && until!! >= date))
+    val rule = when (repeat) {
+        "none" -> null
+        "weekly" -> repo.weekly(days, if (forever) null else until)
+        else -> JSONObject().put("freq", repeat).apply { if (!forever && until != null) put("until", until) }
+    }
     // Times are fixed in the event's zone; one without a zone takes the app's on save.
     val zoneId = ev?.str("tz") ?: repo.zone.id
 
@@ -139,9 +146,14 @@ private fun EventSheet(nav: Nav, ev: JSONObject?, defaults: Map<String, Any?>, o
         T("Times are ${zoneId.substringAfterLast('/').replace('_', ' ')} time" + if (zoneId != repo.zone.id) ", shown converted elsewhere in the app." else ". They stay fixed there if you switch the app to another city.", 12, HColors.faint)
         Field(room, { room = it }, "Room (optional)", Modifier.fillMaxWidth())
         T("REPEAT", 11, HColors.muted, spacing = 0.6)
-        Segmented(listOf("Once" to "none", "Weekly" to "weekly", "Daily" to "daily"), repeat) { repeat = it }
+        Segmented(listOf("Once" to "none", "Daily" to "daily", "Weekly" to "weekly", "Monthly" to "monthly", "Yearly" to "yearly"), repeat) { repeat = it }
         if (repeat == "weekly") DayToggles(days) { days = it }
-        if (repeat != "none") DateField(until, { until = it }, "UNTIL (END OF TERM)", Modifier.fillMaxWidth(), clearable = true)
+        if (repeat != "none") {
+            T("ENDS", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("Never" to true, "On a date" to false), forever) { forever = it }
+            if (!forever) DateField(until, { until = it }, "LAST DATE", Modifier.fillMaxWidth())
+            T(repeatText(JSONObject().put("start_date", date).put("repeat", rule)), 12, HColors.faint)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (ev != null) HButton(if (rep != null) "Delete series" else "Delete", danger = true) {
                 nav.sheets.confirm = Triple(if (rep != null) "Delete every session?" else "Delete event?",
@@ -149,11 +161,7 @@ private fun EventSheet(nav: Nav, ev: JSONObject?, defaults: Map<String, Any?>, o
             }
             Spacer(Modifier.weight(1f))
             HButton(if (ev == null) "Add event" else "Save", primary = true, enabled = valid) {
-                val r = when (repeat) {
-                    "weekly" -> repo.weekly(days, until)
-                    "daily" -> JSONObject().put("freq", "daily").apply { until?.let { put("until", it) } }
-                    else -> null
-                }
+                val r = rule
                 if (ev == null) repo.addEvent(courseId, title.trim(), kind, date, start, end, room.trim().ifBlank { null }, r)
                 else repo.updateEvent(ev.id, mapOf("course_id" to courseId, "title" to title.trim(), "kind" to kind, "start_date" to date,
                     "start_time" to start, "end_time" to end, "location" to room.trim().ifBlank { null }, "repeat" to r, "tz" to zoneId))

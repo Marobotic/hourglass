@@ -39,6 +39,7 @@ const SANDBOX_USER = "hourglass-ai";
 const TOOL_LABELS = {
   whats_now: ["Checking what's on", "Checked what's on"],
   get_schedule: ["Reading the schedule", "Read the schedule"],
+  find_events: ["Looking up events", "Looked up events"],
   list_courses: ["Reading courses", "Read courses"],
   add_course: ["Adding a course", "Added a course"],
   update_course: ["Updating a course", "Updated a course"],
@@ -101,12 +102,14 @@ function loadSkill(root) {
 function briefing(skill) {
   return `You are the assistant built into Hourglass, the user's calendar, notes, alarms and timers app. The user is talking to you from inside the app.
 
-Work only through the hourglass tools (hourglass_*). They open this user's own data. Do not use the shell, files or the web: nothing the user needs is there.
+Work only through the hourglass tools (hourglass_*). They open this user's own data. Never run bash or any shell command, and do not read files or the web: the user's data is not there, and every such step only makes the user wait.
 
 How to work:
 - Do what the user asks with the tools, straight away. Do not describe what you would do; do it, then say what you did in one or two short sentences.
 - Never say something is done unless the tool call succeeded. If a tool returns an error, say plainly what went wrong.
 - For anything about now, today or next, start with hourglass_whats_now.
+- Each message ends with the user's own events (birthdays, appointments: everything that is not a lecture) with their rule and next date. When that list already answers the question ("when is X's birthday"), answer from it straight away, without any tool.
+- To look up an event by name otherwise (a lecture, an exam, something not in the list), use hourglass_find_events with a word from its name. Events are never in notes: use hourglass_search_notes only for what the user wrote in notes.
 - Formatting or tidying a note: read it with hourglass_get_notes, then write the whole improved body back with hourglass_update_note. Keep everything the user wrote; only change layout, headings, bullets, to-dos, emphasis and obvious typos. Notes are Markdown.
 - Ask before deleting a note, removing a course, or removing a whole recurring event. Removing one occurrence needs no confirmation.
 - If a request is ambiguous (two courses match, no time given for an alarm), ask one short question.
@@ -117,7 +120,7 @@ Reference for Hourglass and its tools:
 ${skill}`;
 }
 
-const REMINDER = "(You are the Hourglass assistant: act only through the hourglass tools, then reply in one or two short sentences.)";
+const REMINDER = "(You are the Hourglass assistant: act only through the hourglass tools, never the shell. Answer from the events listed below when they answer it; otherwise look events up by name with hourglass_find_events. Reply in one or two short sentences.)";
 
 /** uid and gid of a system user, from /etc/passwd. null when it does not exist. */
 function userIds(name) {
@@ -192,7 +195,21 @@ export function createAssistant({ rootDir, publicUrl, registerKey, log = console
     const date = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
     const time = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
     const weekday = new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "long" }).format(now);
-    return `It is ${weekday} ${date}, ${time} in ${tz} (the app's time zone).`;
+    return `It is ${weekday} ${date}, ${time} in ${tz} (the app's time zone).${ownEvents(t)}`;
+  }
+
+  // The user's own events (no course: birthdays, appointments), so "when is X" needs no tool at
+  // all. Past one-offs are left out; at most 40, soonest first.
+  function ownEvents(t) {
+    try {
+      const { events, count } = t.service.findEvents({ personal: true, limit: 40 });
+      const lines = events.filter((e) => e.next).map((e) => `- ${e.title}: ${e.repeats}, next ${e.next.date} ${e.next.start_time}-${e.next.end_time}`);
+      if (!lines.length) return "";
+      const more = count > events.length ? `\n(${count - events.length} more: use hourglass_find_events)` : "";
+      return `\n\nThe user's own events (not lectures), soonest first:\n${lines.join("\n")}${more}`;
+    } catch {
+      return "";
+    }
   }
 
   // --- running opencode ---------------------------------------------------------

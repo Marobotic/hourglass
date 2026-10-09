@@ -15,7 +15,9 @@ right notes at the right moment. During a lecture, its notes are what matter.
 - **Event**: a one-off or recurring block of time. Lectures, labs, tutorials
   and exams belong to a course. Personal events have no course.
   Recurrence is `{ freq: "weekly", days: [2], until: "2026-12-11" }` with ISO
-  weekdays (1 = Monday). Skipped dates live in `exceptions`.
+  weekdays (1 = Monday); `freq` can also be `daily`, `monthly` or `yearly`, and
+  no `until` means forever. A birthday is ONE event with `{ freq: "yearly" }`,
+  never one event per year. Skipped dates live in `exceptions`.
 - **Note**: Markdown, in a course, stamped with `session_date`, the date of
   the lecture it was written for. Pinned notes show in every session. The
   server keeps older text as versions (`note_versions`, `restore_note_version`).

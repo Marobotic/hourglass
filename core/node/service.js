@@ -1,7 +1,7 @@
 // Domain operations behind REST, MCP and the Linux app. Arguments are the
 // friendly shapes an AI would send: course names instead of ids, weekday
 // names, "HH:MM" times.
-import { addDays, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
+import { MONTHS, WEEKDAYS, addDays, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
 import { expand } from "../recurrence.js";
 import { markMap, markOf, resolveNow, sessionNotes } from "../now.js";
 import { finishedTimer, nextAlarm } from "../alarms.js";
@@ -70,6 +70,51 @@ export class Service {
     const marks = markMap(this.store.all("marks"));
     const occurrences = expand(this.store.all("events"), courses, start, end, this.tz).map((o) => ({ ...o, mark: markOf(marks, o) }));
     return { from: start, to: end, tz: this.tz, occurrences };
+  }
+
+  // Events by name, at any date: "when is Ashwasky's birthday" must not depend on which week is
+  // shown. Every word of the query must appear in the title, course or room, ignoring case,
+  // accents and punctuation ("ashwasky" finds "Ashwasky's birthday", "birthdays" finds
+  // "birthday"). No query lists every event. Sorted by the next date; past one-offs last.
+  findEvents({ query = "", limit = 50, personal = false } = {}) {
+    const norm = (s) => String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const words = norm(query).split(" ").filter(Boolean).map((w) => (w.length > 3 ? w.replace(/s$/, "") : w));
+    const courses = new Map(this.store.all("courses").map((c) => [c.id, c]));
+    const today = this.today();
+    const out = [];
+    for (const ev of this.store.all("events")) {
+      if (ev.deleted || (personal && ev.course_id)) continue;
+      const course = ev.course_id ? courses.get(ev.course_id) : null;
+      if (course?.deleted) continue;
+      const hay = norm(`${ev.title} ${course?.name ?? ""} ${course?.code ?? ""} ${ev.location ?? ""}`);
+      if (!words.every((w) => hay.includes(w))) continue;
+      const next = this.nextOccurrence(ev, courses, today);
+      out.push({
+        event_id: ev.id,
+        title: ev.title || course?.name || "Untitled",
+        course: course?.name ?? null,
+        kind: ev.kind,
+        repeats: describeRepeat(ev),
+        first_date: ev.start_date,
+        start_time: ev.start_time,
+        end_time: ev.end_time,
+        tz: ev.tz ?? this.tz,
+        location: ev.location ?? null,
+        next: next ? { date: next.date, start_time: next.start_time, end_time: next.end_time } : null,
+      });
+    }
+    out.sort((a, b) => (a.next?.date ?? "9999").localeCompare(b.next?.date ?? "9999") || a.title.localeCompare(b.title));
+    return { query, today, count: out.length, events: out.slice(0, limit) };
+  }
+
+  // The first occurrence from `from` on, looking far enough ahead for the rule (a yearly event
+  // on 29 Feb can be four years away).
+  nextOccurrence(ev, courses, from) {
+    const rep = ev.repeat;
+    const n = Math.max(1, rep?.interval ?? 1);
+    const days = !rep ? Math.max(0, Math.round((Date.parse(ev.start_date) - Date.parse(from)) / 864e5))
+      : rep.freq === "yearly" ? 366 * 8 * n : rep.freq === "monthly" ? 31 * (n + 12) : 7 * n + 400;
+    return expand([ev], courses, from, addDays(from, days), this.tz)[0] ?? null;
   }
 
   // --- courses ---------------------------------------------------------------
@@ -682,13 +727,26 @@ function addMinutes(time, m) {
   return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
 }
 
+// "once", "daily", "every Tue, Thu", "monthly on day 15", "yearly on 7 Feb", "... until 2027-06-30"
+export function describeRepeat(ev) {
+  const r = ev.repeat;
+  if (!r) return "once";
+  const n = r.interval > 1 ? r.interval : 0;
+  const [, m, d] = ev.start_date.split("-").map(Number);
+  let s;
+  if (r.freq === "daily") s = n ? `every ${n} days` : "daily";
+  else if (r.freq === "monthly") s = `${n ? `every ${n} months` : "monthly"} on day ${d}`;
+  else if (r.freq === "yearly") s = `${n ? `every ${n} years` : "yearly"} on ${d} ${MONTHS[m - 1]}`;
+  else s = `${n ? `every ${n} weeks on` : "every"} ${(r.days?.length ? r.days : [localWeekday(ev.start_date)]).map((w) => WEEKDAYS[w - 1]).join(", ")}`;
+  return r.until ? `${s} until ${r.until}` : s;
+}
+
 function normalizeRepeat(repeat, startDate) {
   if (!repeat || repeat === "none") return null;
   if (typeof repeat === "string") repeat = { freq: repeat };
   const out = { freq: repeat.freq || "weekly" };
   if (repeat.interval > 1) out.interval = Number(repeat.interval);
-  if (repeat.days?.length) out.days = repeat.days.map(parseWeekday);
-  else if (out.freq === "weekly") out.days = [localWeekday(startDate)];
+  if (out.freq === "weekly") out.days = repeat.days?.length ? repeat.days.map(parseWeekday) : [localWeekday(startDate)];
   if (repeat.until) out.until = repeat.until;
   return out;
 }

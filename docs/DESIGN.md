@@ -67,8 +67,10 @@ New events take the app's zone; `tz` null (older rows) floats with the app.
 Occurrences carry `date`/`start_time`/`end_time` in the shown zone and
 `session_date` in the event's own: notes, marks and skips use `session_date`.
 
-`days` uses ISO weekdays, 1 = Monday ... 7 = Sunday. `freq` is `daily` or
-`weekly`. Exported to iCal as `RRULE` + `EXDATE`.
+`days` uses ISO weekdays, 1 = Monday ... 7 = Sunday (weekly only). `freq` is
+`daily`, `weekly`, `monthly` or `yearly`; monthly and yearly repeat on the start
+date's day of the month, and skip months that don't have it (the 31st, 29 Feb),
+as iCal does. No `until` = forever. Exported to iCal as `RRULE` + `EXDATE`.
 
 ### note
 | field | type | |

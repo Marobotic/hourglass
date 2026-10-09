@@ -1,4 +1,25 @@
-import { addDays, daysBetween, localParts, parseTime, weekday, weekStart, zonedToEpoch } from "./dates.js";
+import { addDays, daysBetween, localParts, pad, parseTime, weekday, weekStart, zonedToEpoch } from "./dates.js";
+
+const daysInMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+// Monthly and yearly: the first date's day of the month, every `step` months. A month without
+// that day (the 31st, or 29 Feb outside leap years) is skipped, as iCal and other calendars do.
+// Starts near `first` instead of walking from the start date: a birthday entered with its real
+// year (1995-03-14) costs the same as one entered this year.
+function sameDayDates(start, first, until, step, skip) {
+  const [y, m, d] = start.split("-").map(Number);
+  const [fy, fm] = first.split("-").map(Number);
+  const out = [];
+  for (let n = Math.max(0, Math.floor(((fy - y) * 12 + fm - m) / step) - 1); ; n++) {
+    const months = m - 1 + n * step;
+    const yy = y + Math.floor(months / 12);
+    const mm = (months % 12) + 1;
+    const date = `${String(yy).padStart(4, "0")}-${pad(mm)}-${pad(d)}`;
+    if (date > until) break;
+    if (d <= daysInMonth(yy, mm) && date >= first && !skip.has(date)) out.push(date);
+  }
+  return out;
+}
 
 // Dates in [from, to] (inclusive) on which the event occurs.
 export function occurrenceDates(event, from, to) {
@@ -29,7 +50,10 @@ export function occurrenceDates(event, from, to) {
     }
     return out;
   }
-  throw new Error(`unknown repeat.freq: ${rep.freq}`);
+  if (rep.freq === "monthly") return sameDayDates(start, first, until, interval, skip);
+  if (rep.freq === "yearly") return sameDayDates(start, first, until, 12 * interval, skip);
+  // A rule from a newer version: show nothing for it rather than break the whole schedule.
+  return out;
 }
 
 // Concrete occurrences with instants, sorted by start. courses maps id -> course.

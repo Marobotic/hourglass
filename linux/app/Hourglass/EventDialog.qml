@@ -6,8 +6,9 @@ Modal {
     id: dlg
     property var app
     property var ev: null
-    property string repeat: "none" // none | weekly | daily
+    property string repeat: "none" // none | daily | weekly | monthly | yearly
     property var days: []
+    property bool forever: true    // false: the series ends on untilF's date
     property var courseId: null
     property string kind: "lecture"
     width: 560
@@ -28,12 +29,18 @@ Modal {
         repeat = e ? (e.repeat ? e.repeat.freq : "none") : (d.repeatWeekly ? "weekly" : "none");
         days = e && e.repeat && e.repeat.days ? e.repeat.days.slice() : [Util.isoWeekday(dateF.text)];
         untilF.text = e && e.repeat && e.repeat.until ? e.repeat.until : "";
+        forever = untilF.text === "";
         open();
     }
 
     readonly property bool valid: Util.isDate(dateF.text) && Util.isTime(startF.text) && Util.isTime(endF.text)
         && Util.minutes(endF.text) > Util.minutes(startF.text) && (titleF.text.trim() !== "" || courseId !== null)
-        && (untilF.text === "" || Util.isDate(untilF.text)) && (repeat !== "weekly" || days.length > 0)
+        && (repeat === "none" || forever || (Util.isDate(untilF.text) && untilF.text >= dateF.text))
+        && (repeat !== "weekly" || days.length > 0)
+    // What the series will be, as the schedule lists it: "Yearly on 2 Nov", "Every Tue until ..."
+    readonly property string summary: repeat === "none" || !Util.isDate(dateF.text) ? ""
+        : Util.repeatText({ start_date: dateF.text, repeat: { freq: repeat, days: repeat === "weekly" ? days : undefined,
+                                                               until: !forever && Util.isDate(untilF.text) ? untilF.text : undefined } })
 
     function save() {
         const args = {
@@ -44,7 +51,7 @@ Modal {
             start: Util.parseTime(startF.text),
             end: Util.parseTime(endF.text),
             location: locF.text.trim() || undefined,
-            repeat: repeat === "none" ? null : { freq: repeat, days: repeat === "weekly" ? days : undefined, until: untilF.text || undefined }
+            repeat: repeat === "none" ? null : { freq: repeat, days: repeat === "weekly" ? days : undefined, until: forever ? undefined : untilF.text }
         };
         // Times are fixed in the event's zone; an old event without one takes the app's.
         if (ev) Api.action("update_event", Object.assign({ event_id: ev.id }, args, ev.tz ? {} : { tz: dlg.app.nowData ? dlg.app.nowData.now.tz : undefined }), r => { if (r) dlg.close(); });
@@ -88,16 +95,35 @@ Modal {
         RowLayout {
             spacing: 6
             Repeater {
-                model: [{ l: "Once", v: "none" }, { l: "Weekly", v: "weekly" }, { l: "Daily", v: "daily" }]
+                model: [{ l: "Once", v: "none" }, { l: "Daily", v: "daily" }, { l: "Weekly", v: "weekly" }, { l: "Monthly", v: "monthly" }, { l: "Yearly", v: "yearly" }]
                 Btn { required property var modelData; compact: true; kind: "subtle"; text: modelData.l; active: dlg.repeat === modelData.v; onClicked: dlg.repeat = modelData.v }
             }
         }
+        DayToggles { visible: dlg.repeat === "weekly"; days: dlg.days; onToggled: d => dlg.days = d }
         RowLayout {
             visible: dlg.repeat !== "none"
-            spacing: 14
-            DayToggles { visible: dlg.repeat === "weekly"; days: dlg.days; onToggled: d => dlg.days = d }
-            Label { text: "UNTIL" }
-            Field { id: untilF; Layout.preferredWidth: 140; placeholderText: "End of term"; invalid: text !== "" && !Util.isDate(text) }
+            spacing: 6
+            Label { text: "ENDS"; Layout.rightMargin: 8 }
+            Btn { compact: true; kind: "subtle"; text: "Never"; active: dlg.forever; onClicked: dlg.forever = true }
+            Btn {
+                compact: true; kind: "subtle"; text: "On a date"; active: !dlg.forever
+                onClicked: { dlg.forever = false; untilF.forceActiveFocus(); }
+            }
+            Field {
+                id: untilF
+                visible: !dlg.forever
+                Layout.leftMargin: 6
+                Layout.preferredWidth: 140
+                placeholderText: "YYYY-MM-DD"
+                invalid: !Util.isDate(text) || (Util.isDate(dateF.text) && text < dateF.text)
+            }
+        }
+        Text {
+            visible: dlg.summary !== ""
+            text: dlg.summary
+            color: Theme.faint
+            font.family: Theme.mono
+            font.pixelSize: 13
         }
     }
 

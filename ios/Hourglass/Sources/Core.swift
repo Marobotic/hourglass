@@ -214,6 +214,9 @@ enum Dates {
         return String(format: "%04ld-%02ld-%02ld", c.year!, c.month!, c.day!)
     }
     static func add(_ s: String, _ n: Int) -> String { format(utc.date(byAdding: .day, value: n, to: date(s))!) }
+    static func daysIn(_ y: Int, _ m: Int) -> Int {
+        utc.range(of: .day, in: .month, for: utc.date(from: DateComponents(year: y, month: m, day: 1))!)!.count
+    }
     static func between(_ a: String, _ b: String) -> Int { utc.dateComponents([.day], from: date(a), to: date(b)).day! }
     static func iso(_ s: String) -> Int { (utc.component(.weekday, from: date(s)) + 5) % 7 + 1 }
     static func weekStart(_ s: String) -> String { add(s, 1 - iso(s)) }
@@ -360,6 +363,22 @@ enum Recurrence {
             while d <= until {
                 if days.contains(Dates.iso(d)) && !skip.contains(d) && (Dates.between(anchor, Dates.weekStart(d)) / 7) % interval == 0 { out.append(d) }
                 d = Dates.add(d, 1)
+            }
+        } else if rep.freq == "monthly" || rep.freq == "yearly" {
+            // The start date's day of the month, every step months; a month without that day (the
+            // 31st, 29 Feb outside leap years) is skipped, as iCal does. Starts near `from`, so a
+            // birthday entered with its real year costs nothing.
+            let step = interval * (rep.freq == "yearly" ? 12 : 1)
+            let (y, m, day) = Dates.parts(start)
+            let (fy, fm, _) = Dates.parts(d)
+            var n = max(0, ((fy - y) * 12 + fm - m) / step - 1)
+            while true {
+                let months = m - 1 + n * step
+                let yy = y + months / 12, mm = months % 12 + 1
+                let date = String(format: "%04ld-%02ld-%02ld", yy, mm, day)
+                if date > until { break }
+                if day <= Dates.daysIn(yy, mm) && date >= d && !skip.contains(date) { out.append(date) }
+                n += 1
             }
         }
         return out

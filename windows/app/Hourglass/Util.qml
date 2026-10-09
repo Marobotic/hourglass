@@ -114,12 +114,21 @@ QtObject {
         return h + " h" + (m ? " " + m + " min" : "") + " left";
     }
 
+    // 1st, 2nd, 3rd, 4th ... 11th, 12th, 13th ... 21st
+    function ordinal(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+
+    // "Every Tue, Thu", "Daily", "Monthly on the 15th", "Yearly on 2 Nov", "... until Fri 3 Jul 2027"
     function repeatText(ev) {
         const r = ev.repeat;
         if (!r) return "Once, " + shortDate(ev.start_date);
-        let s = r.freq === "daily" ? (r.interval > 1 ? "Every " + r.interval + " days" : "Daily")
-            : (r.interval > 1 ? "Every " + r.interval + " weeks on " : "Every ") + (r.days || [isoWeekday(ev.start_date)]).map(d => weekdays[d - 1]).join(", ");
-        if (r.until) s += " until " + shortDate(r.until);
+        const n = r.interval > 1 ? r.interval : 0;
+        const d = ev.start_date;
+        let s;
+        if (r.freq === "daily") s = n ? "Every " + n + " days" : "Daily";
+        else if (r.freq === "monthly") s = (n ? "Every " + n + " months" : "Monthly") + " on the " + ordinal(dayNum(d));
+        else if (r.freq === "yearly") s = (n ? "Every " + n + " years" : "Yearly") + " on " + dayNum(d) + " " + monthName(d).slice(0, 3);
+        else s = (n ? "Every " + n + " weeks on " : "Every ") + (r.days || [isoWeekday(d)]).map(w => weekdays[w - 1]).join(", ");
+        if (r.until) s += " until " + shortDate(r.until) + (r.freq === "monthly" || r.freq === "yearly" ? " " + r.until.slice(0, 4) : "");
         return s;
     }
 

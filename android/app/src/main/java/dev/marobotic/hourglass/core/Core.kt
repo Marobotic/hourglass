@@ -147,6 +147,23 @@ object Recurrence {
                     d = d.plusDays(1)
                 }
             }
+            // The start date's day of the month, every step months; a month without that day (the
+            // 31st, 29 Feb outside leap years) is skipped, as iCal does. Starts near `from`, so a
+            // birthday entered with its real year costs nothing.
+            "monthly", "yearly" -> {
+                val step = interval.toLong() * if (rep.optString("freq") == "yearly") 12 else 1
+                val first = start.withDayOfMonth(1)
+                var n = maxOf(0L, ChronoUnit.MONTHS.between(first, d.withDayOfMonth(1)) / step - 1)
+                while (true) {
+                    val month = first.plusMonths(n * step)
+                    if (month.isAfter(until)) break
+                    if (start.dayOfMonth <= month.lengthOfMonth()) {
+                        val day = month.withDayOfMonth(start.dayOfMonth)
+                        if (!day.isBefore(d) && !day.isAfter(until) && day.toString() !in skip) out += day
+                    }
+                    n++
+                }
+            }
         }
         return out
     }

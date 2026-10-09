@@ -72,6 +72,31 @@ test("remove one occurrence vs series; errors are 400", async () => {
   assert.equal(invalid.status, 400);
 });
 
+test("a birthday is one yearly event, shown every year", async () => {
+  const ev = await action("add_event", { title: "Mum's birthday", date: "1970-11-02", start: "09:00", end: "10:00", repeat: { freq: "yearly", days: ["Mon"] } });
+  assert.deepEqual(ev.repeat, { freq: "yearly" });            // weekdays only belong to weekly rules
+  for (const year of ["2026", "2027", "2040"]) {
+    const day = await action("get_schedule", { from: `${year}-11-02`, to: `${year}-11-02` });
+    assert.deepEqual(day.occurrences.map((o) => o.title), ["Mum's birthday"]);
+  }
+  await action("remove_event", { event_id: ev.id, scope: "series" });
+});
+
+test("find_events: by any word of the name, at any date, with the next date", async () => {
+  const ev = await action("add_event", { title: "Ashwasky's birthday", date: "2027-02-07", start: "09:00", end: "10:00", repeat: { freq: "yearly" } });
+  for (const query of ["ashwasky", "Ashwasky's", "ASHWASKY birthdays"]) {
+    const r = await action("find_events", { query });
+    assert.deepEqual(r.events.map((e) => e.title), ["Ashwasky's birthday"], query);
+  }
+  const [hit] = (await action("find_events", { query: "ashwasky" })).events;
+  assert.equal(hit.repeats, "yearly on 7 Feb");
+  assert.equal(hit.next.date, "2027-02-07");
+  assert.equal((await action("find_events", { query: "nobody" })).count, 0);
+  const all = await action("find_events", {});
+  assert.ok(all.events.some((e) => e.course === "Algorithms"));          // lectures too, unless personal
+  await action("remove_event", { event_id: ev.id, scope: "series" });
+});
+
 test("alarms and timers", async () => {
   const a = await action("set_alarm", { before: "Algorithms", minutes_before: 15 });
   assert.equal(a.label, "Algorithms in 15 min");

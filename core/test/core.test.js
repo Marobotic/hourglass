@@ -39,7 +39,34 @@ test("recurrence: fortnightly, until, daily, one-off", () => {
   assert.deepEqual(occurrenceDates(once, "2026-09-11", "2026-09-30"), []);
 });
 
+test("recurrence: monthly and yearly, forever or until", () => {
+  const rent = { ...lecture, exceptions: ["2026-12-31"], start_date: "2026-08-31", repeat: { freq: "monthly" } };
+  // months without a 31st are skipped, like iCal; so is the exception
+  assert.deepEqual(occurrenceDates(rent, "2026-08-01", "2027-03-31"), ["2026-08-31", "2026-10-31", "2027-01-31", "2027-03-31"]);
+  const quarterly = { ...lecture, exceptions: [], start_date: "2026-01-15", repeat: { freq: "monthly", interval: 3, until: "2026-10-15" } };
+  assert.deepEqual(occurrenceDates(quarterly, "2026-01-01", "2027-12-31"), ["2026-01-15", "2026-04-15", "2026-07-15", "2026-10-15"]);
+  // a birthday entered with its real year, looked at decades later
+  const birthday = { ...lecture, exceptions: [], start_date: "1995-03-14", repeat: { freq: "yearly" } };
+  assert.deepEqual(occurrenceDates(birthday, "2026-01-01", "2028-12-31"), ["2026-03-14", "2027-03-14", "2028-03-14"]);
+  assert.deepEqual(occurrenceDates(birthday, "2026-03-15", "2027-03-13"), []);
+  assert.deepEqual(occurrenceDates(birthday, "1990-01-01", "1996-12-31"), ["1995-03-14", "1996-03-14"]);   // nothing before it starts
+  const leap = { ...birthday, start_date: "2024-02-29" };
+  assert.deepEqual(occurrenceDates(leap, "2024-01-01", "2032-12-31"), ["2024-02-29", "2028-02-29", "2032-02-29"]);
+  const ended = { ...birthday, repeat: { freq: "yearly", until: "2026-12-31" } };
+  assert.deepEqual(occurrenceDates(ended, "2026-01-01", "2030-12-31"), ["2026-03-14"]);
+  // a rule from a newer version shows nothing instead of throwing
+  assert.deepEqual(occurrenceDates({ ...lecture, repeat: { freq: "lunar" } }, "2026-01-01", "2026-12-31"), []);
+  const occ = expand([birthday], new Map([["c1", course]]), "2026-03-14", "2026-03-14", TZ);
+  assert.equal(occ.length, 1);
+  const row = (freq) => normalize("events", { title: "Mum", kind: "event", start_date: "1970-05-02", start_time: "09:00", end_time: "10:00", repeat: { freq } });
+  assert.equal(row("yearly").repeat.freq, "yearly");
+  assert.equal(row("monthly").repeat.freq, "monthly");
+  assert.throws(() => row("lunar"), /repeat.freq must be one of daily, weekly, monthly, yearly/);
+});
+
 test("recurrence: iCal RRULE", () => {
+  assert.equal(toRRule({ ...lecture, repeat: { freq: "yearly" } }), "FREQ=YEARLY");
+  assert.equal(toRRule({ ...lecture, repeat: { freq: "monthly", interval: 3, until: "2027-01-01" } }), "FREQ=MONTHLY;INTERVAL=3;UNTIL=20270101T235959");
   assert.equal(toRRule(lecture), "FREQ=WEEKLY;BYDAY=TU");
   assert.equal(toRRule({ ...lecture, repeat: { freq: "weekly", interval: 2, days: [1, 3], until: "2026-12-12" } }), "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;UNTIL=20261212T235959");
 });

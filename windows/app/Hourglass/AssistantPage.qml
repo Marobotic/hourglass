@@ -13,6 +13,7 @@ Item {
     property string pending: ""      // sent, not in the list yet
     property bool sending: false
     property bool wasBusy: false
+    property string chatJson: ""     // what `chat` was made from: a poll that changed nothing rebuilds nothing
 
     readonly property bool busy: sending || chat.busy || pending !== ""
     readonly property var messages: {
@@ -27,7 +28,8 @@ Item {
             // An older background service has no assistant: it needs a restart.
             if (!d && err === "not found") d = { enabled: false, busy: false, messages: [], reason: "Restart Hourglass to use the assistant: its background service is older than this window." };
             if (!d) return;
-            page.chat = d;
+            const json = JSON.stringify(d);
+            if (json !== page.chatJson) { page.chatJson = json; page.chat = d; }
             if (page.pending !== "" && (d.messages || []).some(m => m.role === "user" && m.text === page.pending)) page.pending = "";
             // Finished: pull what the assistant changed, so every page shows it.
             if (page.wasBusy && !d.busy && page.pending === "") Api.post("/api/sync/now", {});
@@ -42,6 +44,7 @@ Item {
         page.sending = true;
         page.wasBusy = true;
         input.text = "";
+        list.positionViewAtBeginning();     // back down to the newest message
         Api.request("POST", "/api/assistant/message", { text: t }, (d, err) => {
             page.sending = false;
             if (!d) { page.pending = ""; input.text = t; return; }
@@ -81,11 +84,15 @@ Item {
                 visible: page.messages.length > 0
                 clip: true
                 spacing: 14
-                model: page.messages
+                // Newest first, laid out from the bottom: the view rests on the latest message by
+                // itself. It used to call positionViewAtEnd() whenever the list grew, and once the
+                // chat was taller than the window that call never settled (rows get their real
+                // height only after they are made, so "the end" kept moving): the window froze and
+                // grew to 13 GB.
+                model: page.messages.slice().reverse()
+                verticalLayoutDirection: ListView.BottomToTop
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-                onCountChanged: Qt.callLater(() => list.positionViewAtEnd())
-                onContentHeightChanged: if (list.atYEnd || page.busy) Qt.callLater(() => list.positionViewAtEnd())
 
                 delegate: Item {
                     id: row
@@ -94,11 +101,26 @@ Item {
                     width: list.width
                     height: bubble.height
 
+                    // The bubble hugs short messages. Its width comes from the text measured on one
+                    // line, never from the wrapped text inside it: that text wraps to the bubble, so
+                    // sizing the bubble from it made a loop that never settled once the chat was
+                    // taller than the window (the list kept laying itself out: 13 GB, frozen).
+                    Text {
+                        id: natural
+                        visible: false
+                        text: row.modelData.text
+                        textFormat: row.mine ? Text.PlainText : Text.MarkdownText
+                        font.family: Theme.mono
+                        font.pixelSize: 14
+                    }
+                    Text { id: naturalError; visible: false; text: row.modelData.error || ""; font.family: Theme.mono; font.pixelSize: 13 }
+
                     Rectangle {
                         id: bubble
                         anchors.right: row.mine ? parent.right : undefined
                         anchors.left: row.mine ? undefined : parent.left
-                        width: Math.min(row.width * (row.mine ? 0.75 : 0.9), body.implicitWidth + 28)
+                        width: Math.min(row.width * (row.mine ? 0.75 : 0.9),
+                                        Math.max(row.modelData.text !== "" ? natural.implicitWidth : 0, row.modelData.error ? naturalError.implicitWidth : 0, toolLines.implicitWidth) + 32)
                         height: body.implicitHeight + 22
                         color: row.mine ? Theme.surface2 : "transparent"
                         border.width: row.mine ? 1 : 0
@@ -111,18 +133,23 @@ Item {
                             spacing: 6
 
                             // What the assistant did, one line per tool.
-                            Repeater {
-                                model: row.mine ? [] : (row.modelData.tools || [])
-                                RowLayout {
-                                    required property var modelData
-                                    spacing: 8
-                                    Icon {
-                                        name: modelData.status === "completed" ? "check" : modelData.status === "error" ? "close" : "sync"
-                                        size: 12
-                                        color: modelData.status === "completed" ? Theme.teal : modelData.status === "error" ? Theme.accent : Theme.muted
-                                        RotationAnimation on rotation { running: modelData.status !== "completed" && modelData.status !== "error"; from: 0; to: 360; duration: 1200; loops: Animation.Infinite }
+                            ColumnLayout {
+                                id: toolLines
+                                spacing: 6
+                                visible: !row.mine && (row.modelData.tools || []).length > 0
+                                Repeater {
+                                    model: row.mine ? [] : (row.modelData.tools || [])
+                                    RowLayout {
+                                        required property var modelData
+                                        spacing: 8
+                                        Icon {
+                                            name: modelData.status === "completed" ? "check" : modelData.status === "error" ? "close" : "sync"
+                                            size: 12
+                                            color: modelData.status === "completed" ? Theme.teal : modelData.status === "error" ? Theme.accent : Theme.muted
+                                            RotationAnimation on rotation { running: modelData.status !== "completed" && modelData.status !== "error"; from: 0; to: 360; duration: 1200; loops: Animation.Infinite }
+                                        }
+                                        Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                                     }
-                                    Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                                 }
                             }
                             Text {
@@ -151,7 +178,7 @@ Item {
                     }
                 }
 
-                footer: Item {
+                header: Item {      // at the bottom, under the newest message (the list runs bottom to top)
                     width: list.width
                     height: page.busy ? 34 : 0
                     visible: page.busy

@@ -3,6 +3,7 @@ import { isDate, isTime } from "./dates.js";
 export const PALETTE = ["#B14242", "#D66E36", "#F0BE66", "#4A8B8B", "#7E6BAF", "#5B8C4A", "#C2587E", "#8A8A8A"];
 export const KINDS = ["lecture", "lab", "tutorial", "exam", "event"];
 export const MARKS = ["attended", "absent", "off"];
+export const REPEATS = ["daily", "weekly", "monthly", "yearly"];
 
 // The marks row id for a session: per course and day, so a lecture and its
 // tutorial on the same day share one mark.
@@ -156,7 +157,7 @@ export function validate(table, r) {
     if (!KINDS.includes(r.kind)) fail(`kind must be one of ${KINDS.join(", ")}`);
     if (!r.title && !r.course_id) fail("title or course_id is required");
     if (r.repeat) {
-      if (!["daily", "weekly"].includes(r.repeat.freq)) fail("repeat.freq must be daily or weekly");
+      if (!REPEATS.includes(r.repeat.freq)) fail(`repeat.freq must be one of ${REPEATS.join(", ")}`);
       if (r.repeat.days?.some((d) => d < 1 || d > 7)) fail("repeat.days are ISO weekdays 1-7");
       if (r.repeat.until && !isDate(r.repeat.until)) fail("repeat.until must be YYYY-MM-DD");
     }
