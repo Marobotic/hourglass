@@ -110,6 +110,7 @@ function adoptToken() {
 }
 
 let cred = null; // { token, kind: "session" | "token" }
+let sessionEnded = null; // why the sign-in page is up when the server signed us out
 const config = () => {
   if (!cred) {
     const session = keyringGet("session");
@@ -181,6 +182,7 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
     }
   }
   const out = await r.json().catch(() => ({}));
+  if (r.status === 401 && bearer && bearer === cred?.token && !path.startsWith("/auth/")) endSession();
   if (!r.ok) throw Object.assign(new Error(remoteError(r.status, out, !!bearer)), { status: r.status < 500 ? r.status : 502 });
   return out;
 }
@@ -198,7 +200,22 @@ function useAccount(email) {
   store.setMeta("account", email || null);
 }
 
+// The server says 401 only when the account server turned the session down (a
+// password change or reset ends every session), so it is gone for good: drop it
+// and show the sign-in page instead of failing quietly forever. The account name
+// and local data stay, so signing in again with it sends the unsynced changes.
+function endSession() {
+  if (cred?.kind !== "session" && cred?.kind !== "token") return;
+  log("the server ended this sign-in; showing the sign-in page");
+  keyringClear("session");
+  keyringClear("sync-token");
+  cred = null;
+  sessionEnded = "You were signed out, usually because the password was changed. Sign in again: nothing on this computer is lost.";
+  Object.assign(sync, { state: "signed_out" });
+}
+
 async function signIn(session, email) {
+  sessionEnded = null;
   keyringSet("session", session);
   keyringClear("sync-token");
   cred = null;
@@ -236,7 +253,7 @@ async function adoptMusicSession() {
   }
 }
 
-const account = () => ({ email: store.meta("account", null), signed_in: cred?.kind === "session", legacy: cred?.kind === "token", server: SERVER });
+const account = () => ({ email: store.meta("account", null), signed_in: cred?.kind === "session", legacy: cred?.kind === "token", server: SERVER, session_ended: sessionEnded });
 
 // --- theme ---------------------------------------------------------------------
 
@@ -288,6 +305,7 @@ async function syncOnce() {
     if (!store.meta("account", null)) store.setMeta("account", (await remote("/api/account")).email);
     await fetchSounds();
   } catch (e) {
+    if (/ 401$/.test(e.message)) endSession();
     Object.assign(sync, { state: / 401$/.test(e.message) ? "signed_out" : "offline", error: e.message });
   }
 }

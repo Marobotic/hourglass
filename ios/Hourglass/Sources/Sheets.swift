@@ -396,7 +396,10 @@ struct LoginView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(H.bg.ignoresSafeArea())
-        .onAppear { if email.isEmpty { email = store.account ?? "" } }
+        .onAppear {
+            if email.isEmpty { email = store.account ?? "" }
+            if notice == nil { notice = store.sessionEnded }
+        }
     }
 
     private var buttonTitle: String {

@@ -58,6 +58,8 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     // Real installs open on the sign-in page until an account is signed in.
     val needsSignIn get() = syncEnabled && !signedIn
     val account: String? get() = store.meta("account")
+    // Why the sign-in page is showing when the app signed itself out.
+    @Volatile var sessionEnded: String? = null
 
     // --- device preferences (not synced) ---
     val h24 get() = store.meta("time_format") == "24h"
@@ -509,6 +511,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             store.setMeta("token_sealed", null)
             store.setMeta("signed_out", null)
             store.setMeta("account", who)
+            sessionEnded = null
             syncOnce()
         }.exceptionOrNull()?.message
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
@@ -543,6 +546,16 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     fun signOut() = scope.launch {
         token?.takeIf { signedIn }?.let { t -> runCatching { http("POST", "${BuildConfig.SERVER}/auth/logout", t, "{}") } }
+        store.setMeta("session_sealed", null)
+        store.setMeta("token_sealed", null)
+        store.setMeta("signed_out", "1")
+        _sync.value = SyncState("signed_out")
+    }
+
+    // Signed out by the server. The account name and this phone's data stay,
+    // so signing in again with the same account sends the unsynced changes.
+    private fun endSession() {
+        sessionEnded = "You were signed out, usually because the password was changed. Sign in again: nothing on this phone is lost."
         store.setMeta("session_sealed", null)
         store.setMeta("token_sealed", null)
         store.setMeta("signed_out", "1")
@@ -606,6 +619,10 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             throw RuntimeException("Can't reach the Hourglass server. Check your internet connection.")
         }
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+        // The server says 401 only when the account server turned the session
+        // down (a password change or reset ends every session), so it is gone
+        // for good: show the sign-in page instead of failing quietly forever.
+        if (code == 401 && token != null && signedIn && !url.contains("/auth/")) endSession()
         if (code !in 200..299) {
             val o = runCatching { JSONObject(text) }.getOrNull()
             val msg = o?.optString("error")?.ifBlank { null }

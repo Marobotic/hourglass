@@ -251,7 +251,7 @@ private val EMAIL = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 fun LoginScreen(repo: Repo) {
     var creating by remember { mutableStateOf(false) }
     var forgot by remember { mutableStateOf(false) } // "Forgot password?": email only, sends a reset link
-    var notice by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf(repo.sessionEnded) }
     var email by remember { mutableStateOf(repo.account ?: "") }
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }

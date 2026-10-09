@@ -49,6 +49,8 @@ final class Store: ObservableObject {
     // The Jukebox session once signed in; before that the build's legacy key.
     private var token: String { Keychain.get("session") ?? (UserDefaults.standard.bool(forKey: "signed_out") ? "" : Keychain.get("sync-token") ?? "") }
     @Published var signedIn = Keychain.get("session") != nil
+    // Why the sign-in screen is showing when the app signed itself out.
+    @Published var sessionEnded: String?
     var account: String? { UserDefaults.standard.string(forKey: "account") }
     private var cursor: Int64 { get { Int64(UserDefaults.standard.integer(forKey: "cursor")) } set { UserDefaults.standard.set(Int(newValue), forKey: "cursor") } }
 
@@ -433,6 +435,7 @@ final class Store: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "signed_out")
         UserDefaults.standard.set(who, forKey: "account")
         signedIn = true
+        sessionEnded = nil
         await syncSoon()
     }
 
@@ -449,6 +452,17 @@ final class Store: ObservableObject {
         UserDefaults.standard.set(true, forKey: "signed_out")
         signedIn = false
         syncState = "signed_out"
+    }
+
+    // Signed out by the server. The account name and this phone's data stay,
+    // so signing in again with the same account sends the unsynced changes.
+    private func endSession() {
+        Keychain.delete("session")
+        Keychain.delete("sync-token")
+        UserDefaults.standard.set(true, forKey: "signed_out")
+        signedIn = false
+        syncState = "signed_out"
+        sessionEnded = "You were signed out, usually because the password was changed. Sign in again: nothing on this phone is lost."
     }
 
     func setHome(_ k: Clock) {
@@ -718,6 +732,10 @@ final class Store: ObservableObject {
     }
 
     private func check(_ r: (Data, URLResponse)) throws {
+        // The server says 401 only when the account server turned the session
+        // down (a password change or reset ends every session), so it is gone
+        // for good: show the sign-in screen instead of failing quietly forever.
+        if (r.1 as? HTTPURLResponse)?.statusCode == 401, signedIn { endSession() }
         if let h = r.1 as? HTTPURLResponse, !(200..<300).contains(h.statusCode) {
             let msg = ((try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any])?["error"] as? String
             throw NSError(domain: "hourglass", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: msg ?? "HTTP \(h.statusCode)"])

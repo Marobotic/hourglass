@@ -48,6 +48,7 @@ Rectangle {
     function prefill() {
         const a = app && app.appState ? app.appState.account : null;
         if (email.text === "" && a && a.email) email.text = a.email;
+        if (notice === "" && a && a.session_ended) notice = a.session_ended;
     }
     onVisibleChanged: if (visible) prefill()
     Component.onCompleted: { prefill(); if (app && app.devLoginMode) setMode(app.devLoginMode === "create", app.devLoginMode === "forgot"); }
