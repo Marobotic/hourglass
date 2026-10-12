@@ -14,7 +14,8 @@ already open.
    when it can. Alarms ring from the device, never from the network.
 4. **Every AI is a client.** The server exposes the same operations over REST
    (apps, Custom GPT actions) and MCP (ChatGPT, Claude, Gemini, CLIs).
-5. **Plain data.** Notes are Markdown. Schedules export as iCal.
+5. **Plain data.** Notes are Markdown (plus `<u>` and a `<span style>` for
+   fonts and sizes, see core/noteformat.js). Schedules export as iCal.
 
 ## Platforms
 
@@ -79,7 +80,7 @@ as iCal does. No `until` = forever. Exported to iCal as `RRULE` + `EXDATE`.
 | session_date | `YYYY-MM-DD`? | the lecture it was written for |
 | event_id | id? | which event of the course (a course can have a lecture and a lab) |
 | title | text | |
-| body | text | Markdown |
+| body | text | Markdown, one line per line; fonts and sizes as `<span style="font-family: Lora; font-size: 20px">` (core/noteformat.js) |
 | pinned | 0/1 | pinned notes show in every session of the course |
 
 Editing a note never copies it. The server keeps older text in
@@ -151,6 +152,22 @@ The same service functions back REST and MCP tools:
 | `search_notes` | full text |
 | `set_alarm` / `remove_alarm` / `list_alarms` | including "N min before event" |
 | `start_timer` / `stop_timer` / `list_timers` | |
+| `search` | one search: calendar first, then notes, Drive, alarms |
+| `list_drive` / `add_folder` / `move_folder` / `move_file` / `remove_folder` | folders nest; a folder never goes into itself |
+
+The in-app assistant answers common requests itself (server/quick.js:
+alarms, timers, birthdays, today) in well under a second; everything else
+goes to opencode with the app guide (server/assistant-guide.md) and a
+snapshot of the account in the prompt.
+
+### Drive links
+
+`POST /api/shares {file_id | folder_id, access: view | download,
+expires_days}` makes (or changes) the one link of a file or folder;
+`DELETE /api/shares/<token>` stops it. Anyone can open
+`<server>/drive/<token>` with no sign-in: a page showing the file (or the
+folder and what is under it). Links live in the account's `shares.json`, not
+in the synced tables.
 
 Auth: the account session, or a personal AI key (`GET/POST /api/ai`). The key
 also works in the URL, `/mcp/<key>`, for ChatGPT and Claude connectors that
@@ -175,8 +192,10 @@ only take a link.
      date, newest first.
 4. **Timers & alarms**: quick timer chips (5, 10, 25, 50 min), running
    timers with big countdowns, alarms with day toggles.
-5. **Note editor**: title plus Markdown body, autosaves, shows which session
-   it belongs to.
+5. **Note editor**: a word processor, no Markdown on screen: select text for
+   bold, italic, underline, strike, headings, lists, to-dos (tick with a
+   click), five fonts (Inter, Lora, JetBrains Mono, Caveat, Playfair Display)
+   and sizes; pictures in place. Autosaves, shows which session it belongs to.
 
 ### Interaction rules
 
