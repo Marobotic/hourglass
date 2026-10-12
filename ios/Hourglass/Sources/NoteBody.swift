@@ -80,45 +80,6 @@ enum Md {
     }
 }
 
-// The toolbar writes the same Markdown as the desktop's: **bold**, *italic*,
-// <u>underline</u>, ~~strike~~, and "## ", "- ", "1. " in front of lines.
-// Again on the same selection takes it off. Offsets are UTF-16, as NSString.
-enum NoteFormat {
-    static func wrap(_ text: String, _ a: Int, _ b: Int, _ pre: String, _ post: String) -> (String, Int, Int) {
-        let ns = text as NSString
-        let sel = ns.substring(with: NSRange(location: a, length: b - a))
-        let p = (pre as NSString).length, q = (post as NSString).length
-        if (sel as NSString).length >= p + q && sel.hasPrefix(pre) && sel.hasSuffix(post) {
-            let inner = (sel as NSString).substring(with: NSRange(location: p, length: (sel as NSString).length - p - q))
-            return (ns.replacingCharacters(in: NSRange(location: a, length: b - a), with: inner), a, a + (inner as NSString).length)
-        }
-        let out = ns.replacingCharacters(in: NSRange(location: a, length: b - a), with: pre + sel + post)
-        return sel.isEmpty ? (out, a + p, a + p) : (out, a, a + p + (sel as NSString).length + q)
-    }
-
-    static func lines(_ text: String, _ a: Int, _ b: Int, _ kind: String) -> (String, Int, Int) {
-        let ns = text as NSString
-        var r = ns.lineRange(for: NSRange(location: a, length: max(0, b - a - (b > a ? 1 : 0))))
-        if r.length > 0 && ns.substring(with: NSRange(location: r.location + r.length - 1, length: 1)) == "\n" { r.length -= 1 }
-        let rows = ns.substring(with: r).components(separatedBy: "\n")
-        let re = kind == "ul" ? #"^[-*] (?!\[[ xX]\] )"# : kind == "todo" ? #"^[-*] \[[ xX]\] "# : kind == "ol" ? #"^\d+\. "# : "^#{1,6} "
-        let filled = rows.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let on = !filled.isEmpty && filled.allSatisfy { $0.range(of: re, options: .regularExpression) != nil }
-        var n = 0
-        let out = rows.map { row -> String in
-            if row.trimmingCharacters(in: .whitespaces).isEmpty { return row }
-            if on { return row.replacingOccurrences(of: re, with: "", options: .regularExpression) }
-            let bare = row.replacingOccurrences(of: #"^([-*] \[[ xX]\] |[-*] |\d+\. |#{1,6} )"#, with: "", options: .regularExpression)
-            n += 1
-            return (kind == "ul" ? "- " : kind == "todo" ? "- [ ] " : kind == "ol" ? "\(n). " : "## ") + bare
-        }.joined(separator: "\n")
-        let end = r.location + (out as NSString).length
-        let result = ns.replacingCharacters(in: r, with: out)
-        if kind == "ol" { let (t, p) = Md.renumberKeeping(result, end); return (t, p, p) }
-        return (result, end, end)
-    }
-}
-
 // **bold**, *italic*, <u>underline</u>, ~~strike~~, [links] as their text.
 func inlineMd(_ s: String) -> AttributedString {
     let re = try! NSRegularExpression(pattern: #"\*\*(.+?)\*\*|<u>(.+?)</u>|~~(.+?)~~|\*(.+?)\*|\[([^\]]+)\]\([^)]+\)"#)

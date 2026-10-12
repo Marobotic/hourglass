@@ -42,3 +42,13 @@ targets:
         UIAppFonts:
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Bold.ttf
+          - Inter-Regular.ttf
+          - Inter-Bold.ttf
+          - Lora-Regular.ttf
+          - Lora-Bold.ttf
+          - Caveat-Regular.ttf
+          - Caveat-Bold.ttf
+          - PlayfairDisplay-Regular.ttf
+          - PlayfairDisplay-Bold.ttf
+          - NoteJetBrainsMono-Regular.ttf
+          - NoteJetBrainsMono-Bold.ttf

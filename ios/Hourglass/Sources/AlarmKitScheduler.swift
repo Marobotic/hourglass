@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UserNotifications
 #if canImport(AlarmKit)
 import AlarmKit
 #endif
@@ -50,12 +51,33 @@ enum AlarmKitScheduler {
         #endif
     }
 
+    // Settings > Test alarm: a real alarm in 5 seconds through the same path as
+    // any alarm (AlarmKit's full-screen ring, or the notification on older
+    // iOS), with the ringtone even when the alarm sound is off.
+    static func test() {
+        let at = nowMs() + 5_000
+        let tone = UserDefaults.standard.object(forKey: "sound") as? Bool == false ? Ringtones.toneFile : Ringtones.file
+        #if canImport(AlarmKit)
+        if #available(iOS 26.0, *), AlarmManager.shared.authorizationState == .authorized {
+            Task { await schedule(at: at, label: "Test alarm", sound: tone) }
+            return
+        }
+        #endif
+        let content = UNMutableNotificationContent()
+        content.title = "Test alarm"
+        content.body = "This is how your alarms ring."
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(tone))
+        content.interruptionLevel = .timeSensitive
+        let req = UNNotificationRequest(identifier: "hourglass-test-\(at)", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false))
+        UNUserNotificationCenter.current().add(req)
+    }
+
     #if canImport(AlarmKit)
     @available(iOS 26.0, *)
     struct Meta: AlarmMetadata {}
 
     @available(iOS 26.0, *)
-    private static func schedule(at ms: Int64, label: String) async {
+    private static func schedule(at ms: Int64, label: String, sound: String = Ringtones.file) async {
         let alert = AlarmPresentation.Alert(
             title: LocalizedStringResource(stringLiteral: label),
             stopButton: AlarmButton(text: "Stop", textColor: .white, systemImageName: "stop.fill")
@@ -64,7 +86,7 @@ enum AlarmKitScheduler {
         let config = AlarmManager.AlarmConfiguration<Meta>.alarm(
             schedule: .fixed(Date(timeIntervalSince1970: Double(ms) / 1000)),
             attributes: attributes,
-            sound: .named(Ringtones.file)
+            sound: .named(sound)
         )
         _ = try? await AlarmManager.shared.schedule(id: UUID(), configuration: config)
     }
@@ -81,6 +103,10 @@ enum Ringtones {
     static func url(_ id: String) -> URL { dir.appendingPathComponent(fileName(id)) }
     static var file: String {
         if UserDefaults.standard.object(forKey: "sound") as? Bool == false { return "ring_silent.wav" }
+        return toneFile
+    }
+    // The chosen ringtone's file, whatever the sound setting.
+    static var toneFile: String {
         if all.contains(current) { return "ring_\(current).wav" }
         return FileManager.default.fileExists(atPath: url(current).path) ? fileName(current) : "ring_classic.wav"
     }

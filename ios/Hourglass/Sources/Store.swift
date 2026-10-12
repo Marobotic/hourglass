@@ -198,6 +198,64 @@ final class Store: ObservableObject {
         save(f)
     }
 
+    // A folder into another (nil = the top). Never into itself or one of its
+    // own folders: false then, and nothing changes.
+    @discardableResult
+    func moveFolder(_ id: String, into parent: String?) -> Bool {
+        var p = parent
+        while let cur = p {
+            if cur == id { return false }
+            p = folders.first { $0.id == cur }?.parent_id
+        }
+        guard var d = folders.first(where: { $0.id == id }) else { return false }
+        d.parent_id = parent
+        save(d)
+        return true
+    }
+
+    // Drive links ("anyone with the link can view"), kept on the server. Each
+    // one: token, url, access (view | download), file_id or folder_id, expires_at, active.
+    func shares() async throws -> [[String: Any]] {
+        guard let base = URL(string: server) else { return [] }
+        let r = try await URLSession.shared.data(for: request(base.appendingPathComponent("api/shares")))
+        try check(r)
+        return ((try? JSONSerialization.jsonObject(with: r.0)) as? [[String: Any]] ?? []).filter { ($0["active"] as? Bool) == true }
+    }
+
+    // Make a link, or change the access of the one there is (same link). days: 0 = never ends.
+    func share(file: String?, folder: String?, access: String, days: Int) async throws -> [String: Any] {
+        guard let base = URL(string: server) else { return [:] }
+        // A folder made on this phone must be on the server first.
+        if db.folders.contains(where: { $0.dirty == 1 }) { await sync() }
+        var req = request(base.appendingPathComponent("api/shares"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body: [String: Any] = ["access": access, "expires_days": days]
+        if let file { body["file_id"] = file } else if let folder { body["folder_id"] = folder }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let r = try await URLSession.shared.data(for: req)
+        try check(r)
+        return (try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any] ?? [:]
+    }
+
+    func unshare(_ shareToken: String) async throws {
+        guard let base = URL(string: server) else { return }
+        var req = request(base.appendingPathComponent("api/shares/\(shareToken)"))
+        req.httpMethod = "DELETE"
+        try check(try await URLSession.shared.data(for: req))
+    }
+
+    // Where the assistant's attachments go: the Drive's "Assistant" folder (made by the server).
+    func assistantFolder() async throws -> String {
+        guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
+        let r = try await URLSession.shared.data(for: request(base.appendingPathComponent("api/assistant/folder")))
+        try check(r)
+        guard let id = ((try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any])?["folder_id"] as? String else {
+            throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No Assistant folder"])
+        }
+        return id
+    }
+
     private var driveDir: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("drive") }
     // This phone's copy, under the file's real name so other apps know what it is.
     func driveCopy(_ f: DriveFile) -> URL {

@@ -221,8 +221,7 @@ struct NoteRow: View {
                 Image(systemName: note.pinned == 1 ? "pin.fill" : "note.text").font(.system(size: 13)).foregroundStyle(note.pinned == 1 ? H.gold : H.muted)
                 T(note.title.isEmpty ? "Untitled" : note.title, 15, bold: true, lines: 1)
             }
-            let preview = note.body.replacingOccurrences(of: "[#>*_`\\[\\]-]", with: "", options: .regularExpression)
-                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+            let preview = NoteFormat.preview(note.body, max: 400)
             if !preview.isEmpty { T(preview, 13, H.muted, lines: 2).padding(.top, 4) }
         }
     }

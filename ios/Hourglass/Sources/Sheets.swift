@@ -573,6 +573,7 @@ struct SettingsSheet: View {
     @State private var uploading = false
     @State private var error: String?
     @State private var confirmDelete: Ringtone?
+    @State private var testing = false
     @State private var confirmSignOut = false
     @State private var alarmStatus = ""
 
@@ -609,6 +610,15 @@ struct SettingsSheet: View {
             if let error { T(error, 13, H.accent) }
             T("Add songs from Jukebox: open a song's menu and pick Set as alarm.", 12, H.faint)
             HStack { T("Alarm sound", 15); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
+            // A real alarm in 5 seconds: lock the phone to see it ring like any alarm.
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    T("Test alarm", 15)
+                    T(testing ? "Rings in 5 seconds. Lock the phone to see the full alarm." : "Rings like a real alarm in 5 seconds, even with the sound off.", 12, H.muted)
+                }
+                Spacer()
+                HButton("Test", icon: "alarm") { AlarmKitScheduler.test(); testing = true }
+            }
 
             SectionLabel(text: "Time")
             T("CLOCK", 11, H.muted)

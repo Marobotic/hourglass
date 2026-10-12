@@ -80,7 +80,7 @@ struct NowView: View {
         let foot = [c.map { $0.name }, n.session_date == today ? "Today" : n.session_date.map { "Last class · " + Dates.short($0) }].compactMap { $0 }
         return VStack(alignment: .leading, spacing: 4) {
             if !n.title.isEmpty { T(n.title, 14, bold: true, lines: 1) }
-            if !n.body.isEmpty { Text(n.body).font(.system(size: 13)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(4) }
+            if !n.body.isEmpty { Text(NoteFormat.plainText(n.body)).font(.system(size: 13)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(4) }
             Text(foot.joined(separator: "  ·  ")).font(H.mono(11, bold: true)).foregroundStyle(tint ?? H.muted).lineLimit(1)
         }
         .padding(12)
@@ -298,7 +298,7 @@ struct NotesView: View {
         let words = query.lowercased().split(separator: " ").map(String.init)
         let list = store.notes
             .filter { sel == "all" ? true : sel == "inbox" ? $0.course_id == nil : $0.course_id == sel }
-            .filter { n in words.isEmpty || words.allSatisfy { (n.title + "\n" + n.body).lowercased().contains($0) } }
+            .filter { n in words.isEmpty || words.allSatisfy { (n.title + "\n" + NoteFormat.plainText(n.body)).lowercased().contains($0) } }
             .sorted { ($0.pinned, $0.updated_at) > ($1.pinned, $1.updated_at) }
         let cols = columns(list)
         ScrollView {
@@ -376,7 +376,7 @@ struct NotesView: View {
                     if n.pinned == 1 { Image(systemName: "pin.fill").font(.system(size: 11)).foregroundStyle(H.gold) }
                 }
             }
-            if !n.body.isEmpty { Text(n.body).font(.system(size: 14)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(10) }
+            if !n.body.isEmpty { Text(NoteFormat.plainText(n.body)).font(.system(size: 14)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(10) }
             if !foot.isEmpty { Text(foot.joined(separator: "  ·  ")).font(H.mono(11, bold: true)).foregroundStyle(tint ?? H.muted) }
         }
         .padding(12)
@@ -559,38 +559,45 @@ struct TimersView: View {
 
 // MARK: - Note editor
 
+// A note, written like a word processor: what you see is the note. Select
+// text, then the toolbar: font, size, bold, italic, underline, strike,
+// headings, lists, to-dos (tap a box to tick it), pictures and files (shown in
+// place). Saves by itself 700 ms after the last change, and on the way out.
 struct NoteView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     let id: String
     @State private var title = ""
-    @State private var text = ""
+    @State private var savedBody = ""
     @State private var loaded = false
     @State private var dirty = false
+    @State private var edits = 0 // every change; the save waits for a quiet moment
     @State private var confirmDelete = false
     @State private var restoreChoice: NoteVersion?
-    @State private var selection: TextSelection?
-    @State private var preview = false
     @State private var uploading: String?
     @State private var importing = false
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var pictures: [String: UIImage] = [:]
     @StateObject private var opener = FileOpener()
+    @StateObject private var rich = RichNoteController()
 
-    // The selection as UTF-16 offsets into text (the end when there is none).
-    private func selected() -> (Int, Int) {
-        let n = (text as NSString).length
-        guard let s = selection, case .selection(let r) = s.indices else { return (n, n) }
-        let a = min(n, max(0, r.lowerBound.utf16Offset(in: text))), b = min(n, max(a, r.upperBound.utf16Offset(in: text)))
-        return (a, b)
+    private func edited() { if loaded { dirty = true; edits += 1 } }
+
+    // Each picture in the note, from this phone's copy (downloaded once).
+    private func loadPictures(_ md: String) {
+        for l in NoteFormat.parse(md) where l.kind == "image" {
+            guard let fid = l.fileId, pictures[fid] == nil, let f = store.file(fid) else { continue }
+            Task {
+                guard let url = try? await store.download(f), let img = UIImage(contentsOfFile: url.path) else { return }
+                let scaled = img.preparingThumbnail(of: CGSize(width: 1600, height: 1600 * img.size.height / max(1, img.size.width))) ?? img
+                pictures[fid] = scaled
+                rich.pictureLoaded(fid)
+            }
+        }
     }
-    private func apply(_ r: (String, Int, Int)) {
-        text = r.0
-        let lo = String.Index(utf16Offset: r.1, in: text), hi = String.Index(utf16Offset: r.2, in: text)
-        selection = TextSelection(range: lo..<hi)
-        dirty = true
-    }
+
     // Pictures and files: uploaded to the Drive (the note's course folder, or
-    // "Note attachments"), then a line in the note where the cursor is.
+    // "Note attachments"), then shown in the note after the cursor's line.
     private func attach(_ files: [(URL, String?)]) {
         guard !files.isEmpty else { return }
         let course = store.notes.first { $0.id == id }?.course_id
@@ -600,57 +607,24 @@ struct NoteView: View {
             for (url, name) in files {
                 do {
                     let f = try await store.upload(url, name: name, folder: nil, course: course, note: id)
-                    let line = (f.mime.hasPrefix("image/") ? "![\(f.name)]" : "[\(f.name)]") + "(hgfile:\(f.id))"
-                    let pos = preview ? (text as NSString).length : selected().1
-                    let before = pos > 0 && (text as NSString).substring(with: NSRange(location: pos - 1, length: 1)) != "\n" ? "\n" : ""
-                    let ins = before + line + "\n"
-                    let end = pos + (ins as NSString).length
-                    apply(((text as NSString).replacingCharacters(in: NSRange(location: pos, length: 0), with: ins), end, end))
+                    let picture = f.mime.hasPrefix("image/")
+                    if picture, let img = UIImage(contentsOfFile: url.path) { pictures[f.id] = img.preparingThumbnail(of: CGSize(width: 1600, height: 1600 * img.size.height / max(1, img.size.width))) ?? img }
+                    rich.insertFile(NoteLine(kind: picture ? "image" : "file", fileId: f.id, fileName: f.name))
                 } catch { failed = error.localizedDescription }
             }
             uploading = failed.map { "Upload failed: \($0)" }
         }
     }
 
-    private func saveAndView() {
-        let tidy = Md.renumber(text)
-        if tidy != text { text = tidy; dirty = true }
-        save()
-        preview = true
-    }
-    private func toggleTask(_ line: Int) {
-        let t = Md.toggleTask(text, line)
-        guard t != text else { return }
-        text = t
-        dirty = true
-        save()
-    }
-    // Typing: Enter on a list line starts the next item, like the desktop.
-    private func continueList(_ old: String, _ new: String) {
-        let o = old as NSString, n = new as NSString
-        guard !preview, n.length == o.length + 1 else { return }
-        var i = 0
-        while i < o.length && o.character(at: i) == n.character(at: i) { i += 1 }
-        guard n.character(at: i) == 10, n.replacingCharacters(in: NSRange(location: i, length: 1), with: "") == old,
-              let next = Md.continueList(old, i) else { return }
-        text = next.0
-        selection = TextSelection(insertionPoint: String.Index(utf16Offset: next.1, in: next.0))
-    }
-
-    private func format(_ k: String) {
-        let (a, b) = selected()
-        switch k {
-        case "b": apply(NoteFormat.wrap(text, a, b, "**", "**"))
-        case "i": apply(NoteFormat.wrap(text, a, b, "*", "*"))
-        case "u": apply(NoteFormat.wrap(text, a, b, "<u>", "</u>"))
-        case "s": apply(NoteFormat.wrap(text, a, b, "~~", "~~"))
-        default: apply(NoteFormat.lines(text, a, b, k))
-        }
-    }
-
     private func stamp(_ ms: Int64) -> String {
         let d = Dates.dayOf(ms)
         return Dates.short(d) + " " + Dates.clock(ms)
+    }
+
+    @ViewBuilder private func tool(_ icon: String, _ on: Bool = false, _ act: @escaping () -> Void) -> some View {
+        Button(action: act) {
+            Image(systemName: icon).foregroundStyle(on ? H.fg : H.muted).frame(width: 36, height: 34).background(on ? H.surface2 : Color.clear)
+        }
     }
 
     var body: some View {
@@ -662,41 +636,57 @@ struct NoteView: View {
             DateField(label: "Date", value: Binding(get: { note?.session_date }, set: { v in if var n = note { save(); n = store.notes.first { $0.id == id } ?? n; n.session_date = v; store.save(n) } }), clearable: true)
             TextField("", text: $title, prompt: Text("Title").foregroundStyle(H.faint))
                 .font(H.mono(26, bold: true)).foregroundStyle(H.fg).tint(H.accent)
-                .onChange(of: title) { _, _ in if loaded { dirty = true } }
+                .onChange(of: title) { _, _ in edited() }
             Rectangle().fill(H.border).frame(height: 1)
-            // Formatting and attachments, like the desktop's toolbar; only while editing.
-            if !preview { ScrollView(.horizontal, showsIndicators: false) {
+            // The toolbar: always there, it works on the selection (or on what is typed next).
+            ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach([("bold", "b"), ("italic", "i"), ("underline", "u"), ("strikethrough", "s"), ("textformat.size", "h"), ("list.bullet", "ul"), ("list.number", "ol"), ("checklist", "todo")], id: \.1) { icon, k in
-                        Button { format(k) } label: { Image(systemName: icon).foregroundStyle(H.muted).frame(width: 38, height: 34) }
+                    Menu {
+                        ForEach(NoteFormat.fonts, id: \.self) { f in Button(f) { rich.setFont(f) } }
+                    } label: {
+                        Text(rich.here.font ?? NoteFormat.fonts[0]).font(NoteFonts.swiftUI(rich.here.font ?? NoteFormat.fonts[0], size: 13)).foregroundStyle(H.fg)
+                            .lineLimit(1).padding(.horizontal, 8).frame(height: 30).overlay(Rectangle().stroke(H.border, lineWidth: 1))
                     }
+                    Menu {
+                        ForEach(NoteFormat.sizes, id: \.self) { z in Button("\(z)") { rich.setSize(z) } }
+                    } label: {
+                        Text("\(rich.here.size ?? NoteFormat.defaultSize)").font(H.mono(13)).foregroundStyle(H.fg)
+                            .padding(.horizontal, 8).frame(height: 30).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                    }
+                    tool("bold", rich.here.b) { rich.toggle("b") }
+                    tool("italic", rich.here.i) { rich.toggle("i") }
+                    tool("underline", rich.here.u) { rich.toggle("u") }
+                    tool("strikethrough", rich.here.s) { rich.toggle("s") }
+                    tool("textformat.size") { rich.setHeading(2) }
+                    tool("list.bullet") { rich.setList("ul") }
+                    tool("list.number") { rich.setList("ol") }
+                    tool("checklist") { rich.setList("todo") }
                     Rectangle().fill(H.border).frame(width: 1, height: 22)
                     PhotosPicker(selection: $photoItems, matching: .images) {
-                        Image(systemName: "photo").foregroundStyle(H.muted).frame(width: 38, height: 34)
+                        Image(systemName: "photo").foregroundStyle(H.muted).frame(width: 36, height: 34)
                     }
-                    Button { importing = true } label: { Image(systemName: "paperclip").foregroundStyle(H.muted).frame(width: 38, height: 34) }
+                    Button { importing = true } label: { Image(systemName: "paperclip").foregroundStyle(H.muted).frame(width: 36, height: 34) }
                 }
             }
-            Rectangle().fill(H.border).frame(height: 1) }
-            if preview {
-                ScrollView {
-                    NoteBodyView(text: text.isEmpty ? "*Nothing written yet. Tap the pencil to write.*" : text, open: { opener.open($0, store) }, onToggle: { toggleTask($0) })
-                        .padding(.vertical, 8)
-                }
-            } else {
-                TextEditor(text: $text, selection: $selection)
-                    .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent).scrollContentBackground(.hidden)
-                    .onChange(of: text) { old, new in
-                        if loaded { dirty = true }
-                        continueList(old, new)
-                    }
-            }
+            Rectangle().fill(H.border).frame(height: 1)
+            RichNoteEditor(controller: rich)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, 20)
         .background(H.bg)
-        .onAppear { if let note, !loaded { title = note.title; text = note.body; preview = !note.body.isEmpty; loaded = true } }
-        // 700 ms after the last keystroke; a keystroke cancels the wait, not starts a save.
-        .task(id: "\(title)\u{1}\(text)") {
+        .onAppear {
+            guard let note, !loaded else { return }
+            rich.onEdited = { edited() }
+            rich.onOpenFile = { fid in if let f = store.file(fid) { opener.open(f, store) } }
+            rich.imageFor = { fid in pictures[fid] }
+            title = note.title
+            savedBody = note.body
+            rich.load(note.body)
+            loadPictures(note.body)
+            loaded = true
+        }
+        // 700 ms after the last change; a change cancels the wait, not starts a save.
+        .task(id: edits) {
             guard dirty else { return }
             do { try await Task.sleep(nanoseconds: 700_000_000) } catch { return }
             save()
@@ -731,14 +721,6 @@ struct NoteView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 T(uploading ?? (dirty ? "Edited" : "Saved"), 11, uploading != nil ? H.gold : H.faint)
-                if preview {
-                    Button { preview = false } label: { Image(systemName: "pencil").foregroundStyle(H.fg) }
-                } else {
-                    Button { saveAndView() } label: {
-                        Label("Save", systemImage: "checkmark").labelStyle(.titleAndIcon).font(H.mono(14, bold: true))
-                            .foregroundStyle(.white).padding(.horizontal, 10).padding(.vertical, 6).background(H.accent)
-                    }
-                }
                 Button { if var n = note { n.pinned = n.pinned == 1 ? 0 : 1; store.save(n) } } label: {
                     Image(systemName: note?.pinned == 1 ? "pin.fill" : "pin").foregroundStyle(note?.pinned == 1 ? H.gold : H.muted)
                 }
@@ -749,7 +731,7 @@ struct NoteView: View {
                         ForEach(versions) { v in
                             Button { save(); restoreChoice = v } label: {
                                 Text(stamp(v.saved_at ?? 0) + (v.reason == "conflict" ? " · other device" : v.reason == "restore" ? " · before a restore" : ""))
-                                Text(v.body.replacingOccurrences(of: "\n", with: " ").prefix(60))
+                                Text(NoteFormat.preview(v.body, max: 60))
                             }
                         }
                     }
@@ -758,7 +740,12 @@ struct NoteView: View {
         }
         .confirmationDialog("Restore this version?", isPresented: Binding(get: { restoreChoice != nil }, set: { if !$0 { restoreChoice = nil } }), titleVisibility: .visible) {
             Button("Restore") {
-                if let v = restoreChoice { store.restore(v); title = v.title; text = v.body; dirty = false }
+                if let v = restoreChoice {
+                    store.restore(v)
+                    title = v.title; savedBody = v.body
+                    rich.load(v.body); loadPictures(v.body)
+                    dirty = false
+                }
                 restoreChoice = nil
             }
         } message: { Text("The note goes back to that text. What it says now is kept as a version too.") }
@@ -769,8 +756,10 @@ struct NoteView: View {
 
     private func save() {
         guard dirty, var n = store.notes.first(where: { $0.id == id }) else { return }
+        let md = rich.markdown()
         n.title = title
-        n.body = text
+        n.body = md
+        savedBody = md
         store.save(n)
         dirty = false
     }
