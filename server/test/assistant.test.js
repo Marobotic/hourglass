@@ -49,6 +49,7 @@ before(async () => {
     HOURGLASS_ASSISTANT_RUNNER: "direct",
     HOURGLASS_ASSISTANT_BIN: FAKE,
     HOURGLASS_ASSISTANT_MODELS: "fake/down,fake/good",
+    HOURGLASS_ASSISTANT_VISION_MODELS: "fake/vision",
     HOURGLASS_ASSISTANT_DIR: accounts,
   }));
   ({ child: hgOff, base: baseOff } = await startHourglass(dataOff));
@@ -115,8 +116,11 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.deepEqual(c.map((x) => x.model), ["fake/down", "fake/good"]);
   assert.equal(c[1].session, null);
   assert.match(c[1].prompt, /You are the assistant built into Hourglass/);
-  assert.match(c[1].prompt, /hourglass_whats_now/);
+  assert.match(c[1].prompt, /hourglass_search/);
   assert.match(c[1].prompt, /It is \w+day \d{4}-\d\d-\d\d/);
+  // The app guide and the account snapshot travel with it.
+  assert.match(c[1].prompt, /# Hourglass, the app/);
+  assert.match(c[1].prompt, /On now and next:/);
   assert.equal(c[1].home, join(accountDir(), "home"));
 });
 
@@ -163,4 +167,51 @@ test("a new chat starts empty, and its first message starts a new session", asyn
   const last = calls().at(-1);
   assert.equal(last.session, null);
   assert.match(last.prompt, /You are the assistant built into Hourglass/);
+});
+
+test("common requests are answered at once, without a model, and the model hears about them", async () => {
+  const before = calls().length;
+  const r = await call("POST", "/api/assistant/message", { text: "set a 25 minute timer" });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.quick, true);
+  const chat = (await call("GET", "/api/assistant")).body;
+  assert.equal(chat.busy, false);
+  const reply = chat.messages.at(-1);
+  assert.equal(reply.quick, true);
+  assert.match(reply.text, /Timer started for 25 minutes/);
+  assert.deepEqual(reply.tools.map((t) => t.label), ["Started a timer"]);
+  assert.equal(calls().length, before, "no opencode run");
+  const timers = await call("POST", "/api/actions/list_timers", {});
+  assert.ok(timers.body.some((t) => t.duration_s === 1500));
+  // The next model run is told what the app did on its own.
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Note it down" })).status, 202);
+  await waitIdle();
+  assert.match(calls().at(-1).prompt, /Earlier in this chat the app answered these itself:\nUser: set a 25 minute timer/);
+});
+
+test("attachments: uploaded to the Drive's Assistant folder, staged for the model, pictures on a model that sees", async () => {
+  const folder = await call("GET", "/api/assistant/folder");
+  assert.equal(folder.body.name, "Assistant");
+  // The same folder every time.
+  assert.equal((await call("GET", "/api/assistant/folder")).body.folder_id, folder.body.folder_id);
+  const png = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000", "hex");
+  const up = await fetch(`${base}/api/files/upload?name=${encodeURIComponent("receipt.png")}&folder=${folder.body.folder_id}`, {
+    method: "POST", headers: { authorization: `Bearer ${TOKEN}` }, body: png,
+  });
+  const file = await up.json();
+  assert.equal(up.status, 201, JSON.stringify(file));
+  assert.equal((await call("POST", "/api/assistant/message", { text: "What is this?", files: [file.id, "not-a-file"] })).status, 202);
+  const chat = await waitIdle();
+  const mine = chat.messages.at(-2);
+  assert.deepEqual(mine.files.map((f) => f.name), ["receipt.png"]);
+  const last = calls().at(-1);
+  assert.equal(last.model, "fake/vision");
+  const f = last.args.indexOf("-f");
+  assert.ok(f > 0, "picture attached with -f");
+  assert.match(last.args[f + 1], /^uploads\/[0-9a-f]{8}-receipt\.png$/);
+  assert.deepEqual(readFileSync(join(accountDir(), "work", last.args[f + 1])), png);
+  assert.ok(last.prompt.includes(`receipt.png (image/png, file ${file.id})`), last.prompt);
+  // A file alone, with no words, is still a message.
+  assert.equal((await call("POST", "/api/assistant/message", { files: [file.id] })).status, 202);
+  await waitIdle();
 });

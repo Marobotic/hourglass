@@ -24,6 +24,7 @@ import { Service } from "../core/node/service.js";
 import { createHandler, openApi, VERSION } from "./app.js";
 import { makeClip } from "./sounds.js";
 import { createAssistant } from "./assistant.js";
+import { createShares } from "./share.js";
 
 const dataDir = resolve(process.env.HOURGLASS_DATA || join(import.meta.dirname, "data"));
 const port = Number(process.env.HOURGLASS_PORT || 8930);
@@ -109,7 +110,9 @@ function tenant(email) {
   // The assistant's own key, so its MCP calls work straight after a restart.
   const ak = existsSync(join(dir, "assistant_key")) ? readFileSync(join(dir, "assistant_key"), "utf8").trim() : "";
   if (ak) { t.assistantKey = ak; aiKeys.set(ak, key || owner); }
-  t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL, extra: async (req, res, url, path) => (await driveRoutes(t, req, res, url, path)) || ringtoneRoutes(t, req, res, url, path) });
+  t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL,
+    extra: async (req, res, url, path) => (await driveRoutes(t, req, res, url, path)) || (await shares.routes(t, req, res, url, path)) || ringtoneRoutes(t, req, res, url, path) });
+  shares.load(t);
   tenants.set(key, t);
   return t;
 }
@@ -118,6 +121,18 @@ const assistant = createAssistant({
   rootDir: resolve(import.meta.dirname, ".."),
   publicUrl: process.env.HOURGLASS_URL,
   registerKey: (key, t) => aiKeys.set(key, t.email),
+  // Attachments are Drive files: their bytes (drivePath is defined further down).
+  filePath: (t, id) => drivePath(t, id),
+});
+
+// Drive links (marobotic.dev/hourglass/drive/<token>). The drive helpers below are
+// reached through arrows: they are defined further down.
+const shares = createShares({
+  publicUrl: process.env.HOURGLASS_URL,
+  drivePath: (t, id) => drivePath(t, id),
+  thumbnail: (t, row) => thumbnail(t, row),
+  canThumb: (f) => canThumb(f),
+  thumbMaxImage: 40 * 1024 * 1024,
 });
 
 // Open every account once so iCal keys resolve.
@@ -468,6 +483,8 @@ createServer(async (req, res) => {
       if (!t) return send(res, 403, { error: "bad key" });
       return t.handler(req, res);
     }
+    // A shared Drive link: no sign-in.
+    if (path.startsWith("/drive/") && shares.publicRoute(req, res, path, url)) return;
     if (/^\/auth\/(login|register|forgot|reset)$/.test(path) && req.method === "POST") return await proxyAuth(req, res, path);
     // The page a password-reset email links to (marobotic.dev/hourglass/reset#<token>).
     if (path === "/reset" && req.method === "GET") {

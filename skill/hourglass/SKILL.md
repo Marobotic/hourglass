@@ -21,12 +21,18 @@ right notes at the right moment. During a lecture, its notes are what matter.
 - **Note**: Markdown, in a course, stamped with `session_date`, the date of
   the lecture it was written for. Pinned notes show in every session. The
   server keeps older text as versions (`note_versions`, `restore_note_version`).
-- **Drive**: the user's files on the server, in folders (`list_drive`,
-  `add_folder`, `remove_folder`). A note shows a Drive picture with
-  `![name](hgfile:<file id>)` and a file with `[name](hgfile:<file id>)` on a
-  line of its own. Notes are Markdown: `**bold**`, `*italic*`,
-  `<u>underline</u>`, `- bullets`, `1. numbered`, and to-dos as
-  `- [ ] item` (ticked: `- [x] item`), which the apps show as boxes to tick.
+- **Drive**: the user's files on the server, in folders that nest
+  (`list_drive`, `add_folder`, `move_folder`, `move_file`, `remove_folder`).
+  A note shows a Drive picture with `![name](hgfile:<file id>)` and a file
+  with `[name](hgfile:<file id>)` on a line of its own.
+- **Note text**: Markdown, one line per line (a line break is a line break).
+  `**bold**`, `*italic*`, `~~strike~~`, `<u>underline</u>`, `# heading`
+  (1-3 #), `- bullets`, `1. numbered`, to-dos as `- [ ] item` (ticked:
+  `- [x] item`), and fonts and sizes as
+  `<span style="font-family: Lora; font-size: 20px">text</span>` (fonts:
+  Inter (default), Lora, JetBrains Mono, Caveat, Playfair Display; default
+  size 15px). The apps edit notes like a word processor and write this back.
+  When you rewrite a note, keep every span and tag the user had.
 - **Mark**: one day of a course marked `attended`, `absent` or `off` (no class
   that day; it is left out of Now).
 - **Alarm**: at a time (daily, on weekdays, or on one date), or N minutes
@@ -59,7 +65,9 @@ event's own zone when you change it.
    user wants the whole recurring event gone.
 6. **Confirm before destroying**: ask before `remove_event` series,
    `remove_course` or `delete_note`.
-7. **Answering from notes**: read with `get_notes` (full bodies) or
+7. **Finding something by name** (a person, a birthday, a file): `search`
+   looks in the calendar first, then notes, Drive and alarms, in one call.
+8. **Answering from notes**: read with `get_notes` (full bodies) or
    `search_notes` (snippets), then answer in your own words and say which
    note and session the answer came from.
 
@@ -80,6 +88,8 @@ event's own zone when you change it.
 | "I skipped Typography today" / "No class Saturday" | `mark_session {course:"Typography", status:"absent"}` / `mark_session {course, date, status:"off"}` |
 | "How many Printmaking classes have I missed?" | `get_attendance {course:"Printmaking"}` |
 | "What's in my Drive?" / "Make a folder for Typography" | `list_drive` / `add_folder {name:"Typography"}` |
+| "Put the Labs folder inside Typography" | `list_drive` for both ids, then `move_folder {folder_id, parent_id}` |
+| "When is Sara's birthday?" | `search {query:"sara birthday"}` (the calendar comes first) |
 | "Undo the change to my note" | `note_versions {note_id}`, then `restore_note_version {version_id}` |
 
 ## Connecting an AI

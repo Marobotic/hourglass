@@ -7,6 +7,7 @@ import { markMap, markOf, resolveNow, sessionNotes } from "../now.js";
 import { finishedTimer, nextAlarm } from "../alarms.js";
 import { BUILTIN_RINGTONES, MARKS, PALETTE, markId, parseWeekday } from "../model.js";
 import { numberedTitle } from "./store.js";
+import { plainText } from "../noteformat.js";
 
 export class Service {
   constructor(store, { clock = () => Date.now() } = {}) {
@@ -269,6 +270,20 @@ export class Service {
     return this.store.upsert("files", patch);
   }
 
+  // Put a folder inside another (parent_id null = the top). A folder never
+  // goes into itself or into one of its own subfolders.
+  moveFolder({ folder_id, parent_id = null }) {
+    const f = this.row("folders", folder_id);
+    const target = parent_id || null;
+    if (target) {
+      const all = this.store.all("folders");
+      for (let p = this.row("folders", target); p; p = p.parent_id ? all.find((x) => x.id === p.parent_id) : null) {
+        if (p.id === f.id) throw new Error(`"${f.name}" cannot go inside itself or one of its own folders`);
+      }
+    }
+    return this.store.upsert("folders", { id: f.id, parent_id: target });
+  }
+
   addFolder({ name, parent_id = null }) {
     if (parent_id) this.row("folders", parent_id);
     return this.store.upsert("folders", { name: String(name ?? "").trim(), parent_id });
@@ -403,18 +418,37 @@ export class Service {
     return this.store
       .all("notes")
       .map((n) => {
-        const hay = `${n.title}\n${n.body}`.toLowerCase();
+        // Formatting (fonts, sizes, stars) is not text: search the words only.
+        const text = plainText(n.body);
+        const hay = `${n.title}\n${text}`.toLowerCase();
         const score = words.reduce((s, w) => s + (hay.includes(w) ? 1 : 0), 0);
-        return { n, score };
+        return { n, text, score };
       })
       .filter((x) => x.score === words.length)
       .sort((a, b) => b.n.updated_at - a.n.updated_at)
       .slice(0, limit)
-      .map(({ n }) => {
-        const i = n.body.toLowerCase().indexOf(words[0]);
-        const snippet = i >= 0 ? n.body.slice(Math.max(0, i - 60), i + 120) : n.body.slice(0, 160);
+      .map(({ n, text }) => {
+        const i = text.toLowerCase().indexOf(words[0]);
+        const snippet = i >= 0 ? text.slice(Math.max(0, i - 60), i + 120) : text.slice(0, 160);
         return { ...this.describeNote(n), body: undefined, snippet };
       });
+  }
+
+  // One search over everything, calendar first: birthdays and appointments are
+  // events, so "when is X's birthday" is answered before any note is read.
+  // Then notes, Drive files and folders, and alarms.
+  search({ query, limit = 10 }) {
+    const norm = (s) => String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const words = norm(query).split(" ").filter(Boolean).map((w) => (w.length > 3 ? w.replace(/s$/, "") : w));
+    if (!words.length) throw new Error("query is required");
+    const hit = (s) => { const h = norm(s); return words.every((w) => h.includes(w)); };
+    const events = this.findEvents({ query, limit }).events;
+    const notes = this.searchNotes({ query: words.join(" "), limit });
+    const files = this.store.all("files").filter((f) => hit(f.name)).slice(0, limit)
+      .map((f) => ({ file_id: f.id, name: f.name, folder_id: f.folder_id, course_id: f.course_id, note_id: f.note_id, size: f.size, mime: f.mime }));
+    const folders = this.store.all("folders").filter((f) => hit(f.name)).slice(0, limit).map((f) => ({ folder_id: f.id, name: f.name, parent_id: f.parent_id }));
+    const alarms = this.listAlarms().filter((a) => hit(a.label)).slice(0, limit);
+    return { query, events, notes, files, folders, alarms };
   }
 
   // --- alarms ----------------------------------------------------------------

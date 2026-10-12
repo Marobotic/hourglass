@@ -16,7 +16,8 @@ const repeat = z
   .describe("Omit for a one-off event");
 
 export const INSTRUCTIONS = `Hourglass is the user's calendar, notes, alarms and timers.
-Model: courses are folders (e.g. a university module). Events are one-off or recurring blocks of time, usually lectures of a course. Notes are Markdown, live in a course, and are stamped with a session_date: the date of the lecture they were written for.
+Model: courses are folders (e.g. a university module). Events are one-off or recurring blocks of time, usually lectures of a course. Notes are Markdown (one line per line; fonts and sizes as <span style="font-family: Lora; font-size: 20px">, underline as <u>: keep those when rewriting a note), live in a course, and are stamped with a session_date: the date of the lecture they were written for.
+To find anything by name (a person, a birthday, a file) use search: it looks in the calendar first, then notes, Drive and alarms.
 Start with whats_now for anything about "now", "today" or "next"; get_schedule for a week; find_events for a named event at any date ("when is X's birthday", "when is my dentist"). Events are never in notes: do not search notes for them. Times in results are shown in the app's zone (now.tz). Each event also has its own zone (event_tz): its start/end are fixed in that zone, so pass times in the event's zone when you change them (e.g. a Cairo lecture at 08:00 stays "08:00" with tz Africa/Cairo).
 To adjust the schedule: get_schedule or list_courses to find event ids, then update_event / add_event / remove_event. Mark days with mark_session (attended, absent, off).
 Anything that comes back every year (a birthday, an anniversary) is ONE event with repeat {freq: "yearly"} and no until, starting on the next (or the original) date; never add one event per year. The same goes for monthly things (rent, a bill): one event with repeat {freq: "monthly"}.
@@ -39,6 +40,14 @@ export const TOOLS = [
     input: { from: date.optional(), to: date.optional() },
     readOnly: true,
     run: (s, a) => s.schedule(a),
+  },
+  {
+    name: "search",
+    title: "Search everything",
+    description: "One search over the calendar (events: birthdays, appointments, lectures - with their next date), notes (with a snippet), Drive files and folders, and alarms. Use this first when the user names a person or thing and you don't know where it lives.",
+    input: { query: z.string().describe('A name or words, e.g. "sara birthday", "dentist", "lab report"') },
+    readOnly: true,
+    run: (s, a) => s.search(a),
   },
   {
     name: "find_events",
@@ -233,6 +242,13 @@ export const TOOLS = [
     description: "Put a Drive file in a course's folder (course: name or id; null takes it out) or in a folder (folder_id; null = the top).",
     input: { file_id: z.string(), course: z.string().nullable().optional(), folder_id: z.string().nullable().optional() },
     run: (s, a) => s.moveFile(a),
+  },
+  {
+    name: "move_folder",
+    title: "Move Drive folder",
+    description: "Put a Drive folder inside another folder (parent_id), or at the top (parent_id null). A folder can't go inside itself.",
+    input: { folder_id: z.string(), parent_id: z.string().nullable().optional() },
+    run: (s, a) => s.moveFolder(a),
   },
   {
     name: "add_folder",
