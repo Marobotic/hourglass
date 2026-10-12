@@ -63,7 +63,9 @@ Item {
                 spacing: 18
 
                 Text { text: "Attendance"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
-                RowLayout {
+                // The key wraps onto more lines in a narrow window.
+                Flow {
+                    Layout.fillWidth: true
                     spacing: 18
                     component Key: RowLayout {
                         property string box
@@ -117,6 +119,8 @@ Item {
                             }
                             Text {
                                 text: "✓ " + card.yes + " attended   ✗ " + card.no + " absent   – " + card.off + " off" + (card.open ? "   · " + card.open + " not marked" : "") + "   of " + card.past + " so far, " + (card.list.length - card.past) + " to come"
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
                                 color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
                             }
                             Flow {

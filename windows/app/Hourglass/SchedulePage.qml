@@ -60,10 +60,15 @@ Item {
         anchors { fill: parent; margins: 32; bottomMargin: 16 }
         spacing: 16
 
-        RowLayout {
+        // The title, then the buttons: beside it when there is room, under it in a
+        // narrow window (so nothing is pushed off the right edge).
+        GridLayout {
             Layout.fillWidth: true
-            spacing: 8
+            columns: page.width < 800 ? 1 : 3
+            columnSpacing: 8
+            rowSpacing: 12
             ColumnLayout {
+                Layout.fillWidth: true
                 spacing: 2
                 Text {
                     text: page.mode === "week" ? Util.shortDate(page.ws) + " – " + Util.shortDate(Util.addDays(page.ws, 6)) : ""
@@ -74,15 +79,19 @@ Item {
                     color: Theme.fg; font.family: Theme.mono; font.pixelSize: 26; font.weight: Font.Bold
                 }
             }
-            Item { Layout.fillWidth: true }
-            Btn { text: "Week"; kind: "subtle"; active: page.mode === "week"; onClicked: page.mode = "week" }
-            Btn { text: "Month"; kind: "subtle"; active: page.mode === "month"; onClicked: page.mode = "month" }
-            Item { width: 12 }
-            Btn { icon: "left"; onClicked: page.shift(-1) }
-            Btn { text: "Today"; onClicked: page.anchor = page.today }
-            Btn { icon: "right"; onClicked: page.shift(1) }
-            Item { width: 12 }
-            Btn { kind: "primary"; icon: "plus"; text: "Event"; onClicked: page.app.editEvent(null) }
+            Item { visible: page.width >= 800; Layout.fillWidth: true }
+            RowLayout {
+                Layout.fillWidth: false
+                spacing: 8
+                Btn { text: "Week"; kind: "subtle"; active: page.mode === "week"; onClicked: page.mode = "week" }
+                Btn { text: "Month"; kind: "subtle"; active: page.mode === "month"; onClicked: page.mode = "month" }
+                Item { width: 12 }
+                Btn { icon: "left"; onClicked: page.shift(-1) }
+                Btn { text: "Today"; onClicked: page.anchor = page.today }
+                Btn { icon: "right"; onClicked: page.shift(1) }
+                Item { width: 12 }
+                Btn { kind: "primary"; icon: "plus"; text: "Event"; onClicked: page.app.editEvent(null) }
+            }
         }
 
         // ------------------------------------------------------ week, narrow

@@ -403,12 +403,15 @@ Item {
                         text: !page.usage ? "Reading the server's storage…"
                             : page.size(page.usage.free) + " free of " + page.size(page.usage.total) + " on the server  ·  your files " + page.size(page.usage.mine)
                               + "  ·  up to " + page.size(Math.min(page.usage.usable, page.usage.max_file)) + " per upload"
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
                         color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
                     }
                 }
 
-                // Where you are
-                RowLayout {
+                // Where you are (a deep path wraps onto more lines)
+                Flow {
+                    Layout.fillWidth: true
                     spacing: 6
                     Text {
                         text: "Drive"
@@ -566,6 +569,8 @@ Item {
                 Text {
                     visible: page.drive.files.length > 0
                     text: "Click a picture or video to preview it, anything else opens in its app. Edits you save there are uploaded again by themselves."
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
                     color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
                 }
             }

@@ -43,20 +43,27 @@ Item {
         }
     }
 
-    component SettingRow: RowLayout {
+    // A setting: its name and hint, then its buttons. Beside each other when
+    // there is room; in a narrow window the buttons go under the name.
+    component SettingRow: GridLayout {
+        id: row
         property string label
         property string hint: ""
         default property alias controls: box.data
+        readonly property bool stacked: page.width < 860
         Layout.fillWidth: true
-        spacing: 16
+        columns: stacked ? 1 : 3
+        columnSpacing: 16
+        rowSpacing: 8
         ColumnLayout {
-            Layout.preferredWidth: 280
+            Layout.preferredWidth: row.stacked ? -1 : 280
+            Layout.fillWidth: row.stacked
             spacing: 2
-            Text { text: parent.parent.label; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 15 }
-            Text { visible: parent.parent.hint !== ""; text: parent.parent.hint; color: Theme.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 13 }
+            Text { text: row.label; color: Theme.fg; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 15 }
+            Text { visible: row.hint !== ""; text: row.hint; color: Theme.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 13 }
         }
         RowLayout { id: box; spacing: 6 }
-        Item { Layout.fillWidth: true }
+        Item { visible: !row.stacked; Layout.fillWidth: true }
     }
 
     ScrollView {
@@ -166,7 +173,9 @@ Item {
                     text: "Tell any AI \"use Hourglass to move my Tuesday lecture\". Add your link as a connector (MCP server) in ChatGPT, Claude, Gemini CLI or Codex. Anyone with the link can change your schedule, so keep it to yourself."
                     color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
                 }
-                RowLayout {
+                // Wraps onto more lines in a narrow window.
+                Flow {
+                    Layout.fillWidth: true
                     spacing: 8
                     Text {
                         visible: !!(page.ai && page.ai.mcp_url)
@@ -187,7 +196,7 @@ Item {
                         onClicked: page.app.confirm("Delete the AI link?", "AIs using it lose access at once. You can make a new link any time.", "Delete",
                             () => Api.request("DELETE", "/api/ai", null, (d, err) => { if (d) { page.ai = d; page.aiNote = "Link deleted."; } else page.aiNote = err || ""; }, true))
                     }
-                    Text { text: page.aiNote; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                    Text { visible: text !== ""; text: page.aiNote; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                 }
 
                 Section { Layout.fillWidth: true; text: "Account" }
