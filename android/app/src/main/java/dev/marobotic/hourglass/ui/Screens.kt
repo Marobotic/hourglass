@@ -85,7 +85,7 @@ fun NoteRow(n: JSONObject, course: JSONObject? = null, onClick: () -> Unit) {
             T(n.optString("title").ifBlank { "Untitled" }, 15, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
             if (course != null) T(course.optString("name"), 12, hex(course.optString("color")), maxLines = 1)
         }
-        val preview = n.optString("body").replace(Regex("[#>*_`\\[\\]-]"), "").replace(Regex("\\s+"), " ").trim()
+        val preview = dev.marobotic.hourglass.core.NoteFormat.preview(n.optString("body"), 400)
         if (preview.isNotEmpty()) { Spacer(Modifier.height(4.dp)); T(preview, 13, HColors.muted, maxLines = 2) }
     }
 }
@@ -176,7 +176,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             if (n.optString("title").isNotBlank()) T(n.optString("title"), 14, bold = true, maxLines = 1)
-                            if (n.optString("body").isNotBlank()) T(n.optString("body"), 13, HColors.fg.copy(alpha = 0.85f), maxLines = 4)
+                            if (n.optString("body").isNotBlank()) T(dev.marobotic.hourglass.core.NoteFormat.plainText(n.optString("body")), 13, HColors.fg.copy(alpha = 0.85f), maxLines = 4)
                             T(listOfNotNull(c?.let { it.optString("name") }, if (n.str("session_date") == today.toString()) "Today" else n.str("session_date")?.let { "Last class · " + Dates.short(java.time.LocalDate.parse(it)) }).joinToString("  ·  "), 11, tint ?: HColors.muted, bold = true, maxLines = 1)
                         }
                     }

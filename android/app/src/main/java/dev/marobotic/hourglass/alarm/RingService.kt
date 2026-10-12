@@ -66,14 +66,16 @@ class RingService : Service() {
         var ringing: Triple<String, String, String>? = null // label, kind, id
             private set
 
-        fun start(ctx: Context, label: String, kind: String, id: String) =
-            ctx.startForegroundService(Intent(ctx, RingService::class.java).putExtra("label", label).putExtra("kind", kind).putExtra("id", id))
+        // test: Settings > Test alarm, which plays even with the alarm sound off.
+        fun start(ctx: Context, label: String, kind: String, id: String, test: Boolean = false) =
+            ctx.startForegroundService(Intent(ctx, RingService::class.java).putExtra("label", label).putExtra("kind", kind).putExtra("id", id).putExtra("test", test))
         fun stop(ctx: Context) = ctx.startService(Intent(ctx, RingService::class.java).setAction(STOP))
         fun snooze(ctx: Context) = ctx.startService(Intent(ctx, RingService::class.java).setAction(SNOOZE))
     }
 
     private var player: MediaPlayer? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var test = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -89,6 +91,7 @@ class RingService : Service() {
         val kind = intent?.getStringExtra("kind") ?: "alarm"
         val id = intent?.getStringExtra("id") ?: ""
         ringing = Triple(label, kind, id)
+        test = intent?.getBooleanExtra("test", false) == true
         Scheduler.ensureChannel(this)
         val open = PendingIntent.getActivity(this, 1, Intent(this, RingActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stopPi = PendingIntent.getService(this, 2, Intent(this, RingService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
@@ -114,7 +117,7 @@ class RingService : Service() {
     private fun ring() {
         val repo = App.repo(this)
         if (repo.vibrate) getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 400), 0))
-        if (!repo.sound) return
+        if (!repo.sound && !test) return
         player?.release()
         player = runCatching {
             MediaPlayer().apply {

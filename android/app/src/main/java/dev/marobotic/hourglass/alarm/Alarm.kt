@@ -36,6 +36,17 @@ object Scheduler {
         am.setAlarmClock(AlarmManager.AlarmClockInfo(due.at, show), op)
     }
 
+    // Settings > Test alarm: a real alarm a few seconds from now, through the
+    // same path as any alarm (AlarmManager through Doze, the full-screen ring,
+    // the ringtone), so it shows that alarms will really go off on this phone.
+    const val TEST = "dev.marobotic.hourglass.TEST_ALARM"
+    fun test(ctx: Context, inSeconds: Int = 5) {
+        val am = ctx.getSystemService(AlarmManager::class.java) ?: return
+        val op = PendingIntent.getBroadcast(ctx, REQ + 1, Intent(ctx, AlarmReceiver::class.java).setAction(TEST), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val show = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        am.setAlarmClock(AlarmManager.AlarmClockInfo(System.currentTimeMillis() + inSeconds * 1000L, show), op)
+    }
+
     fun soonest(repo: Repo, from: Long): Due? =
         Alarms.soonest(repo.store.all("courses"), repo.events(), repo.alarms(), repo.timers(), from, repo.zone)
 
@@ -52,6 +63,7 @@ object Scheduler {
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
+        if (intent.action == Scheduler.TEST) { RingService.start(ctx, "Test alarm", "alarm", "test", test = true); return }
         val repo = App.repo(ctx)
         val now = System.currentTimeMillis()
         // Everything due in the last minute rings once; the first shows full screen.

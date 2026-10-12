@@ -1,5 +1,7 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.material.icons.outlined.NotificationsActive
+
 import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
@@ -403,6 +405,16 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
             T("Add songs from Jukebox: open a song's menu and pick Set as alarm.", 12, HColors.faint)
             Row(verticalAlignment = Alignment.CenterVertically) { T("Alarm sound", 15, modifier = Modifier.weight(1f)); Toggle(repo.sound) { set("sound", it.toString()) } }
             Row(verticalAlignment = Alignment.CenterVertically) { T("Vibrate", 15, modifier = Modifier.weight(1f)); Toggle(repo.vibrate) { set("vibrate", it.toString()) } }
+            // A real alarm in 5 seconds: lock the phone to see the full-screen ring too.
+            var testing by remember { mutableStateOf(false) }
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    T("Test alarm", 15)
+                    T(if (testing) "Rings in 5 seconds. Lock the phone to check the full-screen alarm too." else "Rings like a real alarm in 5 seconds, even with the sound off.", 12, HColors.muted)
+                }
+                HButton("Test", icon = androidx.compose.material.icons.Icons.Outlined.NotificationsActive) { dev.marobotic.hourglass.alarm.Scheduler.test(ctx); testing = true }
+            }
 
             Section("Time")
             T("CLOCK", 11, HColors.muted, spacing = 0.6)

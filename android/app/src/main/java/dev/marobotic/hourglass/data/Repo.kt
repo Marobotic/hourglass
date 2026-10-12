@@ -387,6 +387,51 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     fun setFileCourse(id: String, courseId: String?) = store.upsert("files", if (courseId != null) mapOf("course_id" to courseId, "folder_id" to null) else mapOf("course_id" to null), id)
     fun setFileFolder(id: String, folderId: String?) = store.upsert("files", mapOf("folder_id" to folderId, "course_id" to null), id)
 
+    // A folder into another (null = the top). Never into itself or one of its
+    // own folders: false then, and nothing changes.
+    fun moveFolder(id: String, parentId: String?): Boolean {
+        val all = folders()
+        var p = parentId
+        while (p != null) {
+            if (p == id) return false
+            p = all.firstOrNull { it.id == p }?.str("parent_id")
+        }
+        store.upsert("folders", mapOf("parent_id" to parentId), id)
+        return true
+    }
+
+    // Drive links ("anyone with the link can view"), kept on the server. Each
+    // one: { token, url, access: view | download, file_id | folder_id, expires_at, active }.
+    fun shares(done: (List<JSONObject>?, String?) -> Unit) = scope.launch {
+        val r = runCatching {
+            val a = org.json.JSONArray(http("GET", "${BuildConfig.SERVER}/api/shares", token ?: error("Sign in first"), null))
+            (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optBoolean("active") }
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+
+    // Make a link, or change the access of the one there is (same link). days: 0 = never ends.
+    fun share(fileId: String?, folderId: String?, access: String, days: Int, done: (JSONObject?, String?) -> Unit) = scope.launch {
+        val r = runCatching {
+            val b = JSONObject().put("access", access).put("expires_days", days)
+            if (fileId != null) b.put("file_id", fileId) else b.put("folder_id", folderId)
+            syncOnce() // a folder made on this phone must be on the server first
+            JSONObject(http("POST", "${BuildConfig.SERVER}/api/shares", token ?: error("Sign in first"), b.toString()))
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+
+    fun unshare(shareToken: String, done: (String?) -> Unit) = scope.launch {
+        val err = runCatching { http("DELETE", "${BuildConfig.SERVER}/api/shares/$shareToken", token ?: error("Sign in first"), null) }.exceptionOrNull()?.message
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+
+    // Where the assistant's attachments go: the Drive's "Assistant" folder (made by the server).
+    fun assistantFolder(done: (String?, String?) -> Unit) = scope.launch {
+        val r = runCatching { JSONObject(http("GET", "${BuildConfig.SERVER}/api/assistant/folder", token ?: error("Sign in first"), null)).getString("folder_id") }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+
     // The server's disk: total, free, what this account uses.
     fun driveUsage(done: (JSONObject?) -> Unit) = scope.launch {
         val r = runCatching { JSONObject(http("GET", "${BuildConfig.SERVER}/api/drive/usage", token ?: error("Sign in first"), null)) }.getOrNull()

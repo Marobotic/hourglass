@@ -72,20 +72,20 @@ class Shots {
         val n = repo.notes().first { it.optString("title") == "Dynamic programming" }
         paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(repo, 0, Route.NoteR(n.id)) } } }
     }
-    // Opens formatted: numbers counted, to-dos with boxes.
+    // Written as it reads: numbers, to-dos with boxes, a font and a size.
     @Test fun noteChecklist() {
         val repo = demo()
-        val body = listOf("# Shopping", "1. eggs", "1. milk", "1. bread", "", "Steps:", "1. Open the kit", "2. Measure twice", "   - use the ruler", "3. Cut once", "", "## To do", "- [ ] call mom", "- [x] buy milk", "- [ ] finish **lab report**").joinToString(NL)
+        val body = listOf("# Shopping", "1. eggs", "1. milk", "1. bread", "", "Steps:", "1. Open the kit", "2. Measure twice", "   - use the ruler", "3. Cut once", "", "## To do", "- [ ] call mom", "- [x] buy milk", "- [ ] finish **lab report**", "<span style=\"font-family: Caveat; font-size: 24px\">Handwritten in Caveat</span>").joinToString(NL)
         val n = repo.addNote(null, null, null, "Lab day", body)
         paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(repo, 0, Route.NoteR(n.id)) } } }
     }
-    // An empty note opens for writing, with Save and the toolbar.
+    // An empty note opens for writing, with the toolbar.
     @Test fun noteEditing() {
         val repo = demo()
         val n = repo.addNote(null, null, null, "New note", "")
         paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(repo, 0, Route.NoteR(n.id)) } } }
     }
-    @Test fun assistant() = paparazzi.snapshot { HourglassTheme { HourglassApp(demo(), 0, Route.AssistantR) } }
+    @Test fun assistant() = paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(demo(), 0, Route.AssistantR) } } }
 }
 
 private val NL = 10.toChar().toString()

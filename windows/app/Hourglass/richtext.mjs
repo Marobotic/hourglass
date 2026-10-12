@@ -7,7 +7,7 @@
 // on its own line, a Drive file a "📎 name" link on its own line. Code
 // (`text`) is shown in the app's own mono font, which is how it is told apart
 // from a note in the "JetBrains Mono" note font.
-import { FONTS, DEFAULT_SIZE, HEADING_SIZES, parse, serialize, kindOf, prefixOf, lineText, mergeRuns } from "./noteformat.mjs";
+import { FONTS, DEFAULT_SIZE, HEADING_SIZES, parse, serialize, kindOf, prefixOf, lineText, mergeRuns, renumber } from "./noteformat.mjs";
 
 export const CODE_FONT = "JetBrainsMono Nerd Font";
 const P = "margin-top:0px; margin-bottom:0px; line-height:125%; white-space:pre-wrap;";
@@ -42,7 +42,8 @@ function runHtml(r) {
 export function toHtml(md, ctx = {}) {
   const names = {};
   const width = ctx.imageWidth || 480;
-  const html = parse(md).map((l) => {
+  // Numbered lists show counted 1, 2, 3 (older notes may say 1, 1, 1).
+  const html = renumber(parse(md)).map((l) => {
     if (l.kind === "image") {
       if (l.file.id) names[l.file.id] = l.file.name;
       const src = l.file.id ? (ctx.fileUrl ? ctx.fileUrl(l.file.id) : `hgfile:${l.file.id}`) : l.file.url;

@@ -61,7 +61,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
     val notes = remember(version, sel, query) {
         repo.notes()
             .filter { when (sel) { "all" -> true; "inbox" -> it.str("course_id") == null; else -> it.str("course_id") == sel } }
-            .filter { n -> words.isEmpty() || (n.optString("title") + "\n" + n.optString("body")).lowercase().let { h -> words.all { it in h } } }
+            .filter { n -> words.isEmpty() || (n.optString("title") + "\n" + dev.marobotic.hourglass.core.NoteFormat.plainText(n.optString("body"))).lowercase().let { h -> words.all { it in h } } }
             .sortedWith(compareByDescending<org.json.JSONObject> { it.optInt("pinned") }.thenByDescending { it.optLong("updated_at") })
     }
 
@@ -109,7 +109,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
                     if (n.optInt("pinned") == 1) Icon(Icons.Outlined.PushPin, null, tint = HColors.gold, modifier = Modifier.size(14.dp))
                 }
                 if (n.optString("body").isNotBlank()) androidx.compose.material3.Text(
-                    n.optString("body"), color = HColors.fg.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 10,
+                    dev.marobotic.hourglass.core.NoteFormat.plainText(n.optString("body")), color = HColors.fg.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 10,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontFamily = FontFamily.Default,
                 )
                 val foot = listOfNotNull(if (sel == "all") c?.let { it.optString("name") } else null, n.str("session_date")?.let { Dates.short(it) })
