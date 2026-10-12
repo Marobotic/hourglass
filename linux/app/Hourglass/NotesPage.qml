@@ -161,11 +161,15 @@ Item {
                                         wrapMode: Text.Wrap; maximumLineCount: 10; elide: Text.ElideRight
                                         font.family: Theme.sans; font.pixelSize: 14; lineHeight: 1.2
                                     }
+                                    // Course and day: a long course name shortens with "…" so the
+                                    // row never widens the card; the day always shows.
                                     RowLayout {
+                                        Layout.fillWidth: true
                                         visible: (!!card.c && page.sel === "all") || !!card.modelData.session_date
                                         spacing: 8
-                                        Text { visible: !!card.c && page.sel === "all"; text: card.c ? card.c.name : ""; color: card.c ? card.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold }
+                                        Text { Layout.fillWidth: true; Layout.maximumWidth: implicitWidth; elide: Text.ElideRight; visible: !!card.c && page.sel === "all"; text: card.c ? card.c.name : ""; color: card.c ? card.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold }
                                         Text { visible: !!card.modelData.session_date; text: card.modelData.session_date ? Util.shortDate(card.modelData.session_date) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                                        Item { Layout.fillWidth: true }
                                     }
                                 }
                                 MouseArea { id: cardMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.app.openNote(card.modelData) }

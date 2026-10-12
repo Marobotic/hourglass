@@ -238,6 +238,8 @@ Item {
         property var item: null // being dragged
         function begin() { item = pending; Drag.active = true; }
         function end() { if (Drag.active) Drag.drop(); Drag.active = false; item = null; }
+        // The press was taken away (the window lost focus mid-drag): nothing moves.
+        function cancel() { if (Drag.active) Drag.cancel(); Drag.active = false; item = null; pending = null; }
         width: 1; height: 1
         z: 30
         Drag.keys: ["hg-drive"]
@@ -517,6 +519,7 @@ Item {
                             property bool dragging: drag.active
                             onPressed: e => { const p = im.mapToItem(page, e.x, e.y); ghost.x = p.x; ghost.y = p.y; ghost.pending = item.modelData; }
                             onDraggingChanged: dragging ? ghost.begin() : ghost.end()
+                            onCanceled: ghost.cancel()
                             onClicked: e => {
                                 if (e.button === Qt.RightButton) { page.openMenu(item.modelData, im, e.x, e.y); return; }
                                 if (item.isFolder) page.go(item.f.id, "");
