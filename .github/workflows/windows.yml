@@ -95,14 +95,17 @@ jobs:
         with:
           name: Hourglass-setup
           path: dist/Hourglass-*-setup.exe
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
           name: Hourglass-windows
           path: dist/Hourglass
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-screenshots
           path: shot-*.png
+          retention-days: 14
