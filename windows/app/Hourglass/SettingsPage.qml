@@ -15,6 +15,7 @@ Item {
     property bool busy: false
     property var ai: null // { key, mcp_url } once made
     property string aiNote: ""
+    property string testNote: ""
     function aiLoad(make) {
         Api.request(make ? "POST" : "GET", "/api/ai", make ? {} : null, (d, err) => { if (d) page.ai = d; page.aiNote = err || ""; }, true);
     }
@@ -144,6 +145,18 @@ Item {
                     hint: "Off: alarms still show a notification."
                     Btn { text: "On"; kind: "subtle"; active: page.s.sound !== false; onClicked: page.set({ sound: true }) }
                     Btn { text: "Off"; kind: "subtle"; active: page.s.sound === false; onClicked: page.set({ sound: false }) }
+                }
+                SettingRow {
+                    label: "Test alarm"
+                    hint: page.testNote || "Rings right now like a real alarm: the notification, your ringtone and the alarm screen. It plays even with the sound off."
+                    Btn {
+                        icon: "volume"; text: "Test alarm"
+                        onClicked: Api.request("POST", "/api/ring/test", {}, (d, err) => {
+                            // An older background service has no test: it needs a restart.
+                            page.testNote = d ? "" : err === "not found" ? "Restart Hourglass to test alarms: its background service is older than this window." : err;
+                            page.app.pollState();
+                        }, true)
+                    }
                 }
 
                 Section { Layout.fillWidth: true; text: "Use with AI" }

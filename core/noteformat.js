@@ -32,7 +32,14 @@ export const CHECKED = "☑";
 
 const STYLE_KEYS = ["b", "i", "u", "s", "code", "font", "size", "href"];
 const isSpace = (c) => c === undefined || c === "" || /\s/.test(c);
-const isWord = (c) => c !== undefined && c !== "" && /[\p{L}\p{N}_]/u.test(c);
+// Letters, digits and _ (Qt's JavaScript has no \p{L}: anything past Latin-1 that isn't
+// space or punctuation counts as a letter).
+const isWord = (c) => {
+  if (c === undefined || c === "") return false;
+  if (/[A-Za-z0-9_]/.test(c)) return true;
+  const n = c.charCodeAt(0);
+  return n >= 0xc0 && !/\s/.test(c) && !(n >= 0x2000 && n <= 0x206f) && !(n >= 0x3000 && n <= 0x303f);
+};
 
 export function sameStyle(a, b) {
   for (const k of STYLE_KEYS) if ((a[k] || null) !== (b[k] || null)) return false;
@@ -83,10 +90,10 @@ export function parseInline(src) {
   let text = "";
   const push = (extra = {}) => {
     if (!text && !extra.text) return;
-    runs.push({ ...st, ...extra, text: extra.text ?? text });
+    runs.push(Object.assign({}, st, extra, { text: extra.text ?? text }));
     if (!extra.text) text = "";
   };
-  const emit = (t, extra) => { push(); push({ ...extra, text: t }); };
+  const emit = (t, extra) => { push(); push(Object.assign({}, extra, { text: t })); };
   let k = 0;
   while (k < src.length) {
     const c = src[k];
@@ -168,10 +175,11 @@ export function parseInline(src) {
     k++;
   }
   push();
-  return mergeRuns(runs.map((r) => ({ ...r, font: r.font && r.font !== FONTS[0] ? r.font : null, size: r.size && r.size !== DEFAULT_SIZE ? r.size : null })));
+  return mergeRuns(runs.map((r) => Object.assign({}, r, { font: r.font && r.font !== FONTS[0] ? r.font : null, size: r.size && r.size !== DEFAULT_SIZE ? r.size : null })));
 }
 
-const FILE_RE = /^\s*(!?)\[([^\]]*)\]\(([^)\s]+)\)\s*$/;
+const indentOf = (ws) => Math.floor(ws.replace(/\t/g, "    ").length / 2);
+const FILE_RE =/^\s*(!?)\[([^\]]*)\]\(([^)\s]+)\)\s*$/;
 
 /** A whole note into lines. */
 export function parse(md) {
@@ -199,7 +207,6 @@ export function parse(md) {
   return lines;
 }
 
-const indentOf = (ws) => Math.floor(ws.replace(/\t/g, "    ").length / 2);
 
 // --- writing -------------------------------------------------------------------
 
@@ -207,7 +214,7 @@ function escapeText(t, atLineStart) {
   let out = t
     .replace(/\\/g, "\\\\")
     .replace(/[*`]/g, (c) => "\\" + c)
-    .replace(/~(?=~)|(?<=~)~/g, "\\~")
+    .replace(/~~+/g, (m) => m.replace(/~/g, "\\~"))
     .replace(/<(?=[a-zA-Z/!])/g, "\\<")
     .replace(/\[/g, "\\[")
     .replace(/_/g, (c, at, s) => (isWord(s[at - 1]) && isWord(s[at + 1]) ? c : "\\_"));
@@ -222,10 +229,10 @@ function splitEdges(runs) {
   for (const r of runs) {
     if (!(r.b || r.i || r.s) || r.code) { out.push(r); continue; }
     const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(r.text);
-    const plain = { ...r, b: false, i: false, s: false };
-    if (m[1]) out.push({ ...plain, text: m[1] });
-    if (m[2]) out.push({ ...r, text: m[2] });
-    if (m[3]) out.push({ ...plain, text: m[3] });
+    const plain = Object.assign({}, r, { b: false, i: false, s: false });
+    if (m[1]) out.push(Object.assign({}, plain, { text: m[1] }));
+    if (m[2]) out.push(Object.assign({}, r, { text: m[2] }));
+    if (m[3]) out.push(Object.assign({}, plain, { text: m[3] }));
   }
   return out;
 }
@@ -283,6 +290,8 @@ export function serialize(lines) {
   }).join("\n");
 }
 
+export const lineText = (l) => (l.runs || []).map((r) => r.text).join("");
+
 /** Numbered lists counted again from 1, per run of numbered lines at the same indent. */
 export function renumber(lines) {
   const counters = [];
@@ -299,7 +308,6 @@ export function renumber(lines) {
   return lines;
 }
 
-export const lineText = (l) => (l.runs || []).map((r) => r.text).join("");
 
 /** The words of a note without any markup: previews, search, notifications. */
 export function plainText(md) {

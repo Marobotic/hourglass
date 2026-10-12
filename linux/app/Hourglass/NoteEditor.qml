@@ -2,31 +2,47 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "noteformat.mjs" as NF
 
-// A note, two ways: formatted to read (with boxes to tick on to-dos), or as
-// Markdown to edit. Save shows the formatted note; Edit goes back. While
-// editing it also autosaves 600 ms after the last keystroke.
+// A note, written like a word processor: what you see is the note. Select
+// text and use the toolbar (font, size, bold, italic, underline, strike,
+// heading, lists, to-dos), tick to-dos with a click, drop pictures in. It
+// saves by itself 600 ms after the last change, and when you leave.
 Rectangle {
     id: ed
     property var app
     property var note: null
-    property bool preview: false // true: the formatted note; false: editing
     property string status: ""
     property string loadedId: ""
+    property string savedBody: ""
+    property var info: null // { file_base, key } once the service says
     color: Theme.bg
 
     readonly property var course: note && note.course_id ? app.courseById(note.course_id) : null
 
+    // The note fonts, from the app's own files.
+    Repeater {
+        model: ["Inter", "Lora", "JetBrainsMono", "Caveat", "PlayfairDisplay"]
+        Item {
+            id: face
+            required property string modelData
+            FontLoader { source: Qt.resolvedUrl("fonts/" + face.modelData + "-Regular.ttf") }
+            FontLoader { source: Qt.resolvedUrl("fonts/" + face.modelData + "-Bold.ttf") }
+        }
+    }
+
+    Component.onCompleted: Api.get("/api/drive/info", d => { if (d) { ed.info = d; if (ed.loadedId && !saveTimer.running) body.load(ed.savedBody); } })
+
     onNoteChanged: {
         if (!note) { flush(); loadedId = ""; return; }
         if (note.id === loadedId) return;
+        flush();
         loadedId = note.id;
         titleField.text = note.title || "";
-        body.text = note.body || "";
-        // A note with something in it opens ready to read; a new one opens to write.
-        preview = !!note.body;
+        savedBody = note.body || "";
+        body.load(savedBody);
         status = "";
-        if (!note.body) body.area.forceActiveFocus();
+        if (!note.body) body.editor.forceActiveFocus();
     }
 
     function flush() {
@@ -36,88 +52,25 @@ Rectangle {
     }
     function save() {
         if (!loadedId) return;
+        const md = body.markdown();
+        const patch = { title: titleField.text };
+        if (md !== savedBody) patch.body = md;
+        savedBody = md;
         status = "Saving…";
-        Api.put("/api/notes/" + loadedId, { title: titleField.text, body: body.text }, () => ed.status = "Saved");
+        Api.put("/api/notes/" + loadedId, patch, () => ed.status = "Saved");
     }
     readonly property bool dated: !!(note && note.session_date)
     function move(patch) {
         flush();
         Api.put("/api/notes/" + loadedId, patch, n => { if (n) { ed.app.editingNote = n; ed.status = "Saved"; } });
     }
-    function edited() { if (loadedId) { status = "Edited"; saveTimer.restart(); } }
+    function edited() { if (loadedId && !body.loading) { status = "Edited"; saveTimer.restart(); } }
 
-    // Save: numbered lists counted again, saved now, shown formatted.
-    function saveAndView() {
-        const tidy = Util.renumber(body.text);
-        if (tidy !== body.text) body.text = tidy;
-        saveTimer.stop();
-        save();
-        preview = true;
-    }
-    function startEditing() {
-        preview = false;
-        body.area.forceActiveFocus();
-    }
-    // Ticking a to-do in the formatted note rewrites its line and saves at once.
-    function toggleTask(line) {
-        const rows = body.text.split("\n");
-        const m = Util.taskRe.exec(rows[line] || "");
-        if (!m) return;
-        rows[line] = rows[line].replace(/\[([ xX])\]/, m[2] === " " ? "[x]" : "[ ]");
-        body.text = rows.join("\n");
-        saveTimer.stop();
-        save();
+    function openFile(id) {
+        Api.get("/api/files/" + id + "/local", d => { if (d) Qt.openUrlExternally(d.url); });
     }
 
-    // --- formatting: the toolbar writes Markdown around the selection ---
-    readonly property var ta: body.area
-    function wrap(pre, post) {
-        if (ed.preview) return;
-        const a = ta.selectionStart, b = ta.selectionEnd;
-        const sel = ta.text.slice(a, b);
-        if (sel.startsWith(pre) && sel.endsWith(post) && sel.length >= pre.length + post.length) {
-            ta.remove(a, b);
-            ta.insert(a, sel.slice(pre.length, sel.length - post.length));
-            ta.select(a, b - pre.length - post.length);
-        } else {
-            ta.remove(a, b);
-            ta.insert(a, pre + sel + post);
-            if (sel) ta.select(a, a + pre.length + sel.length + post.length);
-            else ta.cursorPosition = a + pre.length;
-        }
-        ta.forceActiveFocus();
-        edited();
-    }
-    // Prefix every selected line: "- ", "- [ ] ", numbers, or "## ". Again
-    // removes it. Blank lines are left alone, and numbers count on from 1.
-    function lines(kind) {
-        if (ed.preview) return;
-        const t = ta.text;
-        const a = t.lastIndexOf("\n", ta.selectionStart - 1) + 1;
-        let b = t.indexOf("\n", Math.max(ta.selectionEnd - (ta.selectionEnd > ta.selectionStart ? 1 : 0), a));
-        if (b < 0) b = t.length;
-        const rows = t.slice(a, b).split("\n");
-        const res = { ul: /^[-*] (?!\[[ xX]\] )/, todo: /^[-*] \[[ xX]\] /, ol: /^\d+\. /, h: /^#{1,6} / };
-        const re = res[kind];
-        const any = /^([-*] \[[ xX]\] |[-*] |\d+\. |#{1,6} )/;
-        const filled = rows.filter(r => r.trim() !== "");
-        const on = filled.length > 0 && filled.every(r => re.test(r));
-        let n = 0;
-        const out = rows.map(r => {
-            if (r.trim() === "") return r;
-            if (on) return r.replace(re, "");
-            const prefix = kind === "ul" ? "- " : kind === "todo" ? "- [ ] " : kind === "ol" ? (++n) + ". " : "## ";
-            return prefix + r.replace(any, "");
-        });
-        ta.remove(a, b);
-        ta.insert(a, out.join("\n"));
-        ta.cursorPosition = a + out.join("\n").length;
-        if (kind === "ol") body.renumberKeepingCursor();
-        ta.forceActiveFocus();
-        edited();
-    }
-
-    // --- attachments: uploaded to the Drive ("Note attachments"), then a line in the note ---
+    // --- attachments: uploaded to the Drive, then shown in the note where the cursor is ---
     property string uploading: ""
     function attach(urls) {
         if (!urls.length) return;
@@ -127,15 +80,8 @@ Rectangle {
             ed.uploading = left > 1 ? "Uploading " + left + " files…" : "Uploading…";
             for (const u of urls) {
                 Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, course: course || null, note: ed.loadedId }, (f, err) => {
-                    if (f) {
-                        const img = /^image\//.test(f.mime);
-                        const line = (img ? "![" + f.name + "]" : "[" + f.name + "]") + "(hgfile:" + f.id + ")";
-                        const t = ta.text, pos = ed.preview ? t.length : ta.cursorPosition;
-                        const before = pos > 0 && t[pos - 1] !== "\n" ? "\n" : "";
-                        ta.insert(pos, before + line + "\n");
-                        ed.edited();
-                    }
-                    if (--left === 0) ed.uploading = err ? "" : "";
+                    if (f) ed.insertFile(f);
+                    if (--left === 0) ed.uploading = err ? err : "";
                 }, true);
             }
         };
@@ -145,6 +91,19 @@ Rectangle {
             if (f) go(f.id);
             else Api.action("add_folder", { name: "Note attachments" }, n => { if (n) go(n.id); });
         });
+    }
+    // A picture or file goes on its own line after the cursor's line.
+    function insertFile(f) {
+        const img = /^image\//.test(f.mime);
+        const line = (img ? "![" + f.name + "]" : "[" + f.name + "]") + "(hgfile:" + f.id + ")";
+        const md = body.markdown();
+        const rows = md.split("\n");
+        const t = body.editor.getText(0, body.editor.cursorPosition);
+        let at = 0;
+        for (let i = 0; i < t.length; i++) if (t.charCodeAt(i) === 0x2029 || t.charCodeAt(i) === 0x2028) at++;
+        rows.splice(Math.min(at + 1, rows.length), 0, line);
+        body.load(rows.join("\n"));
+        edited();
     }
     FileDialog {
         id: attachDialog
@@ -158,7 +117,8 @@ Rectangle {
     DropArea {
         id: noteDrop
         anchors.fill: parent
-        z: 5
+        z: -1
+        keys: ["text/uri-list"]
         onEntered: d => { if (d.hasUrls) d.accept(Qt.CopyAction); }
         onDropped: d => { if (!d.hasUrls) return; d.accept(Qt.CopyAction); ed.attach(d.urls); }
     }
@@ -171,11 +131,10 @@ Rectangle {
         border.color: Theme.accent
         Text { anchors.centerIn: parent; text: "Drop to attach to this note"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 20; font.weight: Font.Bold }
     }
-    Shortcut { sequences: ["Ctrl+B"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("**", "**") }
-    Shortcut { sequences: ["Ctrl+I"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("*", "*") }
-    Shortcut { sequences: ["Ctrl+U"]; enabled: ed.visible && !ed.preview; onActivated: ed.wrap("<u>", "</u>") }
-    Shortcut { sequences: ["Ctrl+S"]; enabled: ed.visible && !ed.preview; onActivated: ed.saveAndView() }
-    Shortcut { sequences: ["Ctrl+E"]; enabled: ed.visible && ed.preview; onActivated: ed.startEditing() }
+    Shortcut { sequences: ["Ctrl+B"]; enabled: ed.visible; onActivated: body.toggle("b") }
+    Shortcut { sequences: ["Ctrl+I"]; enabled: ed.visible; onActivated: body.toggle("i") }
+    Shortcut { sequences: ["Ctrl+U"]; enabled: ed.visible; onActivated: body.toggle("u") }
+    Shortcut { sequences: ["Ctrl+S"]; enabled: ed.visible; onActivated: { saveTimer.stop(); ed.save(); } }
 
     // Older text of this note, newest first; click one to put it back.
     Modal {
@@ -203,16 +162,17 @@ Rectangle {
                         color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12
                     }
                     Text { Layout.fillWidth: true; text: vr.modelData.title || "Untitled"; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.Bold }
-                    Text { Layout.fillWidth: true; text: (vr.modelData.body || "(empty)").replace(/\s+/g, " "); color: Theme.fg; opacity: 0.8; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight; font.family: Theme.sans; font.pixelSize: 13 }
+                    Text { Layout.fillWidth: true; text: Util.preview(vr.modelData.body) || "(empty)"; color: Theme.fg; opacity: 0.8; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight; font.family: Theme.sans; font.pixelSize: 13 }
                 }
                 MouseArea {
                     id: vrMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: Api.action("restore_note_version", { version_id: vr.modelData.version_id }, n => {
                         if (!n) return;
                         versionsPop.close();
-                        titleField.text = n.title || "";
-                        body.text = n.body || "";
                         saveTimer.stop();
+                        titleField.text = n.title || "";
+                        ed.savedBody = n.body || "";
+                        body.load(ed.savedBody);
                         ed.app.editingNote = n;
                         ed.status = "Restored";
                     })
@@ -223,33 +183,68 @@ Rectangle {
     }
     Timer { id: saveTimer; interval: 600; onTriggered: ed.save() }
 
+    // The toolbar's font and size lists.
+    component ListPick: Rectangle {
+        id: lp
+        property var options: [] // [{ label, value, family? }]
+        property var value: null
+        property int boxWidth: 150
+        signal picked(var value)
+        readonly property var current: options.find(o => o.value === value) || null
+        implicitHeight: 28
+        implicitWidth: boxWidth
+        color: lpMouse.containsMouse ? Theme.surface2 : "transparent"
+        border.width: 1
+        border.color: lpPop.visible ? Theme.fg : Theme.border
+        RowLayout {
+            anchors { fill: parent; leftMargin: 9; rightMargin: 8 }
+            spacing: 6
+            Text { Layout.fillWidth: true; text: lp.current ? lp.current.label : String(lp.value); color: Theme.fg; elide: Text.ElideRight; font.family: lp.current && lp.current.family ? lp.current.family : Theme.mono; font.pixelSize: 13 }
+            Icon { name: "down"; size: 10; color: Theme.muted }
+        }
+        MouseArea { id: lpMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: lpPop.open() }
+        Popup {
+            id: lpPop
+            y: lp.height + 4
+            width: Math.max(lp.width, 190)
+            padding: 4
+            height: Math.min(lpList.contentHeight + 8, 340)
+            background: Rectangle { color: Theme.surface; border.color: Theme.border }
+            ListView {
+                id: lpList
+                anchors.fill: parent
+                clip: true
+                model: lp.options
+                delegate: Rectangle {
+                    required property var modelData
+                    width: lpList.width
+                    height: 34
+                    color: lpRow.containsMouse || modelData.value === lp.value ? Theme.surface2 : "transparent"
+                    Text { anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter } text: modelData.label; color: Theme.fg; font.family: modelData.family || Theme.mono; font.pixelSize: 16 }
+                    MouseArea {
+                        id: lpRow; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: { lpPop.close(); lp.picked(modelData.value); }
+                    }
+                }
+            }
+        }
+    }
+
     ColumnLayout {
         anchors { fill: parent; margins: 28; topMargin: 22 }
-        spacing: 14
+        spacing: 12
 
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
             Btn { icon: "back"; text: "Back"; kind: "subtle"; onClicked: { ed.flush(); ed.app.editingNote = null; } }
             Item { Layout.fillWidth: true }
-            Text { text: ed.status; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
+            Text { text: ed.uploading || ed.status; color: ed.uploading ? Theme.accent : Theme.faint; font.family: Theme.mono; font.pixelSize: 13 }
             Btn {
                 icon: "pin"; compact: true; kind: "subtle"
                 active: !!(ed.note && ed.note.pinned)
                 tip: "Pin to every session"
                 onClicked: Api.put("/api/notes/" + ed.loadedId, { pinned: !ed.note.pinned }, n => { if (n) ed.app.editingNote = n; })
-            }
-            Btn {
-                visible: ed.preview
-                icon: "edit"; text: "Edit"; compact: true
-                tip: "Edit this note (Ctrl+E, or double-click it)"
-                onClicked: ed.startEditing()
-            }
-            Btn {
-                visible: !ed.preview
-                icon: "check"; text: "Save"; compact: true; kind: "primary"
-                tip: "Save and show it formatted (Ctrl+S)"
-                onClicked: ed.saveAndView()
             }
             Btn {
                 icon: "time"; compact: true; kind: "subtle"
@@ -291,7 +286,7 @@ Rectangle {
                 text: ed.dated ? Util.longDate(ed.note.session_date) : "Not tied to a day"
                 color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14
             }
-            Btn { compact: true; kind: "subtle"; text: ed.dated ? "Clear date" : "Today"; onClicked: ed.move({ session_date: ed.dated ? null : Util.dayOf(Date.now()) }) }
+            Btn { compact: true; kind: "subtle"; text: ed.dated ? "Clear date" : "Today"; onClicked: ed.move({ session_date: ed.dated ? null : Util.dayOf((ed.app && ed.app.clock) || Date.now()) }) }
         }
 
         TextField {
@@ -306,63 +301,58 @@ Rectangle {
             background: null
             leftPadding: 0
             onTextEdited: ed.edited()
-            Keys.onReturnPressed: body.area.forceActiveFocus()
-        }
-        // formatting toolbar, while editing
-        RowLayout {
-            Layout.fillWidth: true
-            visible: !ed.preview
-            spacing: 4
-            component Tool: Btn { compact: true; kind: "subtle" }
-            Tool { icon: "bold"; tip: "Bold (Ctrl+B)"; onClicked: ed.wrap("**", "**") }
-            Tool { icon: "italic"; tip: "Italic (Ctrl+I)"; onClicked: ed.wrap("*", "*") }
-            Tool { icon: "underline"; tip: "Underline (Ctrl+U)"; onClicked: ed.wrap("<u>", "</u>") }
-            Tool { icon: "strike"; tip: "Strike through"; onClicked: ed.wrap("~~", "~~") }
-            Rectangle { width: 1; height: 22; color: Theme.border }
-            Tool { icon: "heading"; tip: "Heading"; onClicked: ed.lines("h") }
-            Tool { icon: "list-ul"; tip: "Bullet list"; onClicked: ed.lines("ul") }
-            Tool { icon: "list-ol"; tip: "Numbered list"; onClicked: ed.lines("ol") }
-            Tool { icon: "check-square"; tip: "To-do list"; onClicked: ed.lines("todo") }
-            Rectangle { width: 1; height: 22; color: Theme.border }
-            Btn { compact: true; kind: "subtle"; icon: "image"; text: "Picture"; tip: "Add pictures (or drop them here)"; onClicked: { attachDialog.images = true; attachDialog.open(); } }
-            Btn { compact: true; kind: "subtle"; icon: "clip"; text: "File"; tip: "Attach files (or drop them here)"; onClicked: { attachDialog.images = false; attachDialog.open(); } }
-            Text { text: ed.uploading; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13 }
-            Item { Layout.fillWidth: true }
+            Keys.onReturnPressed: body.editor.forceActiveFocus()
         }
 
-        RowLayout {
+        // The toolbar: always there, it works on the selection (or what you type next).
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: tools.implicitHeight + 12
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+            Flow {
+                id: tools
+                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 6; rightMargin: 6 }
+                spacing: 4
+                component Tool: Btn { compact: true; kind: "subtle" }
+                component Bar: Rectangle { width: 1; height: 22; color: Theme.border; y: 3 }
+                ListPick {
+                    boxWidth: 170
+                    options: body.fonts.map(f => ({ label: f, value: f, family: f }))
+                    value: body.here.font
+                    onPicked: v => body.format({ font: v })
+                }
+                ListPick {
+                    boxWidth: 64
+                    options: body.sizes.map(s => ({ label: String(s), value: s }))
+                    value: body.here.size
+                    onPicked: v => body.format({ size: v })
+                }
+                Bar {}
+                Tool { icon: "bold"; tip: "Bold (Ctrl+B)"; active: body.here.b; onClicked: body.toggle("b") }
+                Tool { icon: "italic"; tip: "Italic (Ctrl+I)"; active: body.here.i; onClicked: body.toggle("i") }
+                Tool { icon: "underline"; tip: "Underline (Ctrl+U)"; active: body.here.u; onClicked: body.toggle("u") }
+                Tool { icon: "strike"; tip: "Strike through"; active: body.here.s; onClicked: body.toggle("s") }
+                Bar {}
+                Tool { icon: "heading"; text: "1"; tip: "Big heading"; onClicked: body.setHeading(1) }
+                Tool { icon: "heading"; text: "2"; tip: "Heading"; onClicked: body.setHeading(2) }
+                Tool { icon: "list-ul"; tip: "Bullet list"; onClicked: body.setList("ul") }
+                Tool { icon: "list-ol"; tip: "Numbered list"; onClicked: body.setList("ol") }
+                Tool { icon: "check-square"; tip: "To-do list (click a box to tick it)"; onClicked: body.setList("todo") }
+                Bar {}
+                Btn { compact: true; kind: "subtle"; icon: "image"; text: "Picture"; tip: "Add pictures (or drop them here)"; onClicked: { attachDialog.images = true; attachDialog.open(); } }
+                Btn { compact: true; kind: "subtle"; icon: "clip"; text: "File"; tip: "Attach files (or drop them here)"; onClicked: { attachDialog.images = false; attachDialog.open(); } }
+            }
+        }
+
+        RichNote {
+            id: body
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 24
-
-            Area {
-                id: body
-                visible: !ed.preview
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredWidth: 1
-                placeholderText: "Write here. Select text and use the buttons above for bold, lists and more."
-                fontSize: 15
-                smartLists: true
-                area.onTextChanged: if (area.activeFocus) ed.edited()
-            }
-
-            // How it reads, once saved.
-            ScrollView {
-                visible: ed.preview
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredWidth: 1
-                contentWidth: availableWidth
-                clip: true
-                NoteView {
-                    width: parent.width
-                    app: ed.app
-                    text: body.text || "*Nothing written yet. Press Edit to write.*"
-                    onToggleTask: line => ed.toggleTask(line)
-                    onEditRequested: ed.startEditing()
-                }
-            }
+            info: ed.info
+            onEdited: ed.edited()
+            onOpenFile: id => ed.openFile(id)
         }
     }
 }

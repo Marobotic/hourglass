@@ -14,3 +14,4 @@ ios/*.xcodeproj/
 windows/node/
 windows/qt/
 android/app/hourglass.json.tmp
+tools/qmltest-live/devstack.js

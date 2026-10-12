@@ -18,6 +18,7 @@ Text {
         , "list-ul": "", "list-ol": "", "heading": "", "image": ""
         , "clip": "", "folder": "", "file": "", "upload": ""
         , "download": "", "check-square": "", "chat": "", "send": "", "drive": "", "user-check": ""
+        , "link": "", "share": "", "move": "", "font": "", "text-size": "", "volume": "", "paper-plane": ""
     })
     text: glyphs[name] || ""
     font.family: Theme.mono

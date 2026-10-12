@@ -28,7 +28,7 @@ SessionDialog 1.0 SessionDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 LoginPage 1.0 LoginPage.qml
 TimersPage 1.0 TimersPage.qml
-NoteView 1.0 NoteView.qml
+RichNote 1.0 RichNote.qml
 DrivePage 1.0 DrivePage.qml
 AttendancePage 1.0 AttendancePage.qml
 ContextMenu 1.0 ContextMenu.qml

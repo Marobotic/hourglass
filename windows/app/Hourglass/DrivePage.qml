@@ -15,6 +15,10 @@ import QtMultimedia
 // made on the server. Opened files stay on this computer and are watched:
 // save an edit in its app (Illustrator, Photoshop, Word...) and it is
 // uploaded again. "Download…" saves a copy wherever you choose.
+//
+// Drag a file or folder onto a folder (or onto a name in the path above, or
+// onto a course) to move it there; "Move to…" in its menu does the same.
+// "Share…" makes a link anyone can open: view only, or view and download.
 Item {
     id: page
     property var app
@@ -25,10 +29,18 @@ Item {
     property string busy: ""
     property string problem: ""
     property var info: null // { file_base, thumb_base, key } for previews
+    property var shares: ({}) // file or folder id -> its link
+    property var allFolders: [] // every folder, for "Move to…"
 
     function load() {
         const args = course ? { course_id: course } : folder ? { folder_id: folder } : {};
         Api.action("list_drive", args, d => { if (d) page.drive = d; else { page.folder = ""; page.course = ""; } });
+        Api.request("GET", "/api/shares", null, (list) => {
+            const m = {};
+            for (const s of list || []) if (s.active) m[s.file_id || s.folder_id] = s;
+            page.shares = m;
+        }, true);
+        Api.get("/api/folders", d => { if (d) page.allFolders = d; });
     }
     function loadUsage() { Api.get("/api/drive/usage", d => { if (d) page.usage = d; }); }
     function go(f, c) { page.folder = f || ""; page.course = c || ""; load(); }
@@ -69,13 +81,16 @@ Item {
         }, true);
     }
 
-    function upload(urls) {
+    // into: a folder id to upload there instead of here.
+    function upload(urls, into) {
         if (!urls.length) return;
         let left = urls.length;
         page.problem = "";
         page.busy = "Uploading " + left + (left === 1 ? " file…" : " files…");
+        const folder = into !== undefined ? into : page.folder || null;
+        const course = into !== undefined ? null : page.course || null;
         for (const u of urls) {
-            Api.request("POST", "/api/files/upload", { path: u.toString(), folder: page.folder || null, course: page.course || null }, (f, err) => {
+            Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, course: course }, (f, err) => {
                 if (err) page.problem = err;
                 left--;
                 page.busy = left ? "Uploading " + left + (left === 1 ? " file…" : " files…") : "";
@@ -93,6 +108,33 @@ Item {
     }
     function reveal(f) { Api.request("POST", "/api/files/" + f.id + "/reveal", {}, (d, err) => { if (err) page.problem = err; }, true); }
     function moveTo(f, courseId) { Api.action("move_file", { file_id: f.id, course: courseId }, () => page.load()); }
+    // A file or folder into a folder ("" = the top of the Drive).
+    function moveInto(it, folderId) {
+        const target = folderId || null;
+        if (it.table === "folders") {
+            if (it.row.id === target || (it.row.parent_id || null) === target) return;
+            Api.request("POST", "/api/actions/move_folder", { folder_id: it.row.id, parent_id: target }, (d, err) => {
+                if (err) page.problem = err; else page.app.showToast("Moved " + it.row.name);
+                page.load();
+            }, true);
+        } else {
+            if ((it.row.folder_id || null) === target && !it.row.course_id) return;
+            Api.action("move_file", { file_id: it.row.id, folder_id: target }, () => { page.app.showToast("Moved " + it.row.name); page.load(); });
+        }
+    }
+    // Every folder as "Parent / Child" paths, for "Move to…". A folder can't go into itself.
+    function folderChoices(it) {
+        const all = page.allFolders;
+        const byId = {};
+        for (const f of all) byId[f.id] = f;
+        const pathOf = f => { const names = []; for (let x = f, n = 0; x && n < 20; x = byId[x.parent_id], n++) names.unshift(x.name); return names.join(" / "); };
+        const inside = f => { for (let x = f, n = 0; x && n < 20; x = byId[x.parent_id], n++) if (x.id === it.row.id) return true; return false; };
+        const here = it.table === "folders" ? it.row.parent_id || null : it.row.folder_id || null;
+        const list = all.filter(f => !(it.table === "folders" && inside(f)))
+            .map(f => ({ key: "into:" + f.id, label: pathOf(f), checked: here === f.id && !it.row.course_id }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+        return [{ key: "into:", label: "Top of the Drive", checked: !here && !it.row.course_id }, { separator: true }].concat(list);
+    }
     function remove(it) {
         if (it.table === "folders")
             page.app.confirm("Delete " + it.row.name + "?", "The folder and everything in it are deleted from the server.", "Delete",
@@ -144,6 +186,8 @@ Item {
         if (it.table === "folders") {
             menu.show(p.x, p.y, f.name, [
                 { key: "open", label: "Open folder" },
+                { key: "share", label: page.shares[f.id] ? "Shared · link…" : "Share…" },
+                { key: "move", label: "Move to…", sub: page.folderChoices(it) },
                 { key: "rename", label: "Rename" },
                 { separator: true },
                 { key: "delete", label: "Delete folder", danger: true },
@@ -157,7 +201,9 @@ Item {
             media ? { key: "preview", label: "Preview" } : null,
             { key: "download", label: "Download…" },
             { key: "reveal", label: "Show in folder" },
+            { key: "share", label: page.shares[f.id] ? "Shared · link…" : "Share…" },
             { separator: true },
+            { key: "move", label: "Move to…", sub: page.folderChoices(it) },
             { key: "course", label: "Set course", sub: courses.concat([{ separator: true }, { key: "course:", label: "No course", disabled: !f.course_id }]) },
             { key: "rename", label: "Rename" },
             { separator: true },
@@ -173,9 +219,141 @@ Item {
             else if (key === "download") page.download(f);
             else if (key === "reveal") page.reveal(f);
             else if (key.startsWith("course:")) page.moveTo(f, key.slice(7) || null);
+            else if (key.startsWith("into:")) page.moveInto(it, key.slice(5));
+            else if (key === "share") shareDlg.ask(it);
             else if (key === "rename") nameDlg.ask(it);
             else if (key === "delete") page.remove(it);
         }
+    }
+
+    // QML has no clipboard API: copy through a hidden text field.
+    TextEdit { id: clip; visible: false }
+    function copy(text) { clip.text = text; clip.selectAll(); clip.copy(); }
+
+    // What is being dragged, under the pointer. The drop point is this item's
+    // top-left corner, the pointer itself; the label hangs off to the side.
+    Item {
+        id: ghost
+        property var pending: null // pressed, not dragged yet
+        property var item: null // being dragged
+        function begin() { item = pending; Drag.active = true; }
+        function end() { if (Drag.active) Drag.drop(); Drag.active = false; item = null; }
+        width: 1; height: 1
+        z: 30
+        Drag.keys: ["hg-drive"]
+        Drag.supportedActions: Qt.MoveAction
+        Rectangle {
+            visible: ghost.item !== null
+            x: 14; y: -6
+            width: Math.min(340, ghostRow.implicitWidth + 24); height: 34
+            color: Theme.surface2
+            border.width: 1
+            border.color: Theme.accent
+            RowLayout {
+                id: ghostRow
+                anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
+                spacing: 8
+                Icon { name: ghost.item && ghost.item.table === "folders" ? "folder" : "file"; size: 13; color: Theme.accent }
+                Text { text: ghost.item ? "Move " + ghost.item.row.name : ""; color: Theme.fg; elide: Text.ElideMiddle; Layout.maximumWidth: 290; font.family: Theme.mono; font.pixelSize: 13 }
+            }
+        }
+    }
+
+    // A folder (or the top, folderId "") that takes dragged files and folders,
+    // and files dropped from the computer (uploaded into it).
+    component DropTarget: DropArea {
+        id: dt
+        property string folderId: ""
+        property string exclude: "" // a folder can't go into itself
+        keys: ["hg-drive", "text/uri-list"]
+        onEntered: d => {
+            if (d.hasUrls) { d.accept(Qt.CopyAction); return; }
+            if (!ghost.item || (ghost.item.table === "folders" && ghost.item.row.id === dt.exclude)) d.accepted = false;
+        }
+        onDropped: d => {
+            if (d.hasUrls) { d.accept(Qt.CopyAction); page.upload(d.urls, dt.folderId || null); return; }
+            if (ghost.item) page.moveInto(ghost.item, dt.folderId);
+        }
+        Rectangle { anchors.fill: parent; visible: dt.containsDrag; color: Theme.alpha(Theme.accent, 0.16); border.width: 2; border.color: Theme.accent }
+    }
+
+    // Share…: a link anyone can open in a browser, view only or view and download.
+    Modal {
+        id: shareDlg
+        objectName: "shareDialog"
+        property var it: null
+        property var link: null // this file's or folder's link, once made
+        property string access: "view"
+        property int days: 0
+        property string note: ""
+        width: 600
+        title: it ? "Share " + it.row.name : "Share"
+        subtitle: "Anyone with the link can open it in a browser, no account needed."
+        function ask(x) {
+            it = x;
+            link = page.shares[x.row.id] || null;
+            access = link ? link.access : "view";
+            days = 0;
+            note = "";
+            open();
+        }
+        function make() {
+            const body = it.table === "folders" ? { folder_id: it.row.id } : { file_id: it.row.id };
+            body.access = access;
+            body.expires_days = days;
+            Api.request("POST", "/api/shares", body, (s, err) => {
+                if (err) { note = err; return; }
+                link = s;
+                page.copy(s.url);
+                note = "Link copied. Paste it anywhere.";
+                page.load();
+            }, true);
+        }
+        function stop() {
+            Api.request("DELETE", "/api/shares/" + link.token, null, (d, err) => {
+                if (err) { note = err; return; }
+                link = null;
+                note = "Sharing stopped: the link no longer opens anything.";
+                page.load();
+            }, true);
+        }
+        Text { text: "WHO CAN SEE IT"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 2 }
+        Flow {
+            Layout.fillWidth: true
+            spacing: 6
+            Btn { text: "Anyone with the link can view"; icon: "eye"; kind: "subtle"; active: shareDlg.access === "view"; onClicked: shareDlg.access = "view" }
+            Btn { text: "…can view and download"; icon: "download"; kind: "subtle"; active: shareDlg.access === "download"; onClicked: shareDlg.access = "download" }
+        }
+        Text { text: "THE LINK STOPS WORKING"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 2 }
+        Flow {
+            Layout.fillWidth: true
+            spacing: 6
+            Repeater {
+                model: [{ d: 0, t: "Never" }, { d: 1, t: "After 1 day" }, { d: 7, t: "After 7 days" }, { d: 30, t: "After 30 days" }]
+                Btn { required property var modelData; text: modelData.t; kind: "subtle"; active: shareDlg.days === modelData.d; onClicked: shareDlg.days = modelData.d }
+            }
+        }
+        RowLayout {
+            visible: !!shareDlg.link
+            Layout.fillWidth: true
+            spacing: 8
+            Field { Layout.fillWidth: true; readOnly: true; text: shareDlg.link ? shareDlg.link.url : ""; onActiveFocusChanged: if (activeFocus) selectAll() }
+            Btn { icon: "link"; text: "Copy"; onClicked: { page.copy(shareDlg.link.url); shareDlg.note = "Link copied."; } }
+        }
+        Text {
+            visible: !!shareDlg.link
+            text: !shareDlg.link ? "" : "Now: anyone with the link can " + (shareDlg.link.access === "download" ? "view and download" : "view")
+                + (shareDlg.link.expires_at ? ", until " + Util.shortDate(Util.dayOf(shareDlg.link.expires_at)) + "." : ".")
+                + (shareDlg.it && shareDlg.it.table === "folders" ? " Everything in the folder is included." : "")
+            color: Theme.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 13
+        }
+        Text { visible: shareDlg.note !== ""; text: shareDlg.note; color: Theme.accent; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 13 }
+        footer: [
+            Btn { visible: !!shareDlg.link; kind: "danger"; icon: "close"; text: "Stop sharing"; onClicked: shareDlg.stop() },
+            Item { Layout.fillWidth: true },
+            Btn { text: "Close"; onClicked: shareDlg.close() },
+            Btn { kind: "primary"; icon: "link"; text: shareDlg.link ? "Save and copy link" : "Create and copy link"; onClicked: shareDlg.make() }
+        ]
     }
 
     ScrollView {
@@ -235,6 +413,7 @@ Item {
                         color: page.folder || page.course ? Theme.accent : Theme.fg
                         font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.go("", "") }
+                        DropTarget { anchors.fill: parent; anchors.margins: -6; folderId: ""; visible: !!(page.folder || page.course) }
                     }
                     Text { visible: !!page.course; text: "/  Courses"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 15 }
                     Repeater {
@@ -249,6 +428,7 @@ Item {
                                 color: index === page.drive.path.length - 1 ? Theme.fg : Theme.accent
                                 font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: modelData.course ? page.go("", modelData.id) : page.go(modelData.id, "") }
+                                DropTarget { anchors.fill: parent; anchors.margins: -6; folderId: modelData.id; visible: !modelData.course && index < page.drive.path.length - 1 }
                             }
                         }
                     }
@@ -287,6 +467,14 @@ Item {
                                 Text { text: ct.modelData.items + (ct.modelData.items === 1 ? " file" : " files"); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
                             }
                             MouseArea { id: ctm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.go("", ct.modelData.id) }
+                            DropArea {
+                                id: courseDrop
+                                anchors.fill: parent
+                                keys: ["hg-drive"]
+                                onEntered: d => { if (!ghost.item || ghost.item.table !== "files") d.accepted = false; }
+                                onDropped: d => { if (ghost.item) page.moveTo(ghost.item.row, ct.modelData.id); }
+                            }
+                            Rectangle { anchors.fill: parent; visible: courseDrop.containsDrag; color: Theme.alpha(ct.modelData.color, 0.18); border.width: 2; border.color: ct.modelData.color }
                         }
                     }
                 }
@@ -321,8 +509,14 @@ Item {
                             id: im
                             anchors.fill: parent
                             hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
+                            cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.PointingHandCursor
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            // Drag it onto a folder to move it there.
+                            drag.target: ghost
+                            drag.threshold: 10
+                            property bool dragging: drag.active
+                            onPressed: e => { const p = im.mapToItem(page, e.x, e.y); ghost.x = p.x; ghost.y = p.y; ghost.pending = item.modelData; }
+                            onDraggingChanged: dragging ? ghost.begin() : ghost.end()
                             onClicked: e => {
                                 if (e.button === Qt.RightButton) { page.openMenu(item.modelData, im, e.x, e.y); return; }
                                 if (item.isFolder) page.go(item.f.id, "");
@@ -354,6 +548,7 @@ Item {
                                 }
                             }
                             Text { Layout.fillWidth: true; text: item.f.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 15 }
+                            Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 13; color: Theme.teal; ToolTip.visible: shareHover.hovered; ToolTip.text: "Anyone with the link can " + (page.shares[item.f.id] && page.shares[item.f.id].access === "download" ? "view and download" : "view"); HoverHandler { id: shareHover } }
                             Text {
                                 text: item.isFolder ? item.f.items + (item.f.items === 1 ? " item" : " items")
                                     : page.size(item.f.size) + "  ·  " + Util.shortDate(Util.dayOf(item.f.updated_at)) + " " + Util.clock(item.f.updated_at)
@@ -361,6 +556,8 @@ Item {
                             }
                             Btn { id: more; compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: page.openMenu(item.modelData, more, 0, more.height) }
                         }
+                        // A folder takes what is dragged onto it, and files dropped from the computer.
+                        DropTarget { anchors.fill: parent; folderId: item.f.id; visible: item.isFolder; exclude: item.f.id }
                     }
                 }
                 Text {
@@ -376,7 +573,8 @@ Item {
     DropArea {
         id: drop
         anchors.fill: parent
-        z: 5
+        z: -1
+        keys: ["text/uri-list"]
         onEntered: d => { if (d.hasUrls) d.accept(Qt.CopyAction); }
         onDropped: d => { if (!d.hasUrls) return; d.accept(Qt.CopyAction); page.upload(d.urls); }
     }

@@ -342,7 +342,8 @@ function playOnce(file) {
 }
 
 function playLoop(item) {
-  if (SILENT || service.settings().sound === false) return () => {};
+  // A test rings even with the alarm sound off: hearing it is the point.
+  if (SILENT || (service.settings().sound === false && !item.test)) return () => {};
   let stopped = false;
   let child = null;
   const until = Date.now() + 60000;
@@ -862,6 +863,19 @@ async function extra(req, res, url, path) {
   }
   const del = /^\/api\/ringtones\/([0-9a-f-]{36})$/.exec(path);
   if (del && req.method === "DELETE") return json(res, 200, service.removeRingtone({ ringtone_id: del[1] })), true;
+  // Settings > Test alarm: a real ring right now (notification, the ringtone
+  // looping, the ring screen with Snooze and Dismiss), like any alarm.
+  if (path === "/api/ring/test" && req.method === "POST") {
+    const id = `test-${Date.now()}`;
+    ring({ id, kind: "alarm", label: "Test alarm", at: now(), test: true });
+    return json(res, 200, { id }), true;
+  }
+  // Drive links live on the server: make, change, list, stop sharing.
+  if (path === "/api/shares" || path.startsWith("/api/shares/")) {
+    if (!config().token) return json(res, 401, { error: "Sign in to share files." }), true;
+    const body = req.method === "POST" ? await readBody(req) : undefined;
+    return json(res, 200, await remote(path + url.search, { method: req.method, body })), true;
+  }
   // Plays a ringtone once, for choosing one in Settings.
   if (path === "/api/ring/preview" && req.method === "POST") {
     playOnce(soundFile(url.searchParams.get("name")));

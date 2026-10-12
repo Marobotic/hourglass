@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "noteformat.mjs" as NF
 
 QtObject {
     readonly property var weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -134,8 +135,11 @@ QtObject {
 
     function kindLabel(k) { return k ? k.charAt(0).toUpperCase() + k.slice(1) : ""; }
 
+    // A note's words, line by line, without Markdown or font tags: for cards.
+    function plain(body) { return NF.plainText(body || ""); }
+    // The same on one line, for a short preview.
     function preview(body) {
-        return (body || "").replace(/[#>*_`\-\[\]]/g, "").replace(/\s+/g, " ").trim().slice(0, 140);
+        return NF.plainText(body || "").replace(/\s+/g, " ").trim().slice(0, 140);
     }
 
     // Numbered lists count 1, 2, 3 again after any edit: each run of "N. " lines

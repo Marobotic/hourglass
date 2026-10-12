@@ -78,7 +78,7 @@ export class Service {
   // accents and punctuation ("ashwasky" finds "Ashwasky's birthday", "birthdays" finds
   // "birthday"). No query lists every event. Sorted by the next date; past one-offs last.
   findEvents({ query = "", limit = 50, personal = false } = {}) {
-    const norm = (s) => String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const norm = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     const words = norm(query).split(" ").filter(Boolean).map((w) => (w.length > 3 ? w.replace(/s$/, "") : w));
     const courses = new Map(this.store.all("courses").map((c) => [c.id, c]));
     const today = this.today();
@@ -438,7 +438,7 @@ export class Service {
   // events, so "when is X's birthday" is answered before any note is read.
   // Then notes, Drive files and folders, and alarms.
   search({ query, limit = 10 }) {
-    const norm = (s) => String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const norm = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     const words = norm(query).split(" ").filter(Boolean).map((w) => (w.length > 3 ? w.replace(/s$/, "") : w));
     if (!words.length) throw new Error("query is required");
     const hit = (s) => { const h = norm(s); return words.every((w) => h.includes(w)); };

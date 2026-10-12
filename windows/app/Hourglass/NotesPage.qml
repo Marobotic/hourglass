@@ -25,7 +25,7 @@ Item {
         const q = query.trim().toLowerCase().split(/\s+/).filter(w => w);
         return notes
             .filter(n => sel === "all" ? true : sel === "inbox" ? !n.course_id : n.course_id === sel)
-            .filter(n => !q.length || q.every(w => (n.title + "\n" + n.body).toLowerCase().includes(w)))
+            .filter(n => !q.length || q.every(w => (n.title + "\n" + Util.plain(n.body)).toLowerCase().includes(w)))
             .sort((a, b) => (b.pinned - a.pinned) || (b.updated_at - a.updated_at));
     }
 
@@ -155,7 +155,7 @@ Item {
                                     Text {
                                         Layout.fillWidth: true
                                         visible: !!card.modelData.body
-                                        text: card.modelData.body
+                                        text: Util.plain(card.modelData.body)
                                         textFormat: Text.PlainText
                                         color: Theme.fg; opacity: 0.85
                                         wrapMode: Text.Wrap; maximumLineCount: 10; elide: Text.ElideRight
