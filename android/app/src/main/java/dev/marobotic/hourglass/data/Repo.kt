@@ -618,6 +618,9 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     fun syncNow() = scope.launch { syncOnce() }
 
+    // For the background job: one sync on the caller's thread.
+    fun syncBlocking() = syncOnce()
+
     @Synchronized
     private fun syncOnce() {
         val server = BuildConfig.SERVER.takeIf { syncEnabled && it.isNotEmpty() } ?: run { _sync.value = SyncState("local"); return }

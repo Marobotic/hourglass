@@ -116,7 +116,9 @@ class RingService : Service() {
 
     private fun ring() {
         val repo = App.repo(this)
-        if (repo.vibrate) getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 400), 0))
+        // Alarm usage: vibrates in silent mode too, like the Clock app.
+        if (repo.vibrate) getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 400), 0),
+            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
         if (!repo.sound && !test) return
         player?.release()
         player = runCatching {

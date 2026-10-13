@@ -112,8 +112,13 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
                     dev.marobotic.hourglass.core.NoteFormat.plainText(n.optString("body")), color = HColors.fg.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 10,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontFamily = FontFamily.Default,
                 )
-                val foot = listOfNotNull(if (sel == "all") c?.let { it.optString("name") } else null, n.str("session_date")?.let { Dates.short(it) })
-                if (foot.isNotEmpty()) T(foot.joinToString("  ·  "), 11, tint ?: HColors.muted, bold = true)
+                // Course and day on one line: a long course name shortens with "…"; the day always shows.
+                val name = if (sel == "all") c?.optString("name") else null
+                val day = n.str("session_date")?.let { Dates.short(it) }
+                if (name != null || day != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (name != null) T(name, 11, tint ?: HColors.muted, bold = true, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                    if (day != null) T(day, 11, HColors.muted, maxLines = 1)
+                }
             }
         }
         if (notes.isEmpty()) item(span = StaggeredGridItemSpan.FullLine) {

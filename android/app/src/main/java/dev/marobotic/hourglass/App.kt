@@ -3,6 +3,7 @@ package dev.marobotic.hourglass
 import android.app.Application
 import android.content.Context
 import dev.marobotic.hourglass.alarm.Scheduler
+import dev.marobotic.hourglass.alarm.SyncJob
 import dev.marobotic.hourglass.data.Repo
 
 class App : Application() {
@@ -12,6 +13,7 @@ class App : Application() {
         super.onCreate()
         Scheduler.ensureChannel(this)
         Scheduler.reschedule(this, repo)
+        SyncJob.ensure(this)
         repo.startLoop()
     }
 

@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Updates come from marobotic.dev, not a store: the app hands the new APK to the installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Alarm-clock app: exact alarms that ring through Doze. -->
@@ -59,6 +60,7 @@
 
         <receiver android:name=".alarm.AlarmReceiver" android:exported="false" />
         <service android:name=".alarm.RingService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
+        <service android:name=".alarm.SyncJob" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
         <receiver android:name=".alarm.BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
