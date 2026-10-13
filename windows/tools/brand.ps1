@@ -37,48 +37,14 @@ function Stamp($source, $target, $description) {
   Write-Host "Made $target ($description)"
 }
 
-# Qt gives its windows (title bar, taskbar, Alt+Tab) the exe's icon only if
-# that icon is named IDI_ICON1; rcedit numbers it. Add the same icon group
-# again under that name, pointing at the images rcedit already wrote.
+# The qml runtime sets its own window icon (title bar, taskbar, Alt+Tab): a
+# 64x64 Qt logo PNG kept in its Qt resources. Put Hourglass's in its place.
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
-public static class HgIconName {
-  delegate bool EnumNames(IntPtr module, IntPtr type, IntPtr name, IntPtr param);
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr LoadLibraryExW(string file, IntPtr reserved, uint flags);
-  [DllImport("kernel32.dll")] static extern bool FreeLibrary(IntPtr module);
-  [DllImport("kernel32.dll")] static extern bool EnumResourceNamesW(IntPtr module, IntPtr type, EnumNames callback, IntPtr param);
-  [DllImport("kernel32.dll")] static extern IntPtr FindResourceW(IntPtr module, IntPtr name, IntPtr type);
-  [DllImport("kernel32.dll")] static extern IntPtr LoadResource(IntPtr module, IntPtr res);
-  [DllImport("kernel32.dll")] static extern IntPtr LockResource(IntPtr data);
-  [DllImport("kernel32.dll")] static extern uint SizeofResource(IntPtr module, IntPtr res);
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr BeginUpdateResourceW(string file, bool deleteExisting);
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool UpdateResourceW(IntPtr update, IntPtr type, string name, ushort lang, byte[] data, uint size);
-  [DllImport("kernel32.dll", SetLastError = true)] static extern bool EndUpdateResourceW(IntPtr update, bool discard);
-  public static void Add(string exe) {
-    IntPtr RT_GROUP_ICON = (IntPtr)14;
-    IntPtr module = LoadLibraryExW(exe, IntPtr.Zero, 0x2); // LOAD_LIBRARY_AS_DATAFILE
-    if (module == IntPtr.Zero) throw new Exception("cannot open " + exe);
-    byte[] group = null;
-    try {
-      IntPtr first = IntPtr.Zero;
-      EnumResourceNamesW(module, RT_GROUP_ICON, (m, t, n, p) => { first = n; return false; }, IntPtr.Zero);
-      if (first == IntPtr.Zero) throw new Exception(exe + " has no icon");
-      if (((long)first >> 16) != 0) return; // already named (IDI_ICON1)
-      IntPtr res = FindResourceW(module, first, RT_GROUP_ICON);
-      uint size = SizeofResource(module, res);
-      group = new byte[size];
-      Marshal.Copy(LockResource(LoadResource(module, res)), group, 0, (int)size);
-    } finally { FreeLibrary(module); }
-    IntPtr update = BeginUpdateResourceW(exe, false);
-    if (update == IntPtr.Zero) throw new Exception("cannot write " + exe);
-    if (!UpdateResourceW(update, RT_GROUP_ICON, "IDI_ICON1", 0x0409, group, (uint)group.Length)) { EndUpdateResourceW(update, true); throw new Exception("cannot add IDI_ICON1"); }
-    if (!EndUpdateResourceW(update, false)) throw new Exception("cannot save " + exe);
-  }
-
-  // The qml runtime then sets its own window icon over that: a 64x64 Qt logo
-  // PNG kept in its Qt resources as [4-byte big-endian length][PNG]. Put
-  // Hourglass's PNG in that slot (it has to fit) and fix the length.
+public static class HgIcon {
+  // The logo is stored as [4-byte big-endian length][PNG]. Put Hourglass's
+  // PNG in that slot (it has to fit) and fix the length.
   public static void ReplaceQtLogo(string exe, byte[] png) {
     byte[] d = System.IO.File.ReadAllBytes(exe);
     byte[] sig = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
@@ -118,8 +84,7 @@ public static class HgIconName {
 Stamp (Join-Path $root 'qt\bin\qml.exe') (Join-Path $root 'qt\bin\Hourglass.exe') 'Hourglass'
 $window = Join-Path $root 'qt\bin\Hourglass.exe'
 if (Test-Path $window) {
-  [HgIconName]::Add($window)
-  [HgIconName]::ReplaceQtLogo($window, [HgIconName]::IcoPng($icon, 48))
+  [HgIcon]::ReplaceQtLogo($window, [HgIcon]::IcoPng($icon, 48))
   Write-Host "Gave $window's windows the hourglass icon"
 }
 Stamp (Join-Path $root 'node\node.exe') (Join-Path $root 'node\hourglassd.exe') 'Hourglass'
