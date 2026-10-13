@@ -1,4 +1,5 @@
 import SwiftUI
+import BackgroundTasks
 
 @main
 struct HourglassApp: App {
@@ -13,7 +14,27 @@ struct HourglassApp: App {
                 .onAppear { Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
                 .task { while !Task.isCancelled { await store.syncSoon(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
         }
-        .onChange(of: phase) { _, p in if p == .active { Task { await store.syncSoon() } } }
+        .onChange(of: phase) { _, p in
+            if p == .active { Task { await store.syncSoon() } }
+            if p == .background { BackgroundSync.schedule() }
+        }
+        .backgroundTask(.appRefresh(BackgroundSync.id)) {
+            BackgroundSync.schedule()
+            await store.syncSoon() // the sync reschedules alarms and notifications
+        }
+    }
+}
+
+// iOS wakes Hourglass in the background now and then (it decides how often;
+// at most every 15 minutes is asked for) to sync, so an alarm set on another
+// device is scheduled on this iPhone without opening the app here.
+enum BackgroundSync {
+    static let id = "dev.marobotic.hourglass.sync"
+
+    static func schedule() {
+        let request = BGAppRefreshTaskRequest(identifier: id)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        try? BGTaskScheduler.shared.submit(request)
     }
 }
 

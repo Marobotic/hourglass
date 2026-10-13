@@ -36,6 +36,12 @@ targets:
         # The sync server. Builds never carry an account token: everyone signs in.
         HourglassServer: https://marobotic.dev/hourglass
         NSAlarmKitUsageDescription: Hourglass rings before your lectures and when timers finish.
+        # Background refresh: iOS wakes the app now and then to sync, so alarms
+        # set on another device get scheduled here without opening Hourglass.
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.marobotic.hourglass.sync
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         # Resource groups are flattened into the bundle root.

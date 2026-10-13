@@ -367,7 +367,8 @@ struct NotesView: View {
     private func keepCard(_ n: Note) -> some View {
         let c = store.course(n.course_id)
         let tint = c.map { Color(hex: $0.color) }
-        let foot = [sel == "all" ? c.map { $0.name } : nil, n.session_date.map(Dates.short)].compactMap { $0 }
+        let name = sel == "all" ? c?.name : nil
+        let day = n.session_date.map(Dates.short)
         return VStack(alignment: .leading, spacing: 6) {
             if !n.title.isEmpty {
                 HStack(alignment: .top) {
@@ -377,7 +378,13 @@ struct NotesView: View {
                 }
             }
             if !n.body.isEmpty { Text(NoteFormat.plainText(n.body)).font(.system(size: 14)).foregroundStyle(H.fg.opacity(0.85)).lineLimit(10) }
-            if !foot.isEmpty { Text(foot.joined(separator: "  ·  ")).font(H.mono(11, bold: true)).foregroundStyle(tint ?? H.muted) }
+            // Course and day on one line: a long course name shortens with "…"; the day always shows.
+            if name != nil || day != nil {
+                HStack(spacing: 8) {
+                    if let name { Text(name).font(H.mono(11, bold: true)).foregroundStyle(tint ?? H.muted).lineLimit(1).truncationMode(.tail) }
+                    if let day { Text(day).font(H.mono(11)).foregroundStyle(H.muted).lineLimit(1).fixedSize() }
+                }
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
