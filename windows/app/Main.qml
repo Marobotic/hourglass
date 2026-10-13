@@ -102,7 +102,9 @@ ApplicationWindow {
     SystemTrayIcon {
         id: tray
         tooltip: "Hourglass"
-        visible: !app.visible && tray.available
+        // Always there, not just while the window is hidden: a tray icon Qt
+        // creates later (when X hides the window) comes up without its menu.
+        visible: tray.available
         icon.source: Qt.resolvedUrl("../hourglass.ico")
         onActivated: reason => {
             if (reason === SystemTrayIcon.Trigger || reason === SystemTrayIcon.DoubleClick)

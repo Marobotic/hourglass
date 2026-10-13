@@ -45,19 +45,6 @@ using System.Runtime.InteropServices;
 public static class HgWindow {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr LoadImageW(IntPtr hInst, string lpszName, uint type, int cx, int cy, uint fuLoad);
-  [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-  // Qt Quick windows show Qt's own tile unless an icon is set; the
-  // package ships hourglass.ico, so put it on the window (title bar
-  // and taskbar) as soon as it exists.
-  public static void SetIcon(IntPtr hwnd, string path) {
-    const uint WM_SETICON = 0x80;
-    const uint LR_LOADFROMFILE = 0x00000010;
-    IntPtr small = LoadImageW(IntPtr.Zero, path, 1, 16, 16, LR_LOADFROMFILE);
-    IntPtr big = LoadImageW(IntPtr.Zero, path, 1, 32, 32, LR_LOADFROMFILE);
-    SendMessageW(hwnd, WM_SETICON, (IntPtr)0, small);
-    SendMessageW(hwnd, WM_SETICON, (IntPtr)1, big);
-  }
 }
 '@
 # The service owns the window (one Hourglass in Task Manager): ask it to open
@@ -76,22 +63,4 @@ try {
 if (-not $asked -and -not $open) {
   # An older service without /api/window: start the window ourselves.
   Start-Process -FilePath $qml -ArgumentList @('--apptype', 'widget', '-platform', 'windows:menus=native', '-I', "`"$root\app`"", "`"$root\app\Main.qml`"", '--', '--port', $port, '--token', $token) -WindowStyle Normal
-}
-
-# Wait for the window, then set the hourglass icon on it. Qt applies
-# its own tile as the window is realized, so re-apply for a while.
-$hwnd = [IntPtr]::Zero
-for ($i = 0; $i -lt 50 -and $hwnd -eq [IntPtr]::Zero; $i++) {
-  Start-Sleep -Milliseconds 200
-  $p = @(Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
-  if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) { $hwnd = $p.MainWindowHandle }
-}
-if ($hwnd -ne [IntPtr]::Zero) {
-  [HgWindow]::SetIcon($hwnd, "$root\hourglass.ico")
-  for ($i = 0; $i -lt 20; $i++) {
-    Start-Sleep -Milliseconds 500
-    $p = Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' } | Select-Object -First 1
-    if (-not $p) { break }
-    [HgWindow]::SetIcon($p.MainWindowHandle, "$root\hourglass.ico")
-  }
 }
