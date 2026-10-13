@@ -9,6 +9,8 @@ on:
 jobs:
   ipa:
     runs-on: macos-15
+    permissions:
+      contents: write
     timeout-minutes: 30
     defaults:
       run:
@@ -46,11 +48,24 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/Hourglass.app Payload/
           zip -qr Hourglass.ipa Payload
 
+      # The ipa goes on the latest-build release (prerelease) of this repo:
+      # release assets do not count against the account's Actions storage,
+      # which ran out and failed good builds at the upload.
+      # `mdeploy ios update Marobotic/hourglass --tag latest-build` installs it;
+      # tools/release.ps1 takes it from there too.
+      - name: Publish to the latest-build release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest-build >/dev/null 2>&1 ||             gh release create latest-build --prerelease --title "Latest build"               --notes "The newest builds from main, replaced on every push."
+          gh release upload latest-build Hourglass.ipa --clobber
+
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Hourglass-ipa
           path: ios/Hourglass.ipa
-          retention-days: 14
+          retention-days: 3
 
       - uses: actions/upload-artifact@v4
         if: failure()

@@ -9,6 +9,8 @@ on:
 jobs:
   package:
     runs-on: windows-latest
+    permissions:
+      contents: write
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -91,20 +93,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
           Get-ChildItem dist\*.exe
 
+      # The installer goes on the latest-build release (prerelease) as
+      # Hourglass-setup.exe: release assets do not count against the account's
+      # Actions storage, which ran out. tools/release.ps1 takes it from there.
+      - name: Publish to the latest-build release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest-build *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create latest-build --prerelease --title "Latest build" --notes "The newest builds from main, replaced on every push." }
+          Copy-Item (Get-ChildItem dist\Hourglass-*-setup.exe | Select-Object -First 1).FullName Hourglass-setup.exe
+          gh release upload latest-build Hourglass-setup.exe --clobber
+          if ($LASTEXITCODE -ne 0) { throw "upload failed" }
+
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Hourglass-setup
           path: dist/Hourglass-*-setup.exe
-          retention-days: 14
+          retention-days: 3
 
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Hourglass-windows
           path: dist/Hourglass
-          retention-days: 14
+          retention-days: 3
 
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: windows-screenshots
           path: shot-*.png

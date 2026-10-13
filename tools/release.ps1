@@ -131,8 +131,10 @@ if ($DryRun) {
   $winRun = Wait-Run 'Windows'
   $iosRun = Wait-Run 'iOS'
 }
-gh run download $winRun -n Hourglass-setup -D "$out\ci-win"
-gh run download $iosRun -n Hourglass-ipa -D "$out\ci-ios"
+# CI puts both builds on the latest-build release (Actions artifact storage
+# runs out); both runs above finished on this commit, so those are its builds.
+gh release download latest-build -p Hourglass-setup.exe -D "$out\ci-win" --clobber
+gh release download latest-build -p Hourglass.ipa -D "$out\ci-ios" --clobber
 $exe = "$out\Hourglass-$Version-setup.exe"
 Copy-Item (Get-ChildItem "$out\ci-win\*.exe" | Select-Object -First 1).FullName $exe
 $ipa = "$out\Hourglass-$Version.ipa"
