@@ -33,7 +33,8 @@ const host = process.env.HOURGLASS_HOST || "127.0.0.1";
 const maroUrl = (process.env.MARO_ACCOUNT_URL || "http://127.0.0.1:8900").replace(/\/+$/, "");
 const maroDir = process.env.MARO_CACHE_DIR || "/var/lib/maro-cache";
 const MAX_UPLOAD = 40 * 1024 * 1024;
-// One Drive upload. Default 1 GB or HOURGLASS_MAX_FILE.
+// One Drive upload. Default 1 GB or HOURGLASS_MAX_FILE; nginx's
+// client_max_body_size for /hourglass/ must be a little over this.
 const MAX_FILE = Number(process.env.HOURGLASS_MAX_FILE || (1024 * 1024 * 1024));
 const TOO_BIG = `That file is over ${Math.round(MAX_FILE / (1024 * 1024))} MB, the most one upload can be.`;
 // Kept free on the storage target: uploads that would go below this are refused.
@@ -246,6 +247,13 @@ function songFile(id) {
 
 // --- drive -------------------------------------------------------------------------
 
+// HOURGLASS_DRIVE_DIR is a mount (rclone on Google Drive). If the mount is
+// down, the folder underneath is an empty local one: files saved there would
+// vanish behind the mount when it comes back. The mount's root holds a
+// .hourglass-drive marker, so a missing marker means "down", and writes wait.
+const driveOnline = () => !driveDir || existsSync(join(driveDir, ".hourglass-drive"));
+const OFFLINE = "Drive storage is offline for a moment. Try again in a minute.";
+
 const drivePath = (t, id) => {
   if (driveDir) {
     const userSubdir = t.email === owner ? "owner" : sha(t.email).slice(0, 24);
@@ -325,7 +333,11 @@ function diskUsage(t) {
   const total = s.blocks * s.bsize;
   const free = s.bavail * s.bsize;
   const mine = t.store.all("files").reduce((n, f) => n + (f.size || 0), 0);
-  return { total, free, used: total - free, mine, usable: Math.max(0, free - DISK_RESERVE), max_file: MAX_FILE };
+  // rclone writes an upload to the droplet's disk before sending it to Google,
+  // so the droplet needs room for it too.
+  const local = statfsSync(t.dir);
+  const room = Math.min(free, local.bavail * local.bsize);
+  return { total, free, used: total - free, mine, usable: Math.max(0, room - DISK_RESERVE), max_file: MAX_FILE };
 }
 
 const MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp",
@@ -343,6 +355,7 @@ async function driveRoutes(t, req, res, url, path) {
     const name = (url.searchParams.get("name") || "file").replace(/[\\/]/g, "_").trim().slice(0, 200) || "file";
     const declared = Number(req.headers["content-length"] || 0);
     if (declared > MAX_FILE) return send(res, 413, { error: TOO_BIG }), true;
+    if (!driveOnline()) return send(res, 503, { error: OFFLINE }), true;
     if (declared && declared > diskUsage(t).usable) return send(res, 507, { error: "Not enough space left on the server." }), true;
     const folder = url.searchParams.get("folder") || null;
     if (folder && !t.store.get("folders", folder)) return send(res, 400, { error: "no folder with that id" }), true;
@@ -377,6 +390,7 @@ async function driveRoutes(t, req, res, url, path) {
   if (put && m === "PUT") {
     const row = t.store.get("files", put[1]);
     if (!row || row.deleted) return send(res, 404, { error: "not found" }), true;
+    if (!driveOnline()) return send(res, 503, { error: OFFLINE }), true;
     const tmp = drivePath(t, row.id) + ".put";
     let size = 0;
     try {
@@ -409,6 +423,7 @@ async function driveRoutes(t, req, res, url, path) {
   if (raw && m === "GET") {
     const row = t.store.get("files", raw[1]);
     const f = drivePath(t, raw[1]);
+    if (row && !row.deleted && !driveOnline()) return send(res, 503, { error: OFFLINE }), true;
     if (!row || row.deleted || !existsSync(f)) return send(res, 404, { error: "not found" }), true;
     res.writeHead(200, {
       "content-type": row.mime || "application/octet-stream",
