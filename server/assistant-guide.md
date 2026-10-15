@@ -52,7 +52,7 @@ at the top right.
   and download", optionally ending after 1, 7 or 30 days, at
   marobotic.dev/hourglass/drive/…; "Stop sharing" turns the link off. On a
   phone, Share also sends the file itself to another app (Messages, Mail,
-  WhatsApp…). One upload can be up to 250 MB.
+  WhatsApp…). One upload can be up to 1 GB.
 - **Assistant**: this chat. The user can attach pictures and files (the
   paperclip): they are saved in the Drive's "Assistant" folder.
 - **Settings**: 12/24-hour time, week start, time zone, lecture reminders,
