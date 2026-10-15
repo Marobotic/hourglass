@@ -18,7 +18,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Store } from "../core/node/store.js";
 import { Service } from "../core/node/service.js";
 import { createHandler, openApi, VERSION } from "./app.js";
@@ -27,16 +27,16 @@ import { createAssistant } from "./assistant.js";
 import { createShares } from "./share.js";
 
 const dataDir = resolve(process.env.HOURGLASS_DATA || join(import.meta.dirname, "data"));
+const driveDir = process.env.HOURGLASS_DRIVE_DIR ? resolve(process.env.HOURGLASS_DRIVE_DIR) : null;
 const port = Number(process.env.HOURGLASS_PORT || 8930);
 const host = process.env.HOURGLASS_HOST || "127.0.0.1";
 const maroUrl = (process.env.MARO_ACCOUNT_URL || "http://127.0.0.1:8900").replace(/\/+$/, "");
 const maroDir = process.env.MARO_CACHE_DIR || "/var/lib/maro-cache";
 const MAX_UPLOAD = 40 * 1024 * 1024;
-// One Drive upload. The Drive is for notes-sized files (PDFs, slides, photos),
-// and the droplet's 50 GB disk is shared by every account.
-const MAX_FILE = 250 * 1024 * 1024;
-const TOO_BIG = "That file is over 250 MB, the most one upload can be.";
-// Kept free on the droplet: uploads that would go below this are refused.
+// One Drive upload. Default 1 GB or HOURGLASS_MAX_FILE.
+const MAX_FILE = Number(process.env.HOURGLASS_MAX_FILE || (1024 * 1024 * 1024));
+const TOO_BIG = `That file is over ${Math.round(MAX_FILE / (1024 * 1024))} MB, the most one upload can be.`;
+// Kept free on the storage target: uploads that would go below this are refused.
 const DISK_RESERVE = 2 * 1024 * 1024 * 1024;
 const SONG_EXTS = [".m4a", ".opus", ".webm", ".mp3", ".ogg", ".aac", ".flac"];
 
@@ -246,7 +246,13 @@ function songFile(id) {
 
 // --- drive -------------------------------------------------------------------------
 
-const drivePath = (t, id) => join(t.dir, "drive", id);
+const drivePath = (t, id) => {
+  if (driveDir) {
+    const userSubdir = t.email === owner ? "owner" : sha(t.email).slice(0, 24);
+    return join(driveDir, userSubdir, "drive", id);
+  }
+  return join(t.dir, "drive", id);
+};
 
 // Drop the bytes (and preview) of files deleted here or by a device's sync.
 function sweepDrive(t) {
@@ -315,7 +321,7 @@ async function thumbnail(t, row) {
 }
 
 function diskUsage(t) {
-  const s = statfsSync(t.dir);
+  const s = statfsSync(driveDir || t.dir);
   const total = s.blocks * s.bsize;
   const free = s.bavail * s.bsize;
   const mine = t.store.all("files").reduce((n, f) => n + (f.size || 0), 0);
@@ -341,8 +347,9 @@ async function driveRoutes(t, req, res, url, path) {
     const folder = url.searchParams.get("folder") || null;
     if (folder && !t.store.get("folders", folder)) return send(res, 400, { error: "no folder with that id" }), true;
     const id = crypto.randomUUID();
-    mkdirSync(join(t.dir, "drive"), { recursive: true });
-    const tmp = drivePath(t, id) + ".part";
+    const target = drivePath(t, id);
+    mkdirSync(dirname(target), { recursive: true });
+    const tmp = target + ".part";
     let size = 0;
     try {
       await pipeline(req, async function* (src) {
