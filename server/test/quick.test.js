@@ -209,3 +209,9 @@ test("events, attendance, world clock and settings at once", () => {
   assert.equal(service.settings().time_format, "24h");
   assert.match(quickAnswer(service, "set my ringtone to klaxon").text, /Klaxon/);
 });
+
+test("the time and the date, at once", () => {
+  const { service } = setup("2026-10-19 22:41");
+  for (const q of ["what's the time right now", "whats the time", "what time is it", "time"]) assert.match(quickAnswer(service, q).text, /^It's 10:41 PM, Monday 19 October/, q);
+  for (const q of ["what day is it", "whats the date today", "what is today"]) assert.match(quickAnswer(service, q).text, /^Today is Monday 19 October 2026/, q);
+});

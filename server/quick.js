@@ -793,6 +793,16 @@ function clockCommand(t, raw) {
   const s = clean(raw).toLowerCase();
   let m;
   const h12 = t.settings().time_format !== "24h";
+  // "what's the time right now", "what time is it", "what day is it", "what's today's date".
+  const here = localParts(t.clock(), t.tz);
+  const nice = `${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][weekday(here.date) - 1]} ${Number(here.date.slice(8))} ${MONTH_NAMES[Number(here.date.slice(5, 7)) - 1].replace(/^./, (c) => c.toUpperCase())}`;
+  const timeNow = fmtClock(Number(here.time.slice(0, 2)) * 60 + Number(here.time.slice(3, 5)), h12);
+  if (/^(?:what(?:'s|s| is)?\s+)?(?:the\s+)?(?:current\s+)?time(?:\s+is\s+it)?(?:\s+(?:right\s+)?now)?$|^what time is it(?:\s+(?:right\s+)?now)?$|^(?:tell me|give me) the time$|^time$/.test(s)) {
+    return { text: `It's ${timeNow}, ${nice}.`, tools: [{ tool: "world_clock", status: "completed" }] };
+  }
+  if (/^(?:what(?:'s|s| is)?\s+)?(?:the\s+|today's\s+)?(?:date|day)(?:\s+(?:is it|today|is today))?(?:\s+(?:right\s+)?now)?$|^what day is it(?:\s+today)?$|^what(?:'s| is) today$|^what(?:'s| is) the date today$/.test(s)) {
+    return { text: `Today is ${nice} ${here.date.slice(0, 4)}. It's ${timeNow}.`, tools: [{ tool: "world_clock", status: "completed" }] };
+  }
   if ((m = /^(?:what(?:'s| is)?\s+)?(?:the\s+)?time(?:\s+is\s+it)?\s+(?:in|at)\s+(.+)$|^what time is it (?:in|at)\s+(.+)$/.exec(s))) {
     const z = zoneOf(t, m[1] || m[2]);
     if (!z) return null;
