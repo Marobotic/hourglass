@@ -20,7 +20,15 @@ Rectangle {
     color: Theme.surface
     border.width: 1
     border.color: gone ? Theme.border : Theme.alpha(accentOf(), 0.55)
-    opacity: gone ? 0.75 : 1
+    opacity: (gone ? 0.75 : 1) * appear
+    // It pops in once when it appears: a little rise and settle.
+    property real appear: 0
+    NumberAnimation on appear { from: 0; to: 1; duration: 260; easing.type: Easing.OutCubic }
+    NumberAnimation on scale { from: 0.92; to: 1; duration: 380; easing.type: Easing.OutBack; easing.overshoot: 1.6 }
+    // Alarm: the hands sweep round to the time.
+    property real shownMinutes: (info.minutes || 0)
+    NumberAnimation on shownMinutes { from: (info.minutes || 0) - 120; to: (info.minutes || 0); duration: 750; easing.type: Easing.OutCubic }
+    onShownMinutesChanged: if (kind === "alarm") face.requestPaint()
 
     function accentOf() {
         if (kind === "alarm") return Theme.accent;
@@ -73,7 +81,7 @@ Rectangle {
                     c.strokeStyle = Theme.muted;
                     c.beginPath(); c.moveTo(cx + Math.sin(a) * inner, cy - Math.cos(a) * inner); c.lineTo(cx + Math.sin(a) * (r - 2), cy - Math.cos(a) * (r - 2)); c.stroke();
                 }
-                const mins = card.info.minutes || 0;
+                const mins = card.shownMinutes;
                 const ha = ((mins / 60) % 12) * Math.PI / 6, ma = (mins % 60) * Math.PI / 30;
                 c.strokeStyle = Theme.fg; c.lineCap = "round";
                 c.lineWidth = 3; c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.sin(ha) * r * 0.5, cy - Math.cos(ha) * r * 0.5); c.stroke();
@@ -182,6 +190,13 @@ Rectangle {
             }
             Rectangle {
                 readonly property var b: card.badge()
+                // The badge springs in a beat after the card.
+                transformOrigin: Item.Center
+                SequentialAnimation on scale {
+                    NumberAnimation { to: 0; duration: 0 }
+                    PauseAnimation { duration: 260 }
+                    NumberAnimation { to: 1; duration: 320; easing.type: Easing.OutBack; easing.overshoot: 3 }
+                }
                 visible: !!b
                 implicitWidth: badgeText.implicitWidth + 12
                 implicitHeight: 18

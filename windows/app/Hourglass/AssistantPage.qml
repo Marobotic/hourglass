@@ -32,6 +32,36 @@ Item {
         return list;
     }
 
+    // The list shows msgModel, kept in step with `messages` one row at a time:
+    // a new message is inserted, a changed one updated in place, so a send or a
+    // poll never rebuilds the whole list (which made it jump up and back down).
+    // Newest first: the list runs bottom to top.
+    ListModel { id: msgModel }
+    onMessagesChanged: syncModel()
+    property var seen: ({})          // messages already shown once (they don't rise in again)
+    property bool ready: false       // the first load is on screen: later messages animate in
+    function syncModel() {
+        const want = page.messages.slice().reverse();
+        const ids = want.map(m => m.id);
+        // The message shown while sending becomes the real one when it arrives: same row.
+        for (let i = 0; i < msgModel.count; i++) {
+            if (msgModel.get(i).mid !== "pending" || ids.indexOf("pending") >= 0) continue;
+            const pendingText = JSON.parse(msgModel.get(i).json).text;
+            const real = want.find(m => m.role === "user" && m.text === pendingText);
+            if (real && !rowOf(real.id)) msgModel.setProperty(i, "mid", real.id);
+        }
+        for (let i = msgModel.count - 1; i >= 0; i--) if (ids.indexOf(msgModel.get(i).mid) < 0) msgModel.remove(i);
+        for (let i = 0; i < want.length; i++) {
+            const json = JSON.stringify(want[i]);
+            const at = indexOf(want[i].id);
+            if (at === i) { if (msgModel.get(i).json !== json) msgModel.setProperty(i, "json", json); continue; }
+            if (at > i) { msgModel.move(at, i, 1); if (msgModel.get(i).json !== json) msgModel.setProperty(i, "json", json); continue; }
+            msgModel.insert(i, { mid: want[i].id, json: json });
+        }
+    }
+    function indexOf(id) { for (let i = 0; i < msgModel.count; i++) if (msgModel.get(i).mid === id) return i; return -1; }
+    function rowOf(id) { return indexOf(id) >= 0; }
+
     function load() {
         Api.request("GET", "/api/assistant", null, (d, err) => {
             // An older background service has no assistant: it needs a restart.
@@ -39,6 +69,7 @@ Item {
             if (!d) return;
             const json = JSON.stringify(d);
             if (json !== page.chatJson) { page.chatJson = json; page.chat = d; }
+            if (!page.ready) Qt.callLater(() => page.ready = true);
             if (page.pending !== "" && (d.messages || []).some(m => m.role === "user" && m.text === page.pending)) page.pending = "";
             // Finished: pull what the assistant changed, so every page shows it.
             if (page.wasBusy && !d.busy && page.pending === "") Api.post("/api/sync/now", {});
@@ -57,6 +88,7 @@ Item {
         page.wasBusy = true;
         input.text = "";
         page.attachments = [];
+        list.stick = true;
         list.positionViewAtBeginning();     // back down to the newest message
         Api.request("POST", "/api/assistant/message", { text: t, files: files.map(a => a.id) }, (d, err) => {
             page.sending = false;
@@ -215,17 +247,45 @@ Item {
                 // chat was taller than the window that call never settled (rows get their real
                 // height only after they are made, so "the end" kept moving): the window froze and
                 // grew to 13 GB.
-                model: page.messages.slice().reverse()
+                model: msgModel
                 verticalLayoutDirection: ListView.BottomToTop
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                // The others glide up to make room for a new message (which rises in by itself, below).
+                displaced: Transition { NumberAnimation { properties: "y"; duration: 220; easing.type: Easing.OutCubic } }
+                // Stay on the newest message while things are added or grow (the Working line, an
+                // answer being written), unless the user has scrolled up to read.
+                readonly property real gap: contentY + height - originY - contentHeight
+                property bool stick: true
+                onMovementEnded: stick = Math.abs(gap) < 6
+                onContentHeightChanged: if (stick) Qt.callLater(() => list.positionViewAtBeginning())
+                onHeightChanged: if (stick) Qt.callLater(() => list.positionViewAtBeginning())
 
                 delegate: Item {
                     id: row
-                    required property var modelData
+                    required property string json
+                    required property string mid
+                    readonly property var modelData: JSON.parse(json)
                     readonly property bool mine: modelData.role === "user"
+                    // Parts that only change when they really do, so cards and tool lines are not
+                    // remade (and re-animated) on every poll while the answer is being written.
+                    readonly property string cardsJson: JSON.stringify(modelData.cards || [])
+                    readonly property string toolsJson: JSON.stringify(modelData.tools || [])
+                    // The answer still being worked on, with nothing in it yet: the Working line shows instead.
+                    readonly property bool empty: !mine && !modelData.text && !(modelData.tools || []).length && !(modelData.cards || []).length && !modelData.error
                     width: list.width
-                    height: bubble.height
+                    height: empty ? 0 : bubble.height
+                    visible: !empty
+                    // A message that is new on screen rises in, once (not when scrolled back into view).
+                    property real rise: 1
+                    opacity: rise
+                    transform: Translate { y: (1 - row.rise) * 16 }
+                    NumberAnimation on rise { id: riseAnim; running: false; from: 0; to: 1; duration: 300; easing.type: Easing.OutCubic }
+                    Component.onCompleted: {
+                        if (page.seen[row.mid] || !page.ready) { page.seen[row.mid] = true; return; }
+                        page.seen[row.mid] = true;
+                        riseAnim.start();
+                    }
 
                     // The bubble hugs short messages. Its width comes from the text measured on one
                     // line, never from the wrapped text inside it: that text wraps to the bubble, so
@@ -278,15 +338,18 @@ Item {
                                 spacing: 6
                                 visible: !row.mine && (row.modelData.tools || []).length > 0
                                 Repeater {
-                                    model: row.mine ? [] : (row.modelData.tools || [])
+                                    model: row.mine ? [] : JSON.parse(row.toolsJson)
                                     RowLayout {
                                         required property var modelData
                                         spacing: 8
+                                        NumberAnimation on opacity { from: 0; to: 1; duration: 220; easing.type: Easing.OutCubic }
                                         Icon {
                                             name: modelData.status === "completed" ? "check" : modelData.status === "error" ? "close" : "sync"
                                             size: 12
                                             color: modelData.status === "completed" ? Theme.teal : modelData.status === "error" ? Theme.accent : Theme.muted
                                             RotationAnimation on rotation { running: modelData.status !== "completed" && modelData.status !== "error"; from: 0; to: 360; duration: 1200; loops: Animation.Infinite }
+                                            // The tick pops in.
+                                            NumberAnimation on scale { from: 0.3; to: 1; duration: 340; easing.type: Easing.OutBack; easing.overshoot: 3 }
                                         }
                                         Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
                                     }
@@ -299,7 +362,7 @@ Item {
                                 Layout.maximumWidth: row.width * 0.9 - 30
                                 spacing: 8
                                 Repeater {
-                                    model: row.mine ? [] : (row.modelData.cards || [])
+                                    model: row.mine ? [] : JSON.parse(row.cardsJson)
                                     ResultCard {
                                         required property var modelData
                                         info: modelData
@@ -365,7 +428,8 @@ Item {
                     id: working
                     width: list.width
                     height: page.busy ? workCol.implicitHeight + 14 : 0
-                    visible: page.busy
+                    Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                    visible: height > 1
                     // The message being worked on: its steps, live.
                     readonly property var current: {
                         const m = page.chat.messages || [];
@@ -378,14 +442,33 @@ Item {
                         spacing: 6
                         RowLayout {
                             spacing: 12
+                            // Three dots that bounce in turn, like someone typing.
+                            Row {
+                                spacing: 5
+                                Layout.alignment: Qt.AlignVCenter
+                                Repeater {
+                                    model: 3
+                                    Rectangle {
+                                        required property int index
+                                        width: 7; height: 7; radius: 3.5
+                                        color: index === 0 ? Theme.accent : index === 1 ? Theme.orange : Theme.gold
+                                        SequentialAnimation on y {
+                                            running: working.visible
+                                            loops: Animation.Infinite
+                                            PauseAnimation { duration: index * 140 }
+                                            NumberAnimation { from: 0; to: -6; duration: 220; easing.type: Easing.OutQuad }
+                                            NumberAnimation { from: -6; to: 0; duration: 260; easing.type: Easing.OutBounce }
+                                            PauseAnimation { duration: (2 - index) * 140 + 300 }
+                                        }
+                                    }
+                                }
+                            }
                             Text {
                                 id: dots
-                                property int n: 1
-                                text: "Working" + ".".repeat(n) + (working.current ? "  " + Math.max(0, Math.round((page.app ? page.app.clock : Date.now()) - working.current.time) / 1000).toFixed(0) + " s" : "")
+                                text: "Working" + (working.current ? "  " + Math.max(0, Math.round((page.app ? page.app.clock : Date.now()) - working.current.time) / 1000).toFixed(0) + " s" : "")
                                 color: Theme.muted
                                 font.family: Theme.mono
                                 font.pixelSize: 13
-                                Timer { interval: 400; running: dots.visible; repeat: true; onTriggered: dots.n = dots.n % 3 + 1 }
                             }
                             // "What it's doing": the steps, opened and closed here.
                             Text {

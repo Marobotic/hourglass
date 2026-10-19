@@ -104,6 +104,12 @@ const TOOL_LABELS = {
   save_timer: ["Saving a timer", "Saved a timer"],
   update_timer: ["Updating a timer", "Updated a timer"],
   stop_timer: ["Stopping a timer", "Stopped a timer"],
+  stop_timers: ["Stopping timers", "Stopped the timer"],
+  set_alarms_enabled: ["Switching alarms", "Switched alarms"],
+  upcoming_events: ["Looking ahead", "Looked up what's coming"],
+  add_birthday: ["Adding a birthday", "Added a birthday"],
+  get_settings: ["Reading settings", "Read settings"],
+  set_settings: ["Changing settings", "Changed settings"],
 };
 
 /** One line in the message's "what it's doing" list, shown live under Working. */
@@ -668,9 +674,11 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (c.kind === "alarm" && c.id && c.state !== "removed") Object.assign(last, { alarm_id: c.id, last: "alarm" });
       if (c.kind === "alarm" && c.state === "removed" && last.alarm_id === c.id) delete last.alarm_id;
       if (c.kind === "note" && c.id) Object.assign(last, { note_id: c.id, last: "note" });
+      if (c.kind === "timer" && c.id && c.state === "running") Object.assign(last, { timer_id: c.id, last: "timer" });
     }
     if (ids?.alarm_id) Object.assign(last, { alarm_id: ids.alarm_id, last: "alarm" });
     if (ids?.note_id) Object.assign(last, { note_id: ids.note_id, last: "note" });
+    if (ids?.timer_id) Object.assign(last, { timer_id: ids.timer_id, last: "timer" });
   }
 
   const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, files: m.files || [], quick: !!m.quick, model: m.model || null });

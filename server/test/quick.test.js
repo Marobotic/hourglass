@@ -173,3 +173,39 @@ test("events: a title, a day and a time; an hour unless said", () => {
   assert.match(quickAnswer(service, "add gym session to my calendar tomorrow at 7am").text, /Added Gym session: tomorrow, 7:00 AM/);
   assert.equal(quickAnswer(service, "add a lecture for typography every monday"), null, "a course schedule is the model's");
 });
+
+test("reminders and timers by what people call them", () => {
+  const { service } = setup("2026-10-20 10:14");
+  const ctx = {};
+  const ask = (q) => {
+    const r = quickAnswer(service, q, ctx);
+    if (r?.ids?.timer_id) Object.assign(ctx, { timer_id: r.ids.timer_id, last: "timer" });
+    return r;
+  };
+  ask("remind me in 1 hour to play a game");
+  assert.match(ask("Remove the 1 hour reminder to play a game").text, /Cancelled "Play a game"/);
+  ask("25 min timer");
+  assert.match(ask("pause it").text, /Paused/);
+  assert.match(ask("resume the timer").text, /Resumed/);
+  assert.match(ask("add 5 minutes to my timer").text, /Added 5 min/);
+  assert.match(ask("cancel it").text, /Cancelled/);
+  ask("remind me to call mom at 9pm");
+  assert.match(ask("cancel my reminder to call mom").text, /Removed the "Call mom" reminder/);
+});
+
+test("events, attendance, world clock and settings at once", () => {
+  const { service } = setup("2026-10-20 10:14");
+  service.addCourse({ name: "Printmaking" });
+  service.addEvent({ course: "Printmaking", date: "2026-09-22", start: "08:30", end: "15:29", repeat: { freq: "weekly", days: [2] } });
+  service.addEvent({ title: "Dentist", date: "2026-10-22", start: "16:00", end: "17:00" });
+  service.addEvent({ title: "Yoga", date: "2026-10-21", start: "18:00", end: "19:00", repeat: { freq: "weekly" } });
+  assert.match(quickAnswer(service, "move the dentist to friday at 5pm").text, /Moved Dentist to Fri 23 Oct, 5:00 PM/);
+  assert.match(quickAnswer(service, "remove wednesday's yoga").text, /Removed tomorrow's Yoga. The other ones stay/);
+  assert.equal(quickAnswer(service, "cancel yoga"), null, "a whole series: the model asks first");
+  assert.match(quickAnswer(service, "I was absent today").text, /Printmaking today as absent/);
+  assert.equal(quickAnswer(service, "i missed my bus today"), null);
+  assert.match(quickAnswer(service, "what time is it in tokyo").text, /in Tokyo, 6 h ahead of you/);
+  assert.match(quickAnswer(service, "use 24 hour time").text, /24-hour/);
+  assert.equal(service.settings().time_format, "24h");
+  assert.match(quickAnswer(service, "set my ringtone to klaxon").text, /Klaxon/);
+});

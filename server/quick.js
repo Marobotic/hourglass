@@ -297,7 +297,7 @@ function timerRequest(t, raw) {
     text: `${label ? `"${cap(label)}" timer` : "Timer"} started for ${spell(secs)}. It rings at ${fmtClock(Number(end.time.slice(0, 2)) * 60 + Number(end.time.slice(3)), h12)}.`,
     tools: [{ tool: "start_timer", status: "completed" }],
     ids: { timer_id: row.id },
-    cards: [{ kind: "timer", state: "running", label: row.label, ends_at: row.ends_at, duration_s: row.duration_s }],
+    cards: [{ kind: "timer", id: row.id, state: "running", label: row.label, ends_at: row.ends_at, duration_s: row.duration_s }],
   };
 }
 
@@ -611,6 +611,237 @@ function eventRequest(t, raw) {
   return { text: `Added ${title}: ${card.when}, ${card.time}.`, tools: [{ tool: "add_event", status: "completed" }], cards: [card] };
 }
 
+// --- reminders and timers by what people call them -------------------------------------
+//
+// "remove the 1 hour reminder to play a game", "cancel my reminder", "stop it",
+// "pause the timer", "add 5 minutes to my timer", "cancel all timers".
+// A reminder is a timer ("remind me in 1 hour") or an alarm ("remind me at 9pm").
+
+function reminderCommand(t, raw, ctx) {
+  const s = clean(raw).toLowerCase();
+  const kindWord = /\b(?:timers?|reminders?|countdowns?)\b/.test(s);
+  const itWord = /\b(?:it|that|this one|that one)\b/.test(s) && ctx?.last === "timer";
+  if (!kindWord && !itWord) return null;
+  let m;
+  let verb = null;
+  let rest = "";
+  let addMin = 0;
+  if ((m = /^add\s+(\d+|an?|one|two|three|five|ten|fifteen|twenty|thirty)\s*(?:more\s+)?(minutes?|mins?|m|hours?|hrs?|h)\s+(?:more\s+)?(?:to|on)\s+(.+)$/.exec(s))) {
+    verb = "add";
+    addMin = num(m[1]) * (/^h/.test(m[2]) ? 60 : 1);
+    rest = m[3];
+  } else if ((m = /^(cancel|delete|remove|clear|stop|end|kill|dismiss|drop|scrap|get rid of|reset|pause|hold|resume|unpause|continue|restart)\s+(.*)$/.exec(s))) {
+    verb = m[1];
+    rest = m[2];
+  } else return null;
+  const timers = t.listTimers().filter((x) => x.state === "running" || x.state === "paused");
+  const alarms = /\breminders?\b/.test(s) ? t.listAlarms().filter((a) => a.enabled && a.next_at && !a.lead_event_id && !a.lead_course_id) : [];
+  const all = /^(?:all|every)\b/.test(rest);
+  const p = ` ${rest} `;
+  let pick;
+  if (all) pick = timers;
+  else if (/\b(?:it|that|this|last|latest|new|just)\b/.test(p) && ctx?.timer_id && timers.some((x) => x.id === ctx.timer_id)) pick = timers.filter((x) => x.id === ctx.timer_id);
+  else {
+    const dur = new RegExp(String.raw`\b(?:in\s+|for\s+)?(${DURATION})\b`).exec(p);
+    const words = p.replace(new RegExp(String.raw`\b(?:in\s+|for\s+)?${DURATION}\b`), " ")
+      .replace(/\b(?:my|the|that|this|which|is|was|thats|that's|one|timers?|reminders?|countdowns?|to|for|i|just|set|made|you|about|please|a|an|of)\b/g, " ")
+      .replace(/['’]s\b/g, "").split(/\s+/).filter((w) => w.length > 1);
+    const byWords = (list) => (words.length ? list.filter((x) => words.every((w) => x.label.toLowerCase().includes(w))) : list);
+    pick = byWords(timers);
+    // "the 1 hour reminder": the one that was an hour long, or rings in about an hour.
+    if (dur && pick.length > 1) {
+      const secs = parseDuration(dur[1]);
+      const near = pick.filter((x) => Math.abs((x.duration_s ?? 0) - secs) <= 60 || (x.ends_at && Math.abs(x.ends_at - (t.clock() + secs * 1000)) <= 5 * 60000));
+      if (near.length) pick = near;
+    }
+    if (!pick.length && alarms.length) {
+      // A reminder that is an alarm ("remind me at 9pm to call mom").
+      const hits = byWords(alarms);
+      if (hits.length === 1 && /^(?:cancel|delete|remove|clear|stop|end|kill|dismiss|drop|scrap|get rid of)$/.test(verb)) {
+        const a = hits[0];
+        const card = alarmCard(t, a, "set");
+        t.removeAlarm({ alarm_id: a.id });
+        return { text: `Removed the "${a.label}" reminder.`, tools: [{ tool: "remove_alarm", status: "completed" }], cards: [{ ...card, state: "removed", enabled: false }] };
+      }
+    }
+  }
+  if (!pick.length) return timers.length || alarms.length ? null : { text: "No timer or reminder is running.", tools: [{ tool: "list_timers", status: "completed" }] };
+  if (pick.length > 1 && !all) return null;
+  const cardOf = (x, state) => ({ kind: "timer", id: x.id, state, label: x.label, ends_at: x.ends_at, duration_s: x.duration_s });
+  const tools = [{ tool: "update_timer", status: "completed" }];
+  const name = pick.length === 1 ? `"${pick[0].label}"` : `${pick.length} timers`;
+  if (verb === "add") {
+    let row = null;
+    for (let i = 0; i < addMin; i++) row = t.updateTimer({ timer_id: pick[0].id, action: "add_minute" });
+    return { text: `Added ${addMin} min to ${name}.`, tools, ids: { timer_id: pick[0].id }, cards: [cardOf(row || pick[0], "running")] };
+  }
+  if (/^(?:pause|hold)$/.test(verb)) {
+    const rows = pick.filter((x) => x.state === "running").map((x) => t.updateTimer({ timer_id: x.id, action: "pause" }));
+    return { text: rows.length ? `Paused ${name}.` : `${name} is already paused.`, tools, cards: rows.slice(0, 4).map((x) => cardOf(x, "stopped")) };
+  }
+  if (/^(?:resume|unpause|continue)$/.test(verb)) {
+    const rows = pick.filter((x) => x.state === "paused").map((x) => t.updateTimer({ timer_id: x.id, action: "resume" }));
+    return { text: rows.length ? `Resumed ${name}.` : `${name} is already running.`, tools, cards: rows.slice(0, 4).map((x) => cardOf(x, "running")) };
+  }
+  if (verb === "restart") {
+    const row = t.updateTimer({ timer_id: pick[0].id, action: "restart" });
+    return { text: `Restarted ${name}.`, tools, ids: { timer_id: row.id }, cards: [cardOf(row, "running")] };
+  }
+  for (const x of pick) t.updateTimer({ timer_id: x.id, action: "reset" });
+  return { text: `Cancelled ${name}.`, tools: [{ tool: "stop_timers", status: "completed" }], cards: pick.slice(0, 4).map((x) => ({ ...cardOf(x, "stopped"), ends_at: null })) };
+}
+
+// --- events: remove or move by name --------------------------------------------------------
+//
+// "cancel the dentist", "remove thursday's dentist", "delete lunch with omar",
+// "move the dentist to friday at 5pm", "push study group to 6pm".
+// A whole repeating series is never removed here (the model asks first).
+
+function eventsNamed(t, words, day) {
+  const evs = t.findEvents({ limit: 500 }).events.filter((e) => e.next || e.date);
+  const hits = evs.filter((e) => words.every((w) => `${e.title} ${e.course_name || ""}`.toLowerCase().includes(w)));
+  if (!day) return hits;
+  const on = new Set(t.schedule({ from: day.from, to: day.to }).occurrences.map((o) => o.event_id));
+  return hits.filter((e) => on.has(e.event_id));
+}
+
+function eventCommand(t, raw) {
+  const s = clean(raw).toLowerCase();
+  let m;
+  const move = /^(?:move|reschedule|push|shift|change|postpone|bring forward)\s+(.+?)\s+(?:to|till|until)\s+(.+)$/.exec(s);
+  const del = !move && /^(?:cancel|delete|remove|clear|drop|scrap|get rid of)\s+(.+)$/.exec(s);
+  if (!move && !del) return null;
+  const target = (move ? move[1] : del[1]).replace(/\b(?:alarms?|timers?|reminders?|notes?)\b/, "\u0000");
+  if (target.includes("\u0000")) return null;
+  const day = findDay(target, t.today());
+  const words = (day ? day.rest : target).replace(/\b(?:my|the|that|this|event|appointment|meeting with|on|at|for|one)\b/g, " ").replace(/['’]s\b/g, "").split(/\s+/).filter((w) => w.length > 1);
+  if (!words.length) return null;
+  const hits = eventsNamed(t, words, day);
+  if (hits.length !== 1) return null;
+  const e = hits[0];
+  const row = t.store.get("events", e.event_id);
+  const repeating = !!row.repeat;
+  if (del) {
+    if (repeating && !day) return null; // the whole series: the model confirms first
+    const card = eventCard(t, e, "removed");
+    if (repeating) {
+      t.removeEvent({ event_id: row.id, scope: "occurrence", date: day.from });
+      const when = /^(?:today|tomorrow|yesterday)$/.test(day.word) ? `${day.word}'s ${e.title}` : `${e.title} on ${day.word}`;
+      return { text: `Removed ${when}. The other ones stay.`, tools: [{ tool: "remove_event", status: "completed" }], cards: [{ ...card, when: day.word, days_until: null }] };
+    }
+    t.removeEvent({ event_id: row.id });
+    return { text: `Removed ${e.title}.`, tools: [{ tool: "remove_event", status: "completed" }], cards: [card] };
+  }
+  if (repeating) return null; // moving one of a series: the model does it carefully
+  // Where to: a day, a time, or both ("friday at 5pm", "6pm", "tomorrow").
+  const to = ` ${move[2]} `;
+  const nd = findDay(to.trim(), t.today());
+  const tm = /\b(\d{1,2}(?:[:.]\d{2})?\s*(?:a\s?m|p\s?m)?|noon|midnight)\b/.exec(nd ? ` ${nd.rest} ` : to);
+  let clockMin = tm ? parseClock(tm[1].replace(".", ":")) : null;
+  if (!nd && !clockMin) return null;
+  if (clockMin && !clockMin.ampm && clockMin.minutes >= 60 && clockMin.minutes < 8 * 60) clockMin = { minutes: clockMin.minutes + 720, ampm: true };
+  const len = (Number(row.end_time.slice(0, 2)) * 60 + Number(row.end_time.slice(3))) - (Number(row.start_time.slice(0, 2)) * 60 + Number(row.start_time.slice(3)));
+  const hhmm = (x) => `${String(Math.floor(x / 60) % 24).padStart(2, "0")}:${String(x % 60).padStart(2, "0")}`;
+  const patch = { event_id: row.id };
+  if (nd) patch.date = nd.from;
+  if (clockMin) { patch.start = hhmm(clockMin.minutes); patch.end = hhmm(Math.min(clockMin.minutes + Math.max(len, 15), 23 * 60 + 59)); }
+  t.updateEvent(patch);
+  const moved = t.findEvents({ limit: 500 }).events.find((x) => x.event_id === row.id) || e;
+  const card = eventCard(t, moved, "changed");
+  return { text: `Moved ${e.title} to ${card.when}, ${card.time}.`, tools: [{ tool: "update_event", status: "completed" }], cards: [card] };
+}
+
+// --- attendance -------------------------------------------------------------------------------
+//
+// "mark today as attended", "I was absent today", "I skipped printmaking yesterday",
+// "no class tomorrow" (off), "clear today's mark".
+
+function attendanceCommand(t, raw) {
+  const s = clean(raw).toLowerCase();
+  let status = null;
+  if (/\b(?:attended|present|went to|was at|was in|made it to|been to)\b/.test(s)) status = "attended";
+  else if (/\b(?:absent|missed|skipped|didn't go|did not go|wasn't at|was not at|couldn't make)\b/.test(s)) status = "absent";
+  else if (/\b(?:no class|no lecture|class is off|lecture is off|cancelled class|class cancelled|is cancelled|day off|off day)\b/.test(s)) status = "off";
+  else if (/\b(?:clear|unmark|remove)\b.*\bmark\b/.test(s)) status = "none";
+  if (!status || /\b(?:alarm|timer|note)\b/.test(s)) return null;
+  // Only about classes: "I missed my bus today" is not an absence.
+  const classWord = /\b(?:mark|marked|class|classes|lecture|lectures|session|sessions|course|absent|attended|present)\b/.test(s);
+  const day = findDay(s, t.today()) || { from: t.today(), to: t.today(), word: "today", rest: s };
+  if (day.from !== day.to) return null;
+  let occ = t.schedule({ from: day.from, to: day.from }).occurrences.filter((o) => o.course_id);
+  // A course named: only that one.
+  const words = day.rest.replace(/\b(?:mark|marked|as|i|was|were|am|the|my|class|lecture|session|attended|present|absent|missed|skipped|went|to|at|in|off|no|today|it|didn't|did|not|go|clear|unmark|remove|is|cancelled)\b/g, " ").split(/\s+/).filter((w) => w.length > 2);
+  if (words.length) occ = occ.filter((o) => words.every((w) => o.title.toLowerCase().includes(w)));
+  if (!classWord && (!words.length || !occ.length)) return null;
+  if (!occ.length) return { text: `No class ${day.word === "today" || day.word === "tomorrow" || day.word === "yesterday" ? day.word : "on " + day.word}${words.length ? ` matching "${words.join(" ")}"` : ""} to mark.`, tools: [{ tool: "get_schedule", status: "completed" }] };
+  for (const o of occ) t.markSession({ event_id: o.event_id, date: day.from, status });
+  const what = { attended: "attended", absent: "absent", off: "off (no class)", none: "unmarked" }[status];
+  return { text: `Marked ${occ.map((o) => o.title).join(" and ")} ${day.word} as ${what}.`, tools: [{ tool: "mark_session", status: "completed" }], cards: [dayCard(t, day.from, day.word)] };
+}
+
+// --- world clock --------------------------------------------------------------------------------
+//
+// "what time is it in tokyo", "time in new york", "add london to my world clock".
+
+function zoneOf(t, name) {
+  const n = name.trim().toLowerCase().replace(/[?.!]+$/, "");
+  if (ZONES[n]) return ZONES[n];
+  try { return t.searchZones({ query: n, limit: 1 })[0]?.zone || null; } catch { return null; }
+}
+
+function clockCommand(t, raw) {
+  const s = clean(raw).toLowerCase();
+  let m;
+  const h12 = t.settings().time_format !== "24h";
+  if ((m = /^(?:what(?:'s| is)?\s+)?(?:the\s+)?time(?:\s+is\s+it)?\s+(?:in|at)\s+(.+)$|^what time is it (?:in|at)\s+(.+)$/.exec(s))) {
+    const z = zoneOf(t, m[1] || m[2]);
+    if (!z) return null;
+    const p = localParts(t.clock(), z);
+    const home = localParts(t.clock(), t.tz);
+    const diff = Math.round((zonedToEpoch(home.date, home.time, z) - zonedToEpoch(home.date, home.time, t.tz)) / -3600000 * 2) / 2;
+    const city = z.split("/").pop().replace(/_/g, " ");
+    return { text: `It's ${fmtClock(Number(p.time.slice(0, 2)) * 60 + Number(p.time.slice(3, 5)), h12)} in ${city}${p.date !== home.date ? (p.date > home.date ? " (tomorrow)" : " (yesterday)") : ""}${diff ? `, ${Math.abs(diff)} h ${diff > 0 ? "ahead of" : "behind"} you` : ", same as you"}.`, tools: [{ tool: "world_clock", status: "completed" }] };
+  }
+  if ((m = /^add\s+(.+?)\s+to\s+(?:my\s+|the\s+)?(?:world\s+)?clocks?$/.exec(s))) {
+    const z = zoneOf(t, m[1]);
+    if (!z) return null;
+    const row = t.addClock({ zone: z });
+    return { text: `Added ${row.label || z.split("/").pop().replace(/_/g, " ")} to your world clock.`, tools: [{ tool: "add_clock", status: "completed" }] };
+  }
+  return null;
+}
+
+// --- settings -------------------------------------------------------------------------------------
+//
+// "use 24 hour time", "switch to 12h", "turn the alarm sound off", "set my ringtone to klaxon",
+// "start the week on monday".
+
+function settingsCommand(t, raw) {
+  const s = clean(raw).toLowerCase();
+  let m;
+  const done = (text, args, tool = "set_settings") => ({ text, tools: [{ tool, status: "completed" }], cards: [{ kind: "setting", label: "Settings", value: text.replace(/\.$/, "") }], _apply: args });
+  if (/\b24[\s-]?(?:hour|hr|h)\b/.test(s) && /\b(?:use|switch|change|set|make|show|turn on)\b/.test(s)) { t.setSettings({ time_format: "24h" }); return done("Times now show in 24-hour format."); }
+  if (/\b12[\s-]?(?:hour|hr|h)\b/.test(s) && /\b(?:use|switch|change|set|make|show)\b/.test(s)) { t.setSettings({ time_format: "12h" }); return done("Times now show in 12-hour format (AM/PM)."); }
+  if ((m = /\b(?:alarm\s+)?sound\s+(off|on)\b|\b(?:turn|switch)\s+(off|on)\s+(?:the\s+)?(?:alarm\s+)?sound\b|\b(?:turn|switch)\s+(?:the\s+)?(?:alarm\s+)?sound\s+(off|on)\b|\b(mute|unmute)\s+(?:the\s+)?alarms?\b/.exec(s))) {
+    const on = /^(?:on|unmute)$/.test(m[1] || m[2] || m[3] || m[4]);
+    t.setSettings({ sound: on });
+    return done(on ? "Alarm sound is on." : "Alarm sound is off: alarms only vibrate and show.");
+  }
+  if ((m = /^(?:set|change|switch|make|use)\s+(?:my\s+|the\s+)?(?:alarm\s+)?(?:ringtone|alarm sound|sound)\s+(?:to|as)\s+(.+)$/.exec(s))) {
+    const want = m[1].replace(/^(?:the\s+)?/, "").replace(/\s+(?:ringtone|sound|song)$/, "");
+    const r = t.listRingtones().find((x) => x.name.toLowerCase() === want || x.id === want || x.name.toLowerCase().includes(want));
+    if (!r) return null;
+    t.setRingtone({ ringtone: r.kind === "builtin" ? r.id : r.id });
+    return done(`Alarms now ring with ${r.name}.`, null, "set_ringtone");
+  }
+  if ((m = /\bweek\s+(?:to\s+)?start(?:s)?\s+(?:on\s+)?(saturday|sunday|monday)\b|\bstart\s+(?:the|my)\s+week\s+on\s+(saturday|sunday|monday)\b/.exec(s))) {
+    const d = m[1] || m[2];
+    t.setSettings({ week_start: d === "monday" ? 1 : d === "saturday" ? 6 : 7 });
+    return done(`Your week now starts on ${d.charAt(0).toUpperCase() + d.slice(1)}.`);
+  }
+  return null;
+}
+
 // "Stop the timer", "cancel all timers", "stop the tea timer".
 function stopTimerRequest(t, raw) {
   const s = clean(raw).toLowerCase();
@@ -728,7 +959,7 @@ function spell(secs) {
  */
 export function quickAnswer(service, text, ctx = {}) {
   if (!text || text.length > 300 || /\n/.test(text.trim())) return null;
-  for (const f of [stopTimerRequest, alarmCommand, noteCommand, eventRequest, remindRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
+  for (const f of [reminderCommand, alarmCommand, settingsCommand, clockCommand, attendanceCommand, noteCommand, eventCommand, eventRequest, stopTimerRequest, remindRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
     try {
       const r = f(service, text, ctx);
       if (r) return r;
