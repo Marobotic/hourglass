@@ -24,7 +24,7 @@ import { cardsFor, trimCards } from "./cards.js";
 
 export const ENGINES = [
   { id: "free", name: "Free", note: "opencode's free models. No key needed; slower." },
-  { id: "claude", name: "Claude subscription", note: "Your Claude Pro or Max plan. Run `claude setup-token` and paste the token." },
+  { id: "claude", name: "Claude subscription", note: "Your Claude Pro or Max plan: sign in with your Claude account." },
   { id: "anthropic", name: "Claude API key", note: "Fastest. A key from console.anthropic.com; billed per use." },
   { id: "openai", name: "Other API key", note: "OpenAI, OpenRouter, Gemini, Groq, or any OpenAI-compatible API." },
 ];

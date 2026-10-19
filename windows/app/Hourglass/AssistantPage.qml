@@ -271,6 +271,8 @@ Item {
                     // remade (and re-animated) on every poll while the answer is being written.
                     readonly property string cardsJson: JSON.stringify(modelData.cards || [])
                     readonly property string toolsJson: JSON.stringify(modelData.tools || [])
+                    // Markdown joins lines; the assistant's lines are meant as lines ("Tomorrow:" then one per class).
+                    readonly property string shownText: mine ? (modelData.text || "") : String(modelData.text || "").replace(/([^\n])\n(?=[^\n])/g, "$1  \n")
                     // The answer still being worked on, with nothing in it yet: the Working line shows instead.
                     readonly property bool empty: !mine && !modelData.text && !(modelData.tools || []).length && !(modelData.cards || []).length && !modelData.error
                     width: list.width
@@ -294,7 +296,7 @@ Item {
                     Text {
                         id: natural
                         visible: false
-                        text: row.modelData.text
+                        text: row.shownText
                         textFormat: row.mine ? Text.PlainText : Text.MarkdownText
                         font.family: Theme.mono
                         font.pixelSize: 14
@@ -310,13 +312,16 @@ Item {
                                                  (row.modelData.files || []).length ? 290 : 0,
                                                  (row.modelData.cards || []).length ? ((row.modelData.cards || []).length > 1 ? 688 : 340) : 0,
                                                  page.openSteps[row.modelData.id] ? 620 : 0) + 32)
-                        height: body.implicitHeight + 22
+                        height: body.height + 22
                         color: row.mine ? Theme.surface2 : "transparent"
                         border.width: row.mine ? 1 : 0
                         border.color: Theme.border
                         Rectangle { visible: !row.mine; width: 3; color: Theme.accent; anchors { left: parent.left; top: parent.top; bottom: parent.bottom } }
 
-                        ColumnLayout {
+                        // A plain column, not a layout: its height is always the real height of what
+                        // it holds (a layout missed text that wrapped or cards that went to a second
+                        // row, and the message then overlapped the next one).
+                        Column {
                             id: body
                             anchors { left: parent.left; right: parent.right; top: parent.top; margins: 11; leftMargin: row.mine ? 14 : 16 }
                             spacing: 6
@@ -324,8 +329,7 @@ Item {
                             // What was attached to this message.
                             Flow {
                                 visible: row.mine && (row.modelData.files || []).length > 0
-                                Layout.fillWidth: true
-                                Layout.maximumWidth: row.width * 0.75 - 30
+                                width: body.width
                                 spacing: 6
                                 Repeater {
                                     model: row.mine ? (row.modelData.files || []) : []
@@ -358,8 +362,7 @@ Item {
                             // What it did, drawn: the alarm's clock, the timer's ring, the birthday's page.
                             Flow {
                                 visible: !row.mine && (row.modelData.cards || []).length > 0
-                                Layout.fillWidth: true
-                                Layout.maximumWidth: row.width * 0.9 - 30
+                                width: body.width
                                 spacing: 8
                                 Repeater {
                                     model: row.mine ? [] : JSON.parse(row.cardsJson)
@@ -367,15 +370,14 @@ Item {
                                         required property var modelData
                                         info: modelData
                                         now: page.app ? page.app.clock : Date.now()
-                                        width: Math.min(340, row.width * 0.9 - 30)
+                                        width: Math.min(340, body.width)
                                     }
                                 }
                             }
                             Text {
                                 visible: row.modelData.text !== ""
-                                Layout.fillWidth: true
-                                Layout.maximumWidth: row.width * (row.mine ? 0.75 : 0.9) - 30
-                                text: row.modelData.text
+                                width: body.width
+                                text: row.shownText
                                 textFormat: row.mine ? Text.PlainText : Text.MarkdownText
                                 wrapMode: Text.Wrap
                                 color: Theme.fg
@@ -386,7 +388,7 @@ Item {
                             }
                             Text {
                                 visible: !!row.modelData.error
-                                Layout.fillWidth: true
+                                width: body.width
                                 text: row.modelData.error || ""
                                 wrapMode: Text.Wrap
                                 color: Theme.accent
@@ -416,8 +418,7 @@ Item {
                             }
                             StepList {
                                 visible: parent.hasSteps && parent.stepsOpen
-                                Layout.fillWidth: true
-                                Layout.maximumWidth: row.width * 0.9 - 30
+                                width: body.width
                                 steps: row.modelData.steps || []
                             }
                         }

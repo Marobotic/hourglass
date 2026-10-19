@@ -667,6 +667,83 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     try { return JSON.parse(b || "{}"); } catch { return {}; }
   }
 
+  // --- signing in to Claude in the browser -------------------------------------------
+  //
+  // `claude setup-token` wants a terminal, so it runs under `script` (a pty), in a
+  // throwaway folder of its own. It prints a claude.com sign-in link and waits for
+  // the code that page shows; given the code, it prints a long-lived token.
+  const claudeLogin = (() => {
+    const live = new Map(); // email -> { child, out, url, timer }
+    const ESC = String.fromCharCode(27);
+    const BEL = String.fromCharCode(7);
+    const plain = (s) => s.split(ESC).map((p, i) => (i ? p.replace(/^\[[0-9;?]*[ -\/]*[@-~]|^\][^\u0007]*(?:\u0007|$)|^[()][0-9A-Za-z]|^[=>78]/, "") : p)).join("");
+    function cancel(t) {
+      const l = live.get(t.email);
+      if (!l) return;
+      live.delete(t.email);
+      clearTimeout(l.timer);
+      try { l.child.kill("SIGKILL"); } catch {}
+      try { rmSync(l.dir, { recursive: true, force: true }); } catch {}
+    }
+    function start(t) {
+      cancel(t);
+      if (!existsSync(claudeBin)) return Promise.reject(new Error("Claude Code isn't installed on the server yet."));
+      const dir = join(accountsDir, ".claude-login", sha(t.email || "owner").slice(0, 16) + "-" + randomBytes(4).toString("hex"));
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // A wide terminal, so the link and the token are never broken across lines.
+      const child = spawn("script", ["-qfc", `stty cols 4000 rows 50; exec ${claudeBin} setup-token`, "/dev/null"], {
+        cwd: dir,
+        env: { PATH: process.env.PATH, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, ".claude"), TERM: "xterm-256color", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const l = { child, dir, out: "", url: null };
+      // Ten minutes to sign in, then it is dropped.
+      l.timer = setTimeout(() => cancel(t), 10 * 60_000);
+      live.set(t.email, l);
+      child.stdout.on("data", (d) => { l.out += d; });
+      child.stderr.on("data", (d) => { l.out += d; });
+      child.on("error", () => {});
+      return new Promise((resolve, reject) => {
+        const began = Date.now();
+        const poll = setInterval(() => {
+          // The link is in a terminal hyperlink: ESC ] 8 ; params ; URL BEL.
+          const m = new RegExp(`\\]8;[^;]*;(https://[^${BEL}${ESC}]+)`).exec(l.out) || /(https:\/\/claude\.(?:com|ai)\/[^\s"'<>]+oauth[^\s"'<>]+)/.exec(plain(l.out));
+          if (m) { clearInterval(poll); l.url = m[1]; return resolve(m[1]); }
+          if (child.exitCode !== null || Date.now() - began > 30_000) {
+            clearInterval(poll);
+            cancel(t);
+            reject(new Error("Claude Code didn't start its sign-in. Try again in a moment."));
+          }
+        }, 200);
+      });
+    }
+    function finish(t, code) {
+      const l = live.get(t.email);
+      if (!l) return Promise.reject(new Error("Start the sign-in again: it timed out or was not started."));
+      if (!code || code.length < 10) return Promise.reject(new Error("Paste the whole code from the claude.com page."));
+      const before = l.out.length;
+      l.child.stdin.write(code.replace(/\s+/g, "") + "\r");
+      return new Promise((resolve, reject) => {
+        const began = Date.now();
+        const poll = setInterval(() => {
+          const after = plain(l.out.slice(before));
+          const tok = /(sk-ant-oat\d+-[A-Za-z0-9_-]{20,})/.exec(after.replace(/\s+/g, ""));
+          if (tok) { clearInterval(poll); cancel(t); return resolve(tok[1]); }
+          const bad = /(invalid|expired|error|failed)[^\n]{0,120}/i.exec(after);
+          if ((bad && Date.now() - began > 2000) || l.child.exitCode !== null || Date.now() - began > 45_000) {
+            clearInterval(poll);
+            cancel(t);
+            const said = bad ? bad[0].replace(/[\r\n]+/g, " ").replace(/press enter to retry\.*/i, "").trim() : "";
+            reject(new Error(/status code 400|invalid/i.test(said)
+              ? "That code wasn't accepted. Sign in again and copy the whole code from the claude.com page."
+              : said ? `Claude said: ${said}. Sign in again.` : "No token came back. Sign in again."));
+          }
+        }, 250);
+      });
+    }
+    return { start, finish, cancel };
+  })();
+
   /** The alarm or note a reply set or showed: "it" in the next message. */
   function remember(chat, cards = [], ids = {}) {
     const last = (chat.last ||= {});
@@ -781,6 +858,26 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (model && (engine === "anthropic" || engine === "claude") && !CLAUDE_MODELS.some((x) => x.id === model)) return send(res, 400, { error: "Unknown Claude model." }), true;
       return send(res, 200, settings.save(t, { engine, model, base_url, key })), true;
     }
+    // Sign in with Claude in the browser: the server runs Claude Code's own sign-in
+    // (`claude setup-token`), the app opens its link, the user signs in on claude.com
+    // and pastes back the code it shows; the token that comes out is saved like a pasted one.
+    if (path === "/api/assistant/claude/login" && m === "POST") {
+      try { return send(res, 200, { url: await claudeLogin.start(t) }), true; }
+      catch (e) { return send(res, 400, { error: e.message }), true; }
+    }
+    if (path === "/api/assistant/claude/login/code" && m === "POST") {
+      const b = await readJson(req);
+      try {
+        const token = await claudeLogin.finish(t, String(b.code || "").trim());
+        const cfg = settings.view(t);
+        return send(res, 200, settings.save(t, { engine: "claude", model: cfg.engine === "claude" ? undefined : null, key: token })), true;
+      } catch (e) { return send(res, 400, { error: e.message }), true; }
+    }
+    if (path === "/api/assistant/claude/login/cancel" && m === "POST") {
+      claudeLogin.cancel(t);
+      return send(res, 200, { ok: true }), true;
+    }
+
     // The models an OpenAI-compatible API offers with the saved (or given) key.
     if (path === "/api/assistant/models" && m === "GET") {
       const u = new URL(req.url, "http://x");

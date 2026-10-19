@@ -129,9 +129,76 @@ Modal {
         Field { Layout.fillWidth: true; text: dlg.baseUrl; placeholderText: "https://…/v1"; onEditingFinished: { if (text !== dlg.baseUrl) { dlg.baseUrl = text.trim(); dlg.model = ""; dlg.loadModels(); } } }
     }
 
+    // Claude plan: sign in in the browser. The server runs Claude Code's own sign-in;
+    // claude.com shows a code at the end, which goes back here.
+    property string signin: ""       // "", "starting", "waiting" (browser open), "finishing"
+    property bool pasteToken: false
+    function startSignin() {
+        error = ""; note = ""; signin = "starting";
+        Api.request("POST", "/api/assistant/claude/login", {}, (d, err) => {
+            if (!d) { dlg.signin = ""; dlg.error = err || "Could not start the sign-in."; return; }
+            dlg.signin = "waiting";
+            Qt.openUrlExternally(d.url);
+            codeField.forceActiveFocus();
+        }, true);
+    }
+    function finishSignin() {
+        error = ""; signin = "finishing";
+        Api.request("POST", "/api/assistant/claude/login/code", { code: codeField.text.trim() }, (d, err) => {
+            if (!d) { dlg.signin = ""; dlg.error = err || "Could not finish the sign-in."; return; }
+            dlg.signin = "";
+            codeField.text = "";
+            dlg.s.has_key = d.has_key;
+            dlg.note = "Signed in with your Claude account ✓";
+        }, true);
+    }
+    onClosed: if (signin !== "") { Api.request("POST", "/api/assistant/claude/login/cancel", {}, () => {}, true); signin = ""; }
+
+    ColumnLayout {
+        visible: dlg.engine === "claude"
+        Layout.fillWidth: true
+        spacing: 8
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            Btn {
+                text: dlg.signin === "starting" ? "Opening…" : dlg.hasKey ? "Sign in again" : "Sign in with Claude"
+                kind: dlg.hasKey ? "ghost" : "primary"
+                enabled: dlg.signin === "" && !!dlg.s && dlg.s.claude_ready
+                onClicked: dlg.startSignin()
+            }
+            Text {
+                Layout.fillWidth: true
+                visible: dlg.hasKey && dlg.signin === ""
+                text: "✓ Connected to your Claude account"
+                color: Theme.teal; font.family: Theme.mono; font.pixelSize: 12
+            }
+        }
+        Text {
+            visible: dlg.signin === "waiting" || dlg.signin === "finishing"
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: "Sign in on the page that opened in your browser and press Authorize. Claude then shows a code: copy it and paste it here."
+            color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12
+        }
+        RowLayout {
+            visible: dlg.signin === "waiting" || dlg.signin === "finishing"
+            Layout.fillWidth: true
+            spacing: 8
+            Field { id: codeField; Layout.fillWidth: true; placeholderText: "Paste the code from claude.com"; onAccepted: if (text.trim() !== "") dlg.finishSignin() }
+            Btn { text: dlg.signin === "finishing" ? "Finishing…" : "Finish"; kind: "primary"; enabled: dlg.signin === "waiting" && codeField.text.trim() !== ""; onClicked: dlg.finishSignin() }
+        }
+        Text {
+            visible: dlg.signin === ""
+            text: dlg.pasteToken ? "▴ Paste a token instead" : "▾ Or paste a token from claude setup-token"
+            color: tokHover.containsMouse ? Theme.fg : Theme.faint; font.family: Theme.mono; font.pixelSize: 11
+            MouseArea { id: tokHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: dlg.pasteToken = !dlg.pasteToken }
+        }
+    }
+
     // The key or token.
     ColumnLayout {
-        visible: dlg.needsKey
+        visible: dlg.needsKey && (dlg.engine !== "claude" || dlg.pasteToken)
         Layout.fillWidth: true
         spacing: 6
         Text {
