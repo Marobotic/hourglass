@@ -248,13 +248,14 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         else -> t.optLong("remaining_s")
     }
 
-    fun startTimer(seconds: Int, label: String, persistent: Boolean = false, startAt: Long? = null): JSONObject {
+    // id: a set id, so two devices snoozing the same ring make one timer.
+    fun startTimer(seconds: Int, label: String, persistent: Boolean = false, startAt: Long? = null, id: String? = null): JSONObject {
         val start = startAt?.takeIf { it > System.currentTimeMillis() }
         return store.upsert("timers", mapOf(
             "label" to label.ifBlank { if (seconds % 60 == 0) "${seconds / 60} min timer" else "${seconds}s timer" },
             "duration_s" to seconds, "state" to "running", "start_at" to start,
             "ends_at" to (start ?: System.currentTimeMillis()) + seconds * 1000L, "remaining_s" to null, "persistent" to if (persistent) 1 else 0,
-        ))
+        ), id)
     }
 
     private fun runTimer(t: JSONObject, secs: Long) = store.upsert("timers", mapOf("state" to "running", "start_at" to null, "remaining_s" to null,

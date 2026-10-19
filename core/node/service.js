@@ -527,7 +527,8 @@ export class Service {
   }
 
   // at: "HH:MM" today (tomorrow if past) in the user's zone, or epoch ms.
-  startTimer({ minutes, seconds, hours, label, persistent, at }) {
+  // id: a set id, so two devices snoozing the same ring make one timer.
+  startTimer({ minutes, seconds, hours, label, persistent, at, id }) {
     const duration = Math.round((Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60 + (Number(seconds) || 0));
     if (duration <= 0) throw new Error("give hours, minutes or seconds");
     const now = this.clock();
@@ -543,6 +544,7 @@ export class Service {
       }
     }
     return this.store.upsert("timers", {
+      ...(id ? { id } : {}),
       label: label || `${fmtDuration(duration)} timer`,
       duration_s: duration,
       state: "running",

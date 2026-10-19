@@ -517,14 +517,47 @@ ApplicationWindow {
                 Text { Layout.alignment: Qt.AlignHCenter; text: ringOverlay.item && ringOverlay.item.kind === "timer" ? "TIME'S UP" : "ALARM"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 2 }
                 Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: ringOverlay.item ? ringOverlay.item.label : ""; color: Theme.fg; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 22; font.weight: Font.DemiBold }
                 Text { Layout.alignment: Qt.AlignHCenter; text: Util.clock(app.clock); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
-                RowLayout {
-                    Layout.topMargin: 8
+                // A click snoozes; turning it off takes a 2-second hold, which a
+                // half-asleep click does not do.
+                Btn { Layout.topMargin: 8; Layout.fillWidth: true; Layout.preferredHeight: 48; text: "Snooze 5 min"; kind: "primary"; onClicked: Api.post("/api/ring/snooze?id=" + ringOverlay.item.id + "&minutes=5&via=" + encodeURIComponent("clicked Snooze in the window"), {}, () => app.pollState()) }
+                Rectangle {
+                    id: hold
                     Layout.fillWidth: true
-                    spacing: 10
-                    Btn { Layout.fillWidth: true; text: "Snooze 5 min"; onClicked: Api.post("/api/ring/snooze?id=" + ringOverlay.item.id + "&minutes=5", {}, () => app.pollState()) }
-                    Btn { Layout.fillWidth: true; text: "Dismiss"; kind: "primary"; onClicked: Api.post("/api/ring/stop?id=" + ringOverlay.item.id, {}, () => app.pollState()) }
+                    Layout.preferredHeight: 38
+                    color: "transparent"
+                    border.color: Theme.border
+                    border.width: 1
+                    property real progress: 0
+                    property bool hint: false
+                    Rectangle { anchors { left: parent.left; top: parent.top; bottom: parent.bottom } width: parent.width * hold.progress; color: Theme.alpha(Theme.accent, 0.35) }
+                    Text { anchors.centerIn: parent; text: hold.hint ? "Keep holding to dismiss" : "Hold to dismiss"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13 }
+                    NumberAnimation on progress { id: fill; running: false; from: 0; to: 1; duration: 2000; onFinished: if (hold.progress >= 1) Api.post("/api/ring/stop?id=" + ringOverlay.item.id + "&via=" + encodeURIComponent("held Dismiss in the window"), {}, () => app.pollState()) }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onPressed: { hold.hint = false; fill.restart() }
+                        onReleased: { if (hold.progress < 1) { fill.stop(); hold.progress = 0; hold.hint = true } }
+                        onCanceled: { fill.stop(); hold.progress = 0 }
+                    }
+                    Connections { target: ringOverlay; function onItemChanged() { fill.stop(); hold.progress = 0; hold.hint = false } }
                 }
             }
+        }
+    }
+
+    // Wake check: rings again in 5 minutes unless "I'm up".
+    Rectangle {
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: 52
+        z: 99
+        visible: !!app.appState.wake_check && !ringOverlay.visible
+        color: Theme.surface
+        border.color: Theme.accent
+        border.width: 1
+        RowLayout {
+            anchors { fill: parent; leftMargin: 18; rightMargin: 10 }
+            Text { Layout.fillWidth: true; text: app.appState.wake_check ? "Wake check: " + app.appState.wake_check.label + " rings again at " + Util.clock(app.appState.wake_check.at) : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
+            Btn { text: "I'm up"; kind: "primary"; onClicked: Api.post("/api/ring/awake", {}, () => app.pollState()) }
         }
     }
 

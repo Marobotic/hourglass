@@ -165,6 +165,43 @@ Item {
                         }, true)
                     }
                 }
+                // Every ring on this computer and how it ended: a person, another
+                // device, nobody, or the app breaking.
+                SettingRow {
+                    label: "Alarm history"
+                    hint: "What each alarm did on this computer: rang, snoozed, dismissed (here or on another device), or broke."
+                    Btn {
+                        text: history.visible ? "Hide" : "Show"
+                        onClicked: {
+                            if (history.visible) { history.visible = false; return; }
+                            Api.get("/api/ring/history", (d) => { history.entries = d || []; history.visible = true; });
+                        }
+                    }
+                }
+                ColumnLayout {
+                    id: history
+                    visible: false
+                    property var entries: []
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text { visible: history.entries.length === 0; text: "Nothing has rung on this computer yet."; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12 }
+                    Repeater {
+                        model: history.entries.slice(0, 60)
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            readonly property bool broke: modelData.event === "broke" || modelData.event === "no sound"
+                            Layout.fillWidth: true
+                            spacing: 1
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { Layout.fillWidth: true; text: Util.shortDate(Util.dayOf(modelData.at)) + " " + Util.clock(modelData.at); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 11 }
+                                Text { text: String(modelData.event).toUpperCase(); color: broke ? Theme.accent : Theme.muted; font.family: Theme.mono; font.pixelSize: 11; font.weight: broke ? Font.Bold : Font.Normal; font.letterSpacing: 1 }
+                            }
+                            Text { Layout.fillWidth: true; text: modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
+                            Text { Layout.fillWidth: true; visible: !!modelData.detail; text: modelData.detail || ""; wrapMode: Text.Wrap; color: broke ? Theme.accent : Theme.faint; font.family: Theme.mono; font.pixelSize: 12 }
+                        }
+                    }
+                }
 
                 Section { Layout.fillWidth: true; text: "Use with AI" }
                 Text {

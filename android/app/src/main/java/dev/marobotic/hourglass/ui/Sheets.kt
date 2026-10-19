@@ -415,6 +415,28 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
                 }
                 HButton("Test", icon = androidx.compose.material.icons.Icons.Outlined.NotificationsActive) { dev.marobotic.hourglass.alarm.Scheduler.test(ctx); testing = true }
             }
+            // Every ring on this phone and how it ended: a person, nobody, or the app breaking.
+            var history by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    T("Alarm history", 15)
+                    T("What each alarm did on this phone: rang, snoozed, dismissed, or broke.", 12, HColors.muted)
+                }
+                HButton(if (history) "Hide" else "Show") { history = !history }
+            }
+            if (history) {
+                val entries = remember(history) { dev.marobotic.hourglass.alarm.RingLog.read(ctx).take(60) }
+                val fmt = remember { java.time.format.DateTimeFormatter.ofPattern("EEE d MMM HH:mm:ss") }
+                if (entries.isEmpty()) T("Nothing has rung on this phone yet.", 12, HColors.faint)
+                for (e in entries) Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Row {
+                        T(fmt.format(java.time.Instant.ofEpochMilli(e.at).atZone(repo.zone)), 11, HColors.muted, modifier = Modifier.weight(1f))
+                        T(e.event.uppercase(), 11, if (e.broke) HColors.accent else HColors.muted, bold = e.broke, spacing = 0.6)
+                    }
+                    T(e.label, 13, maxLines = 1)
+                    if (e.detail.isNotEmpty()) T(e.detail, 12, if (e.broke) HColors.accent else HColors.faint)
+                }
+            }
 
             Section("Time")
             T("CLOCK", 11, HColors.muted, spacing = 0.6)

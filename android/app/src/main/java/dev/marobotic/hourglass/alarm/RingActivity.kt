@@ -14,7 +14,17 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,7 +56,6 @@ import dev.marobotic.hourglass.ui.Mono
 import dev.marobotic.hourglass.ui.PixelLogo
 import kotlinx.coroutines.delay
 
-// Full-screen ringing UI, shown over the lock screen.
 // Full-screen ringing UI over the lock screen. The sound lives in RingService;
 // this screen only shows what is ringing and sends Stop or Snooze.
 class RingActivity : ComponentActivity() {
@@ -60,9 +69,10 @@ class RingActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val (label, kind, _) = RingService.ringing ?: run { finish(); return }
         registerReceiver(closer, android.content.IntentFilter(CLOSE), android.content.Context.RECEIVER_NOT_EXPORTED)
+        if (savedInstanceState == null) RingLog.add(this, label, "screen", "ring screen shown")
         setContent {
             HourglassTheme {
-                RingScreen(label, kind, onSnooze = { RingService.snooze(this) }, onDismiss = { RingService.stop(this) })
+                RingScreen(label, kind, onSnooze = { RingService.snooze(this, "tapped Snooze on the ring screen") }, onDismiss = { RingService.stop(this, "held Dismiss on the ring screen") })
             }
         }
     }
@@ -77,11 +87,9 @@ class RingActivity : ComponentActivity() {
 private fun RingScreen(label: String, kind: String, onSnooze: () -> Unit, onDismiss: () -> Unit) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
-        val start = now
         while (true) {
             delay(1000)
             now = System.currentTimeMillis()
-            if (now - start > 61_000) onDismiss() // the service gives up after a minute too
         }
     }
     val wobble by rememberInfiniteTransition(label = "wobble").animateFloat(-8f, 8f, infiniteRepeatable(tween(180), RepeatMode.Reverse), label = "r")
@@ -98,9 +106,39 @@ private fun RingScreen(label: String, kind: String, onSnooze: () -> Unit, onDism
         Spacer(Modifier.height(8.dp))
         Text(Dates.clock(now, java.time.ZoneId.systemDefault()), color = HColors.muted, fontFamily = Mono, fontSize = 18.sp)
         Spacer(Modifier.height(48.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            HButton("Snooze 5 min", Modifier.weight(1f).height(56.dp), onClick = onSnooze)
-            HButton("Dismiss", Modifier.weight(1f).height(56.dp), primary = true, onClick = onDismiss)
-        }
+        // A tap snoozes; turning it off takes a 2-second hold, which a
+        // half-asleep tap does not do.
+        HButton("Snooze 5 min", Modifier.fillMaxWidth().height(72.dp), primary = true, onClick = onSnooze)
+        Spacer(Modifier.height(14.dp))
+        HoldToDismiss(Modifier.fillMaxWidth().height(56.dp), onDismiss)
+    }
+}
+
+@Composable
+private fun HoldToDismiss(modifier: Modifier, onDone: () -> Unit) {
+    val progress = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    var hint by remember { mutableStateOf(false) }
+    var done by remember { mutableStateOf(false) }
+    Box(
+        modifier.border(1.dp, HColors.border).pointerInput(Unit) {
+            detectTapGestures(onPress = {
+                hint = false
+                val job = scope.launch {
+                    progress.animateTo(1f, tween(2000, easing = LinearEasing))
+                    if (!done) { done = true; onDone() }
+                }
+                tryAwaitRelease()
+                if (!done) {
+                    job.cancel()
+                    hint = true
+                    scope.launch { progress.animateTo(0f, tween(200)) }
+                }
+            })
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth(progress.value).background(HColors.accent.copy(alpha = 0.35f)))
+        Text(if (hint) "Keep holding to dismiss" else "Hold to dismiss", color = HColors.fg, fontFamily = Mono, fontSize = 14.sp)
     }
 }
