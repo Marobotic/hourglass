@@ -114,7 +114,7 @@ test("settings: free by default, a bad key is refused, a good one is kept but ne
 });
 
 test("Claude with a key: the tool call sets the alarm, and the reply has an alarm card", async () => {
-  assert.equal((await call("POST", "/api/assistant/message", { text: "gym alarm 7:30 mondays and wednesdays" })).status, 202);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "help me plan my gym mornings" })).status, 202);
   const done = await waitIdle();
   const reply = done.messages.at(-1);
   assert.equal(reply.error, null);

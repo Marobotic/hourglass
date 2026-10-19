@@ -7,7 +7,7 @@
 // a message with words left over that aren't understood is passed on.
 import { WEEKDAYS, addDays, localParts, weekday, zonedToEpoch } from "../core/dates.js";
 import { alarmCard, dayCard, eventCard } from "./cards.js";
-import { readAnswer } from "./answer.js";
+import { findDay, readAnswer } from "./answer.js";
 
 const DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
@@ -106,7 +106,7 @@ function clean(text) {
  * "7:15 on weekdays called gym". Returns null when anything is left that
  * isn't understood.
  */
-function parseWhen(rest, { tz, now, wake }) {
+export function parseWhen(rest, { tz, now, wake }) {
   let s = ` ${rest.toLowerCase()} `;
   const out = { label: null, days: null, date: null, zone: null, clock: null, inSecs: null };
 
@@ -142,7 +142,7 @@ function parseWhen(rest, { tz, now, wake }) {
       const days = [...every[1].matchAll(new RegExp(DAY_NAMES.join("|"), "g"))].map((m) => DAY_NAMES.indexOf(m[0]) + 1);
       if (days.length && (/every/.test(every[0]) || days.length > 1 || /days?\s*$/.test(every[1].trim()) || /s$/.test(every[1].trim()))) {
         out.days = [...new Set(days)].sort();
-        s = s.replace(every[0], " ");
+        s = s.replace(every[0].trimEnd() + " ", " "); // (matched on s + " ": its last space may not be in s)
       }
     }
   }
@@ -251,6 +251,8 @@ function alarmRequest(t, raw) {
   let label = null;
   if ((m = /^(?:set|setup|set up|make|create|add|put|schedule|start)?\s*(?:me\s+)?(?:an?\s+|my\s+|the\s+)?(?:new\s+)?alarm(?:\s+clock)?\s*(.*)$/.exec(s))) rest = m[1];
   else if ((m = /^wake\s+me(?:\s+up)?\s+(.+)$/.exec(s))) { rest = m[1]; wake = true; label = "Wake up"; }
+  // "gym alarm 7am on thursdays": the label first.
+  else if ((m = /^([a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,3})\s+alarm\s+(.+)$/.exec(s)) && !/^(?:my|the|an?|set|setup|make|create|add|new|cancel|delete|remove|turn|move|change|what|whats|what's|when|which|any|show|list)\b/.test(m[1])) { rest = m[2]; label = m[1]; }
   else if ((m = /^(?:remind me|ping me)\s+(.+?)\s+(?:to|about)\s+(.+)$/.exec(s)) && /^(?:at|on|tomorrow|tonight|today)\b/.test(m[1])) { rest = m[1]; label = m[2]; }
   if (rest === null || !rest.trim()) return null;
   const w = parseWhen(rest, { tz: t.tz, now: t.clock(), wake });
@@ -422,6 +424,193 @@ function cancelAlarmRequest(t, raw) {
   return { text: `Removed ${name}${card.when ? ` (${card.when})` : ""}.`, tools, cards: [{ ...card, state: "removed", enabled: false }] };
 }
 
+// --- alarms by what people call them ---------------------------------------------------
+//
+// "remove my alarm that's in 1 hour", "cancel it", "delete the alarm I just set",
+// "turn off tomorrow's alarm", "move my gym alarm to 8", "make it 9 instead".
+// ctx.alarm_id is the alarm this chat last set or showed ("it", "that one").
+
+const ALARM_FILLER = /\b(?:my|the|that|this|which|is|was|thats|that's|one|alarms?|i|just|set|made|created|added|you|ringing|rings|going|goes|off|please|for|at|on|up|wake|currently|now|existing|of)\b/g;
+
+/** The alarms a phrase points at: "in 1 hour", "7am", "tomorrow", "gym", "it". */
+function resolveAlarms(t, phrase, ctx) {
+  const list = t.listAlarms();
+  const p = ` ${phrase.toLowerCase()} `;
+  const last = ctx?.alarm_id ? list.find((a) => a.id === ctx.alarm_id) : null;
+  if (last && /\b(?:it|that|this|last|latest|new|newest|recent|just|same)\b/.test(p) && !/\d/.test(p)) return [last];
+  // "in 1 hour", "in 30 minutes": the one ringing about then.
+  const dur = new RegExp(String.raw`\bin\s+(${DURATION})\b`).exec(p);
+  if (dur) {
+    const at = t.clock() + parseDuration(dur[1]) * 1000;
+    return list.filter((a) => a.next_at && Math.abs(a.next_at - at) <= 5 * 60000);
+  }
+  // "7am", "11:14", "at 8"
+  const c = /\b(\d{1,2}(?:[:.]\d{2})?\s*(?:a\s?m|p\s?m)?|noon|midnight)\b/.exec(p);
+  if (c) {
+    const k = parseClock(c[1]);
+    if (k) {
+      const hits = list.filter((a) => {
+        const time = a.next_at ? localParts(a.next_at, t.tz).time : a.time;
+        if (!time) return false;
+        const m = Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+        return k.ampm ? m === k.minutes : m % 720 === k.minutes % 720;
+      });
+      if (hits.length) return hits;
+    }
+  }
+  // "tomorrow's alarm", "thursday's alarm": the ones ringing that day (one you set beats a lecture one).
+  const day = findDay(p.trim(), t.today());
+  if (day) {
+    const start = zonedToEpoch(day.from, "00:00", t.tz);
+    const end = zonedToEpoch(addDays(day.to, 1), "00:00", t.tz);
+    const hits = list.filter((a) => a.enabled && a.next_at && a.next_at >= start && a.next_at < end);
+    const own = hits.filter((a) => !a.lead_event_id && !a.lead_course_id);
+    return own.length === 1 ? own : hits;
+  }
+  // Words of its label: "gym", "call mom".
+  const words = p.replace(ALARM_FILLER, " ").replace(/['’]s\b/g, "").split(/\s+/).filter((w) => w.length > 1 && !/^(?:it|alarm|today|tomorrow)$/.test(w));
+  if (words.length) return list.filter((a) => words.every((w) => a.label.toLowerCase().includes(w)));
+  // Nothing named: the one this chat last touched, else the only one of yours that will ring.
+  if (last) return [last];
+  return list.filter((a) => a.enabled && a.next_at && !a.lead_event_id && !a.lead_course_id);
+}
+
+function alarmCommand(t, raw, ctx) {
+  const s = clean(raw).toLowerCase();
+  const aboutAlarm = /\balarms?\b/.test(s) || (ctx?.last === "alarm" && /\b(?:it|that|this one|that one)\b/.test(s));
+  if (!aboutAlarm) return null;
+  let m;
+  // Move: "move my gym alarm to 8", "change it to 7:30", "make it 9 instead", "push the alarm to 8am tomorrow".
+  if ((m = /^(?:change|move|make|set|push|shift|reschedule|update|put)\s+(.+?)\s+(?:to|for|at)\s+(.+?)(?:\s+instead)?$/.exec(s)) || (m = /^make\s+(it|that)\s+(.+?)(?:\s+instead)?$/.exec(s))) {
+    const found = resolveAlarms(t, m[1], ctx);
+    if (found.length !== 1) return null;
+    const a = found[0];
+    const w = parseWhen(m[2].replace(/^(?:at|for)\s+/, ""), { tz: t.tz, now: t.clock(), wake: /wake/.test(a.label.toLowerCase()) });
+    if (!w) return null;
+    const row = t.setAlarm({ alarm_id: a.id, time: w.time, ...(w.days ? { days: w.days } : { date: w.date }), enabled: true });
+    const card = alarmCard(t, row, "changed");
+    return { text: `Moved ${a.label !== "Alarm" ? `"${a.label}"` : "your alarm"} to ${card.time} ${card.when}.`, tools: [{ tool: "set_alarm", status: "completed" }], ids: { alarm_id: row.id }, cards: [card] };
+  }
+  let verb = /^(cancel|delete|remove|clear|get rid of|kill|drop|scrap|turn off|switch off|disable|silence|mute|stop|turn on|switch on|enable|unmute)\b/.exec(s);
+  let rest = verb ? s.slice(verb[0].length).trim() : "";
+  // "turn it back on", "switch the gym alarm off"
+  const split = !verb && /^(turn|switch)\s+(.+?)\s+(?:back\s+)?(on|off)$/.exec(s);
+  if (split) { verb = [split[0], `${split[1]} ${split[3]}`]; rest = split[2].replace(/\s+back$/, ""); }
+  if (!verb) return null;
+  const on = /^(?:turn on|switch on|enable|unmute)$/.test(verb[1]);
+  const off = /^(?:turn off|switch off|disable|silence|mute|stop)$/.test(verb[1]);
+  const tools = [{ tool: on || off ? "set_alarms_enabled" : "remove_alarm", status: "completed" }];
+  // "turn off all my alarms" (deleting them all is the model's, with a question first)
+  if (/^(?:all|every)\b/.test(rest) && !/\b(?:in|at|tomorrow|today|\d)/.test(rest.replace(/^(?:all|every)\s+/, ""))) {
+    if (!on && !off) return null;
+    const pick = t.listAlarms().filter((a) => !!a.enabled !== on);
+    for (const a of pick) t.setAlarm({ alarm_id: a.id, enabled: on });
+    return { text: pick.length ? `Turned ${on ? "on" : "off"} ${pick.length} alarm${pick.length > 1 ? "s" : ""}.` : `All your alarms are already ${on ? "on" : "off"}.`, tools, cards: pick.slice(0, 4).map((a) => alarmCard(t, a, on ? "on" : "off")) };
+  }
+  const found = resolveAlarms(t, rest, ctx).filter((a) => (on ? !a.enabled : off ? a.enabled : true));
+  if (found.length !== 1) return null;
+  const a = found[0];
+  const card = alarmCard(t, a, "set");
+  const name = a.label && a.label !== "Alarm" ? `"${a.label}"` : `the ${card.time} alarm`;
+  if (on || off) {
+    t.setAlarm({ alarm_id: a.id, enabled: on });
+    return { text: `Turned ${on ? "on" : "off"} ${name}.`, tools, ids: { alarm_id: a.id }, cards: [alarmCard(t, a, on ? "on" : "off")] };
+  }
+  t.removeAlarm({ alarm_id: a.id });
+  return { text: `Removed ${name}${card.when ? ` (${card.when})` : ""}.`, tools, cards: [{ ...card, state: "removed", enabled: false }] };
+}
+
+// --- notes by what people say -------------------------------------------------------------
+//
+// "add a note: buy lino", "note that the exam is on the 5th", "write down call the printer",
+// "add carbon paper to my to buy list", "add 'read chapter 3' to the printmaking notes".
+
+function courseIn(t, words) {
+  const w = words.toLowerCase().replace(/\b(?:my|the|class|course|lecture|notes?)\b/g, " ").trim();
+  if (!w) return null;
+  const parts = w.split(/\s+/);
+  return t.listCourses().find((c) => parts.every((p) => `${c.name} ${c.code || ""}`.toLowerCase().includes(p))) || null;
+}
+
+function noteCommand(t, raw) {
+  const s = clean(raw);
+  let m;
+  // Add to an existing note or list: "add X to my to buy list".
+  if ((m = /^(?:add|put|append)\s+(.+?)\s+(?:to|on|in)\s+(?:my\s+|the\s+)?(.+?)(?:\s+(?:note|list|notes))?$/i.exec(s)) && !/\b(?:calendar|schedule|alarms?|timers?|drive|folder)\b/i.test(m[2])) {
+    const what = m[1].replace(/^["']|["']$/g, "").trim();
+    const target = m[2].toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    if (!what || !target) return null;
+    const notes = t.store.all("notes").filter((n) => !n.deleted);
+    const words = target.split(" ");
+    let hits = notes.filter((n) => words.every((w) => (n.title || "").toLowerCase().includes(w)));
+    if (hits.length > 1) hits = hits.sort((a, b) => b.updated_at - a.updated_at).slice(0, 1);
+    if (hits.length !== 1) return null;
+    const n = hits[0];
+    const body = String(n.body || "").replace(/\s+$/, "");
+    // Keep the note's own list style: a to-do list gets a to-do, a bullet list a bullet.
+    const line = /^\s*[-*] \[[ xX]\]/m.test(body) ? `- [ ] ${what}` : /^\s*[-*] /m.test(body) ? `- ${what}` : /^\s*\d+\. /m.test(body) ? `${(body.match(/^\s*\d+\. /gm) || []).length + 1}. ${what}` : what;
+    const row = t.store.upsert("notes", { id: n.id, body: body ? `${body}\n${line}` : line });
+    const d = t.describeNote(row);
+    return { text: `Added "${what}" to ${(n.title || "").replace(/[\s:.;,-]+$/, "") || "your note"}.`, tools: [{ tool: "append_note", status: "completed" }], ids: { note_id: n.id }, cards: [{ kind: "note", state: "changed", label: d.title || "Untitled", course: d.course_name || "", id: n.id }] };
+  }
+  // A new note.
+  if (!(m = /^(?:add|make|create|write|take|new|start)\s+(?:a\s+|me\s+a\s+)?(?:new\s+)?note\s*(?:that says|saying|that|:|-|—)?\s*(.*)$/i.exec(s)) && !(m = /^(?:note(?:\s+that|\s*:)|write down|jot down|remember that|make a note of)\s+(.+)$/i.exec(s))) return null;
+  let body = (m[1] || "").replace(/^["']|["']$/g, "").trim();
+  let course = null;
+  const tail = /\s+(?:for|in|under|to)\s+(?:my\s+|the\s+)?(.+?)(?:\s+(?:class|course|notes?))?$/i.exec(body);
+  if (tail) {
+    const c = courseIn(t, tail[1]);
+    if (c) { course = c; body = body.slice(0, tail.index).trim(); }
+  }
+  body = body.replace(/^(?:about|on)\s+/i, "");
+  if (!body) return null;
+  const title = body.split("\n")[0].replace(/[.:;,]+$/, "").slice(0, 48).replace(/^./, (x) => x.toUpperCase());
+  const row = t.addNote({ course: course?.id, title, body: body.length > title.length ? body : "" });
+  const d = t.describeNote(row);
+  return { text: `Saved a note "${title}"${d.course_name ? ` in ${d.course_name}` : ""}.`, tools: [{ tool: "add_note", status: "completed" }], ids: { note_id: row.id }, cards: [{ kind: "note", state: "added", label: title, course: d.course_name || "", id: row.id }] };
+}
+
+// "add dentist on thursday at 4pm", "put lunch with omar tomorrow 1pm to 2:30pm",
+// "schedule a meeting on the 25th at 10 for 2 hours": one event, an hour unless said.
+function eventRequest(t, raw) {
+  const s = clean(raw);
+  const m = /^(?:add|put|schedule|book|create|make|set up|plan)\s+(?:a\s+|an\s+|my\s+)?(?:new\s+)?(?:event\s+|appointment\s+)?(.+)$/i.exec(s);
+  if (!m || /\b(?:alarm|timer|note|birthday|bday|reminder|course|class|lecture|clock)s?\b/i.test(m[1])) return null;
+  const low = ` ${m[1].toLowerCase()} `;
+  const day = findDay(low.trim(), t.today());
+  // The times: "at 4pm", "4-6pm", "from 1pm to 2:30pm", "for 2 hours".
+  const T = String.raw`(\d{1,2}(?:[:.]\d{2})?\s*(?:a\s?m|p\s?m)?|noon|midnight)`;
+  const range = new RegExp(String.raw`\s(?:from\s+|at\s+)?${T}\s*(?:-|–|to|until|till)\s*${T}\s`).exec(low);
+  const single = range ? null : new RegExp(String.raw`\s(?:at|@)\s+${T}\s|\s${T.replace("?|noon", "|noon")}\s`).exec(low);
+  const atText = range ? range[1] : single ? single[1] || single[2] : null;
+  if (!atText || !day || day.from !== day.to) return null;
+  let start = parseClock(atText.replace(/\./, ":"));
+  if (!start) return null;
+  let end = range ? parseClock(range[2].replace(/\./, ":")) : null;
+  // "4-6pm": the pm of the end goes to the start too.
+  if (range && end && !start.ampm && end.ampm && end.minutes >= 720 && start.minutes < 720 && start.minutes + 720 < end.minutes) start = { minutes: start.minutes + 720, ampm: true };
+  // A bare hour like "at 4" is afternoon when that is the likelier one (1-7 → pm).
+  if (!start.ampm && start.minutes >= 60 && start.minutes < 8 * 60) start = { minutes: start.minutes + 720, ampm: true };
+  const dur = /\sfor\s+(\d+(?:\.\d+)?\s*(?:hours?|hrs?|h|minutes?|mins?|m)(?:\s*(?:and\s+)?\d+\s*(?:minutes?|mins?|m))?|an hour|half an hour|an hour and a half)\s/.exec(low);
+  let endMin = end ? end.minutes : start.minutes + (dur ? Math.round((parseDuration(dur[1]) || 3600) / 60) : 60);
+  if (endMin <= start.minutes) endMin = Math.min(start.minutes + 60, 23 * 60 + 59);
+  // The title: what is left once the day and times are taken out.
+  let title = ` ${day.rest} `
+    .replace(range ? range[0].trim() : single ? single[0].trim() : "", " ")
+    .replace(dur ? dur[0].trim() : "", " ")
+    .replace(/\s(?:on|at|from|for|this|next)\s*$/i, " ")
+    .replace(/\s(?:on|at)\s/gi, " ")
+    .replace(/\s(?:to|in|on)\s+(?:my\s+|the\s+)?(?:calendar|schedule)\b/i, " ")
+    .replace(/\s+/g, " ").trim();
+  if (!title || title.split(" ").length > 8) return null;
+  title = title.charAt(0).toUpperCase() + title.slice(1);
+  const hhmm = (x) => `${String(Math.floor(x / 60) % 24).padStart(2, "0")}:${String(x % 60).padStart(2, "0")}`;
+  const row = t.addEvent({ title, kind: "event", date: day.from, start: hhmm(start.minutes), end: hhmm(Math.min(endMin, 23 * 60 + 59)) });
+  const ev = t.findEvents({ limit: 500 }).events.find((e) => e.event_id === row.id);
+  const card = eventCard(t, ev || { title, date: day.from, start_time: row.start_time, end_time: row.end_time }, "added");
+  return { text: `Added ${title}: ${card.when}, ${card.time}.`, tools: [{ tool: "add_event", status: "completed" }], cards: [card] };
+}
+
 // "Stop the timer", "cancel all timers", "stop the tea timer".
 function stopTimerRequest(t, raw) {
   const s = clean(raw).toLowerCase();
@@ -537,11 +726,11 @@ function spell(secs) {
  * A reply made here, or null for the model. `service` is the account's
  * Service. The answer: { text, tools: [{ tool, status }] }.
  */
-export function quickAnswer(service, text) {
-  if (!text || text.length > 160 || /\n/.test(text.trim())) return null;
-  for (const f of [stopTimerRequest, cancelAlarmRequest, remindRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
+export function quickAnswer(service, text, ctx = {}) {
+  if (!text || text.length > 300 || /\n/.test(text.trim())) return null;
+  for (const f of [stopTimerRequest, alarmCommand, noteCommand, eventRequest, remindRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
     try {
-      const r = f(service, text);
+      const r = f(service, text, ctx);
       if (r) return r;
     } catch {
       // A tool said no (a bad time, a missing course): the model can explain it better.

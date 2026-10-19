@@ -179,9 +179,25 @@ Item {
                             spacing: 6
                             Text { Layout.fillWidth: true; visible: !!nc.modelData.title; text: nc.modelData.title; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold }
                             Text { Layout.fillWidth: true; visible: !!nc.modelData.body; text: Util.plain(nc.modelData.body); textFormat: Text.PlainText; color: Theme.fg; opacity: 0.85; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight; font.family: Theme.sans; font.pixelSize: 14 }
-                            Text {
-                                text: [nc.c ? nc.c.name : "", nc.modelData.session_date === page.today ? "Today" : nc.modelData.session_date ? "Last class · " + Util.shortDate(nc.modelData.session_date) : ""].filter(x => x).join("  ·  ")
-                                color: nc.c ? nc.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold
+                            // Course, then the day: a long course name shortens with … and the day always shows.
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                readonly property string when: nc.modelData.session_date === page.today ? "Today" : nc.modelData.session_date ? "Last class · " + Util.shortDate(nc.modelData.session_date) : ""
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 40
+                                    visible: !!nc.c
+                                    text: nc.c ? nc.c.name : ""
+                                    elide: Text.ElideRight
+                                    color: nc.c ? nc.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold
+                                }
+                                Text {
+                                    visible: parent.when !== ""
+                                    text: (nc.c ? "  ·  " : "") + parent.when
+                                    color: nc.c ? nc.c.color : Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold
+                                }
+                                Item { visible: !nc.c; Layout.fillWidth: true }
                             }
                         }
                         MouseArea { id: ncMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.app.openNote(nc.modelData) }

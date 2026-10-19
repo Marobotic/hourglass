@@ -52,7 +52,7 @@ function alarmCard(service, row, state) {
   else if (a.days?.length) when = daysText(a.days);
   else when = next ? f.day(next.date) : a.date ? f.day(a.date) : "";
   const time = next ? next.time : a.time;
-  return { kind: "alarm", state, label: a.label || "Alarm", time: f.clock(time), when, at: a.next_at ?? null, minutes: f.minutes(time), enabled: !!a.enabled };
+  return { kind: "alarm", id: a.id, state, label: a.label || "Alarm", time: f.clock(time), when, at: a.next_at ?? null, minutes: f.minutes(time), enabled: !!a.enabled };
 }
 
 function eventCard(service, ev, state) {
@@ -116,7 +116,7 @@ export function cardsFor(service, tool, args = {}, result = null) {
       case "add_note":
       case "update_note":
       case "append_note":
-        return result?.id ? [{ kind: "note", state: tool === "add_note" ? "added" : "changed", label: result.title || "Untitled", course: result.course_name || "" }] : [];
+        return result?.id ? [{ kind: "note", id: result.id, state: tool === "add_note" ? "added" : "changed", label: result.title || "Untitled", course: result.course_name || "" }] : [];
       case "set_settings":
         return [{ kind: "setting", label: "Settings", value: Object.entries(args).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join(", ") }];
       case "set_home_zone":

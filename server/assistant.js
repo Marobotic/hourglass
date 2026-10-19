@@ -661,6 +661,18 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     try { return JSON.parse(b || "{}"); } catch { return {}; }
   }
 
+  /** The alarm or note a reply set or showed: "it" in the next message. */
+  function remember(chat, cards = [], ids = {}) {
+    const last = (chat.last ||= {});
+    for (const c of cards || []) {
+      if (c.kind === "alarm" && c.id && c.state !== "removed") Object.assign(last, { alarm_id: c.id, last: "alarm" });
+      if (c.kind === "alarm" && c.state === "removed" && last.alarm_id === c.id) delete last.alarm_id;
+      if (c.kind === "note" && c.id) Object.assign(last, { note_id: c.id, last: "note" });
+    }
+    if (ids?.alarm_id) Object.assign(last, { alarm_id: ids.alarm_id, last: "alarm" });
+    if (ids?.note_id) Object.assign(last, { note_id: ids.note_id, last: "note" });
+  }
+
   const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, files: m.files || [], quick: !!m.quick, model: m.model || null });
 
   /** The Drive folder attachments go to, made on first use. */
@@ -711,12 +723,14 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const chat = loadChat(t);
       const now = Date.now();
       // The fast lane: done here at once, no model.
-      const quick = files.length ? null : quickAnswer(t.service, text);
+      // What this chat last touched, so "remove it" or "make it 9" knows what "it" is.
+      const quick = files.length ? null : quickAnswer(t.service, text, chat.last || {});
       if (quick) {
         chat.messages.push({ id: `u${now}`, role: "user", time: now, text, tools: [] });
         chat.messages.push({ id: `a${now}`, role: "assistant", time: now, quick: true, text: quick.text, error: null, cards: quick.cards || [],
           tools: quick.tools.map((x) => ({ tool: x.tool, status: "completed", label: toolLabel(x.tool, "completed") })) });
         // The model hears about it next time, so "make it 9 instead" still makes sense.
+        remember(chat, quick.cards, quick.ids);
         (chat.direct ||= []).push({ user: text, reply: quick.text });
         chat.direct = chat.direct.slice(-6);
         saveChat(t, chat);
@@ -729,7 +743,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       chat.messages.push(message);
       saveChat(t, chat);
       running.set(t.email, { chat, message });
-      run(t, chat, message, text, fresh, files).catch((e) => {
+      run(t, chat, message, text, fresh, files).then(() => { remember(chat, message.cards); saveChat(t, chat); }).catch((e) => {
         message.error = "Something went wrong.";
         log(`assistant: ${e.stack || e}`);
         saveChat(t, chat);

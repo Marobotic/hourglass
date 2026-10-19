@@ -132,3 +132,44 @@ test("the app's own clock is what 'in 30 minutes' counts from", () => {
   assert.equal(a.time, "00:20");
   assert.equal(localParts(zonedToEpoch(a.date, a.time, TZ), TZ).time, "00:20");
 });
+
+test("alarms by what people call them, and 'it' is the one just touched", () => {
+  const { store, service } = setup("2026-10-19 22:14");
+  const ctx = {};
+  const ask = (q) => {
+    const r = quickAnswer(service, q, ctx);
+    for (const c of r?.cards || []) if (c.kind === "alarm" && c.id && c.state !== "removed") Object.assign(ctx, { alarm_id: c.id, last: "alarm" });
+    if (r?.ids?.alarm_id) Object.assign(ctx, { alarm_id: r.ids.alarm_id, last: "alarm" });
+    return r;
+  };
+  const live = () => alarms(store).filter((a) => !a.deleted);
+  ask("setup an alarm in 1 hour");
+  assert.match(ask("remove my alarm that's in 1 hour").text, /Removed the 11:14 PM alarm/);
+  assert.equal(live().length, 0);
+  ask("set an alarm for 6:30am");
+  assert.match(ask("make it 7 instead").text, /Moved your alarm to 7:00 AM tomorrow/);
+  assert.equal(live()[0].time, "07:00");
+  assert.match(ask("cancel it").text, /Removed/);
+  ask("gym alarm 7am on thursdays");
+  assert.match(ask("turn it off").text, /Turned off "Gym"/);
+  assert.match(ask("turn it back on").text, /Turned on "Gym"/);
+  assert.match(ask("move my gym alarm to 8am").text, /Moved "Gym" to 8:00 AM Thu/);
+  assert.deepEqual(live()[0].days, [4], "a move keeps its days");
+});
+
+test("notes: a new one, or a line added to a list in the list's own style", () => {
+  const { store, service } = setup("2026-10-19 22:14");
+  service.addNote({ title: "Groceries", body: "- [ ] eggs\n- [ ] milk" });
+  assert.match(quickAnswer(service, "add bread to my groceries list").text, /Added "bread" to Groceries/);
+  assert.equal(store.all("notes").find((n) => n.title === "Groceries").body, "- [ ] eggs\n- [ ] milk\n- [ ] bread");
+  assert.match(quickAnswer(service, "add a note: call the printer about A3 paper").text, /Saved a note "Call the printer about A3 paper"/);
+  assert.equal(quickAnswer(service, "reorganize my notes"), null, "rewriting is the model's");
+});
+
+test("events: a title, a day and a time; an hour unless said", () => {
+  const { service } = setup("2026-10-19 22:14");
+  assert.match(quickAnswer(service, "add dentist on thursday at 4pm").text, /Added Dentist: Thu 22 Oct, 4:00 PM . 5:00 PM/);
+  assert.match(quickAnswer(service, "add study group friday 4-6pm").text, /Study group: Fri 23 Oct, 4:00 PM . 6:00 PM/);
+  assert.match(quickAnswer(service, "add gym session to my calendar tomorrow at 7am").text, /Added Gym session: tomorrow, 7:00 AM/);
+  assert.equal(quickAnswer(service, "add a lecture for typography every monday"), null, "a course schedule is the model's");
+});
