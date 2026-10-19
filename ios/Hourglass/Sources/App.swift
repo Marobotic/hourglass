@@ -3,7 +3,7 @@ import BackgroundTasks
 
 @main
 struct HourglassApp: App {
-    @StateObject private var store = Store()
+    @StateObject private var store = Store.shared
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
@@ -13,6 +13,9 @@ struct HourglassApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear { Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
                 .task { while !Task.isCancelled { await store.syncSoon(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
+                // While an alarm rings with the app open, sync every 5 seconds so
+                // a Dismiss on another device stops it here too.
+                .task { while !Task.isCancelled { if AlarmKitScheduler.ringing { await store.syncSoon() }; try? await Task.sleep(nanoseconds: 5_000_000_000) } }
         }
         .onChange(of: phase) { _, p in
             if p == .active { Task { await store.syncSoon() } }
@@ -92,6 +95,18 @@ struct RootView: View {
                         .background(H.teal.opacity(0.18))
                     }
                     .buttonStyle(.plain)
+                }
+                // Wake check: rings again in 5 minutes unless "I'm up".
+                Ticking { _ in
+                    if let w = WakeCheck.pending, w.at > nowMs() {
+                        HStack(spacing: 10) {
+                            T("Wake check: \(w.label) rings again at \(Dates.clock(w.at))", 13, lines: 2)
+                            Spacer(minLength: 0)
+                            HButton("I'm up", primary: true) { WakeCheck.imUp() }
+                        }
+                        .padding(.horizontal, 18).padding(.vertical, 8)
+                        .background(H.accent.opacity(0.18))
+                    }
                 }
                 Group {
                     switch tab {

@@ -8,6 +8,8 @@ import AlarmKit
 // On iOS 26, alarms and timers ring through AlarmKit: full-screen, through
 // silent mode, with the app closed, like the Clock app. Older iOS falls back
 // to the notifications Notifications.reschedule schedules.
+// The ring screen has Stop and Snooze; both run Hourglass (RingStopIntent,
+// RingSnoozeIntent), which logs the press and tells the other devices.
 enum AlarmKitScheduler {
     static var active: Bool {
         #if canImport(AlarmKit)
@@ -24,30 +26,106 @@ enum AlarmKitScheduler {
         #endif
     }
 
+    // Something is ringing on this iPhone right now.
+    static var ringing: Bool {
+        #if canImport(AlarmKit)
+        if #available(iOS 26.0, *) { return ((try? AlarmManager.shared.alarms) ?? []).contains { $0.state == .alerting } }
+        #endif
+        return false
+    }
+
+    // What should ring on this iPhone in the next 8 days (30 at most).
+    @MainActor
+    static func upcoming(_ store: Store) -> [RingInfo] {
+        let now = nowMs()
+        var fires: [RingInfo] = []
+        let wakeLabels = RingLog.wakeLabels
+        for t in store.timers where t.state == "running" {
+            if let at = t.ends_at, at > now {
+                let wake = t.label.hasSuffix(RingLog.snoozed) && wakeLabels.contains(RingLog.base(t.label))
+                fires.append(RingInfo(id: t.id, kind: "timer", at: at, label: t.label, wake: wake))
+            }
+        }
+        for a in store.alarms {
+            let wake = a.lead_event_id != nil || a.lead_course_id != nil || a.label.localizedCaseInsensitiveContains("wake")
+            var from = now
+            for _ in 0..<7 {
+                guard let at = Alarms.next(a, store.db.courses, store.db.events, from), at < now + 8 * 86_400_000 else { break }
+                fires.append(RingInfo(id: a.id, kind: "alarm", at: at, label: a.label, wake: wake))
+                from = at
+            }
+        }
+        // Already dismissed or snoozed on another device: not rung here.
+        return Array(fires.filter { RingSync.stoppedElsewhere(store, $0.id, $0.at) == nil }.sorted { $0.at < $1.at }.prefix(30))
+    }
+
+    // Brings AlarmKit in line with the store, changing only what changed: an
+    // alarm already scheduled keeps its id, and one that is ringing is never
+    // cancelled by a sync (it used to be: everything was cancelled and redone).
     @MainActor
     static func reschedule(_ store: Store) {
+        settle(store)
         #if canImport(AlarmKit)
         if #available(iOS 26.0, *) {
             guard AlarmManager.shared.authorizationState == .authorized else { return }
-            let now = nowMs()
-            var fires: [(Int64, String)] = []
-            for t in store.timers where t.state == "running" {
-                if let at = t.ends_at, at > now { fires.append((at, t.label)) }
-            }
-            for a in store.alarms {
-                var from = now
-                for _ in 0..<7 {
-                    guard let at = Alarms.next(a, store.db.courses, store.db.events, from), at < now + 8 * 86_400_000 else { break }
-                    fires.append((at, a.label))
-                    from = at
-                }
-            }
-            let upcoming = fires.sorted { $0.0 < $1.0 }.prefix(30)
+            let want = upcoming(store)
+            let wantIds = Set(want.map(\.uuid))
+            let wake = WakeCheck.pending.map { RingInfo(id: "wake-check", kind: "alarm", at: $0.at, label: RingLog.wakePrefix + $0.label).uuid }
+            let have = (try? AlarmManager.shared.alarms) ?? []
+            let haveIds = Set(have.map(\.id))
+            var pending = RingLog.pending
+            for r in want { pending[r.uuid.uuidString] = r }
+            RingLog.pending = pending
             Task {
-                for old in (try? AlarmManager.shared.alarms) ?? [] { try? AlarmManager.shared.cancel(id: old.id) }
-                for (at, label) in upcoming { await schedule(at: at, label: label) }
+                for old in have where !wantIds.contains(old.id) && old.id != wake {
+                    if old.state == .alerting {
+                        // Ringing now: stop it only if another device answered it.
+                        if let r = RingLog.pending[old.id.uuidString], let s = await RingSync.stoppedElsewhere(store, r.id, r.at) {
+                            try? AlarmManager.shared.stop(id: old.id)
+                            await MainActor.run { RingLog.answered(r); RingLog.add(r.label, s.action == "snoozed" ? "snoozed" : "dismissed", "on \(s.device)") }
+                        }
+                        continue
+                    }
+                    try? AlarmManager.shared.cancel(id: old.id)
+                }
+                for r in want where !haveIds.contains(r.uuid) { await schedule(r) }
             }
         }
+        #endif
+    }
+
+    // Past rings nobody answered on this iPhone: say how they ended.
+    @MainActor
+    private static func settle(_ store: Store) {
+        let now = nowMs()
+        var pending = RingLog.pending
+        for (k, r) in pending where r.at < now - 2 * 60_000 {
+            pending[k] = nil
+            if let s = RingSync.stoppedElsewhere(store, r.id, r.at) {
+                RingLog.add(r.label, s.action == "snoozed" ? "snoozed" : "dismissed", "on \(s.device)")
+            } else if r.at > now - 2 * 86_400_000 {
+                RingLog.add(r.label, "no answer", "rang at \(Dates.clock(r.at)) and nobody pressed Stop or Snooze on this iPhone")
+            }
+        }
+        RingLog.pending = pending
+    }
+
+    @MainActor
+    static func scheduleOne(_ r: RingInfo) async {
+        #if canImport(AlarmKit)
+        if #available(iOS 26.0, *), AlarmManager.shared.authorizationState == .authorized { await schedule(r) }
+        #endif
+    }
+
+    static func stop(_ id: UUID) {
+        #if canImport(AlarmKit)
+        if #available(iOS 26.0, *) { try? AlarmManager.shared.stop(id: id) }
+        #endif
+    }
+
+    static func cancel(_ id: UUID) {
+        #if canImport(AlarmKit)
+        if #available(iOS 26.0, *) { try? AlarmManager.shared.cancel(id: id) }
         #endif
     }
 
@@ -59,7 +137,7 @@ enum AlarmKitScheduler {
         let tone = UserDefaults.standard.object(forKey: "sound") as? Bool == false ? Ringtones.toneFile : Ringtones.file
         #if canImport(AlarmKit)
         if #available(iOS 26.0, *), AlarmManager.shared.authorizationState == .authorized {
-            Task { await schedule(at: at, label: "Test alarm", sound: tone) }
+            Task { await schedule(RingInfo(id: "test", kind: "alarm", at: at, label: "Test alarm"), sound: tone) }
             return
         }
         #endif
@@ -77,18 +155,23 @@ enum AlarmKitScheduler {
     struct Meta: AlarmMetadata {}
 
     @available(iOS 26.0, *)
-    private static func schedule(at ms: Int64, label: String, sound: String = Ringtones.file) async {
+    private static func schedule(_ r: RingInfo, sound: String = Ringtones.file) async {
         let alert = AlarmPresentation.Alert(
-            title: LocalizedStringResource(stringLiteral: label),
-            stopButton: AlarmButton(text: "Stop", textColor: .white, systemImageName: "stop.fill")
+            title: LocalizedStringResource(stringLiteral: r.label),
+            stopButton: AlarmButton(text: "Stop", textColor: .white, systemImageName: "stop.fill"),
+            secondaryButton: AlarmButton(text: "Snooze 5 min", textColor: .white, systemImageName: "zzz"),
+            secondaryButtonBehavior: .custom
         )
         let attributes = AlarmAttributes<Meta>(presentation: AlarmPresentation(alert: alert), tintColor: Color(red: 0.69, green: 0.26, blue: 0.26))
         let config = AlarmManager.AlarmConfiguration<Meta>.alarm(
-            schedule: .fixed(Date(timeIntervalSince1970: Double(ms) / 1000)),
+            schedule: .fixed(Date(timeIntervalSince1970: Double(r.at) / 1000)),
             attributes: attributes,
+            stopIntent: RingStopIntent(r),
+            secondaryIntent: RingSnoozeIntent(r),
             sound: .named(sound)
         )
-        _ = try? await AlarmManager.shared.schedule(id: UUID(), configuration: config)
+        do { _ = try await AlarmManager.shared.schedule(id: r.uuid, configuration: config) }
+        catch { RingLog.add(r.label, "broke", "iOS would not schedule this alarm: \(error.localizedDescription)") }
     }
     #endif
 }

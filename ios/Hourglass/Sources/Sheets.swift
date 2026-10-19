@@ -574,6 +574,7 @@ struct SettingsSheet: View {
     @State private var error: String?
     @State private var confirmDelete: Ringtone?
     @State private var testing = false
+    @State private var history: [RingLog.Entry]?
     @State private var confirmSignOut = false
     @State private var alarmStatus = ""
 
@@ -618,6 +619,30 @@ struct SettingsSheet: View {
                 }
                 Spacer()
                 HButton("Test", icon: "alarm") { AlarmKitScheduler.test(); testing = true }
+            }
+            // Every ring on this iPhone and how it ended.
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    T("Alarm history", 15)
+                    T("What each alarm did on this iPhone: stopped, snoozed, answered on another device, or no answer.", 12, H.muted)
+                }
+                Spacer()
+                HButton(history == nil ? "Show" : "Hide") { history = history == nil ? RingLog.read() : nil }
+            }
+            if let history {
+                if history.isEmpty { T("Nothing has rung on this iPhone since this version.", 12, H.faint) }
+                ForEach(history.prefix(60)) { e in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            T(Dates.short(Dates.dayOf(e.at)) + " " + Dates.clock(e.at), 11, H.muted)
+                            Spacer()
+                            T(e.event.uppercased(), 11, e.broke ? H.accent : H.muted, bold: e.broke)
+                        }
+                        T(e.label, 13, lines: 1)
+                        if !e.detail.isEmpty { T(e.detail, 12, e.broke ? H.accent : H.faint) }
+                    }
+                    .padding(.vertical, 3)
+                }
             }
 
             SectionLabel(text: "Time")

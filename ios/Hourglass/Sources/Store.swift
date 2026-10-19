@@ -39,6 +39,9 @@ struct Slot: Hashable { var day: Int; var start: String; var end: String; var ki
 // Local replica + domain operations (same semantics as core/node/service.js) + sync.
 @MainActor
 final class Store: ObservableObject {
+    // One store for the app and the alarm buttons (which iOS runs in the background).
+    static let shared = Store()
+
     @Published private(set) var db = DB()
     @Published var syncState = "local"
     @Published var syncError: String?
@@ -372,6 +375,14 @@ final class Store: ObservableObject {
         let v = db.prefs.first { $0.id == "ringtone" && $0.deleted == 0 }?.value ?? "classic"
         return Ringtones.all.contains(v) || ringtoneRows.contains(where: { $0.id == v }) ? v : "classic"
     }
+    // Synced preferences by key.
+    func pref(_ key: String) -> String? { db.prefs.first { $0.id == key && $0.deleted == 0 }?.value }
+    func setPref(_ key: String, _ value: String) {
+        var p = db.prefs.first { $0.id == key } ?? Pref(id: key)
+        p.value = value; p.deleted = 0; p.updated_at = stamp(p.updated_at); p.dirty = 1
+        if let i = db.prefs.firstIndex(where: { $0.id == p.id }) { db.prefs[i] = p } else { db.prefs.append(p) }
+        changed()
+    }
     func setRingtone(_ id: String) {
         var p = db.prefs.first { $0.id == "ringtone" } ?? Pref(id: "ringtone")
         p.value = id; p.deleted = 0; p.updated_at = stamp(p.updated_at); p.dirty = 1
@@ -650,9 +661,10 @@ final class Store: ObservableObject {
         default: return Int64(t.remaining_s ?? 0)
         }
     }
-    func startTimer(seconds: Int, label: String, persistent: Bool = false, startAt: Int64? = nil) {
+    // id: a set id, so two devices snoozing the same ring make one timer.
+    func startTimer(seconds: Int, label: String, persistent: Bool = false, startAt: Int64? = nil, id: String? = nil) {
         let start = startAt.flatMap { $0 > nowMs() ? $0 : nil }
-        save(HTimer(label: label.isEmpty ? (seconds % 60 == 0 ? "\(seconds / 60) min timer" : "\(seconds)s timer") : label,
+        save(HTimer(id: id ?? UUID().uuidString.lowercased(), label: label.isEmpty ? (seconds % 60 == 0 ? "\(seconds / 60) min timer" : "\(seconds)s timer") : label,
                     duration_s: seconds, state: "running", ends_at: (start ?? nowMs()) + Int64(seconds) * 1000, persistent: persistent ? 1 : 0, start_at: start))
     }
     private func run(_ t: HTimer, _ secs: Int64) { var t = t; t.state = "running"; t.start_at = nil; t.remaining_s = nil; t.ends_at = nowMs() + secs * 1000; save(t) }
