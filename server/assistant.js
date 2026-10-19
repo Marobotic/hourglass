@@ -1,7 +1,9 @@
 // The assistant tab. Common requests ("alarm in 30 minutes", "when is Sara's
 // birthday") are answered at once by quick.js, without a model. Everything
-// else is handed to opencode (`opencode run`) on its free models, and opencode
-// works on that account's data through the Hourglass MCP tools.
+// else goes to the engine the user picked (engines.js): opencode's free models
+// (the default, `opencode run`), Claude or another API with the user's key
+// (called directly, tools run in this process), or Claude Code on the user's
+// Claude subscription. Every action comes back as a card (cards.js).
 //
 // A model run costs 6-10 s before the first word (opencode starting, then the
 // free model) plus a few seconds per tool call, so every prompt carries what
@@ -40,6 +42,9 @@ import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSy
 import { join } from "node:path";
 import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
+import { INSTRUCTIONS } from "./tools.js";
+import { cardsFor, trimCards } from "./cards.js";
+import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listOpenAIModels, runDirect, systemPrompt } from "./engines.js";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
@@ -135,12 +140,13 @@ Work only through the hourglass tools (hourglass_*). They open this user's own d
 How to work, fast:
 - Every message ends with a snapshot of the user's data: the time and zone, what is on now and today, courses, alarms, timers, their own events (birthdays, appointments) with next dates, recent notes and Drive folders, with ids. When the snapshot answers the question, answer straight away with no tool at all. When you act, use the ids from it instead of looking them up.
 - Use as few tool calls as the task needs. To find something by name (a person, a birthday, a file, an event not in the snapshot) call hourglass_search once: it looks in the calendar first, then notes, Drive and alarms. Birthdays and appointments are calendar events, never look for them in notes first.
-- Do what the user asks with the tools, straight away. Do not describe what you would do; do it, then say what you did in one or two short sentences.
+- Do what the user asks with the tools, straight away. Do not describe what you would do; do it, then say what you did in one short sentence.
+- Never ask for confirmation before adding or changing alarms, timers, events, notes or settings. Fill gaps with the obvious choice (today or the next time it happens, the label from the user's words). Never argue or lecture; if the user corrects you, apply it.
 - Never say something is done unless the tool call succeeded. If a tool returns an error, say plainly what went wrong.
 - Formatting or tidying a note: read it with hourglass_get_notes, then write the whole improved body back with hourglass_update_note. Keep everything the user wrote, including every <span style=...> and <u> tag; only change layout, headings, bullets, to-dos, emphasis and obvious typos.
 - An attached file the user wants kept somewhere: it is already in the Drive (its file id is given); move it with hourglass_move_file, or put it in a note as ![name](hgfile:<id>) for a picture or [name](hgfile:<id>) for a file, on a line of its own.
 - Ask before deleting a note, removing a course, or removing a whole recurring event. Removing one occurrence needs no confirmation.
-- If a request is ambiguous (two courses match, no time given for an alarm), ask one short question.
+- Ask one short question only when there is no sensible guess at all (an alarm with no time).
 - When the user asks how to do something in the app, answer from the app guide below in one or two steps.
 - Reply in plain text with short sentences. No tables, no code blocks, no headings.
 
@@ -178,6 +184,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   const skill = loadSkill(rootDir);
   const guide = loadGuide(rootDir);
   const sandboxIds = runner === "systemd" ? userIds(SANDBOX_USER) : null;
+  const settings = createSettings(process.env.HOURGLASS_DATA || accountsDir);
+  const system = systemPrompt({ guide, instructions: INSTRUCTIONS });
+  const claudeBin = process.env.HOURGLASS_CLAUDE_BIN || "/usr/local/bin/claude";
   const usage = new Map();   // email -> [timestamps]
   const running = new Map(); // email -> { child, unit, chat, message }
 
@@ -294,16 +303,16 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
 
   // --- running opencode ---------------------------------------------------------
 
-  function command(dirs, unit, args) {
-    const viaNode = /\.m?js$/.test(bin);
-    const exe = viaNode ? process.execPath : bin;
-    const exeArgs = viaNode ? [bin, ...args] : args;
+  function command(dirs, unit, args, program = bin, env = {}) {
+    const viaNode = /\.m?js$/.test(program);
+    const exe = viaNode ? process.execPath : program;
+    const exeArgs = viaNode ? [program, ...args] : args;
     if (runner !== "systemd") {
-      return { file: exe, args: exeArgs, options: { cwd: dirs.work, env: { ...process.env, HOME: dirs.home } } };
+      return { file: exe, args: exeArgs, options: { cwd: dirs.work, env: { ...process.env, HOME: dirs.home, ...env } } };
     }
     const p = [
       `User=${SANDBOX_USER}`, `Group=${SANDBOX_USER}`,
-      `Environment=HOME=${dirs.home}`, `WorkingDirectory=${dirs.work}`,
+      `Environment=HOME=${dirs.home}`, ...Object.entries(env).map(([k, v]) => `Environment=${k}=${v}`), `WorkingDirectory=${dirs.work}`,
       // Only this account's folder exists under /var/lib; /opt and homes are hidden.
       "TemporaryFileSystem=/var/lib", `BindPaths=${dirs.dir}`, `ReadWritePaths=${dirs.dir}`,
       "InaccessiblePaths=-/opt", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "PrivateDevices=yes",
@@ -340,6 +349,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       let anything = false;
       let stepText = "";
       const toolsById = new Map();
+      const carded = new Set(); // calls whose card is made
       const timer = setTimeout(() => stop(t), (RUN_SECONDS + 10) * 1000);
 
       const onEvent = (ev) => {
@@ -353,7 +363,15 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
           anything = true;
         } else if (ev.type === "tool_use") {
           const key = part.callID || part.id || `${toolsById.size}`;
-          toolsById.set(key, shapeTool(part));
+          const shaped = shapeTool(part);
+          // A finished Hourglass call: its card, from what it was given and returned.
+          if (shaped.status === "completed" && !carded.has(key) && String(part.tool || "").startsWith("hourglass_")) {
+            let result = null;
+            try { result = JSON.parse(part.state?.output ?? "null"); } catch {}
+            message.cards = trimCards([...(message.cards || []), ...cardsFor(t.service, shaped.tool, part.state?.input || {}, result)]);
+            carded.add(key);
+          }
+          toolsById.set(key, shaped);
           message.tools = [...toolsById.values()];
           anything = true;
         } else if (ev.type === "error") {
@@ -382,7 +400,162 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     });
   }
 
+  // --- the engines ----------------------------------------------------------------
+
+  /** opencode's free models, from `opencode models` (cached an hour); the env list if that fails. */
+  let freeModels = { at: 0, list: models };
+  function listFreeModels() {
+    if (Date.now() - freeModels.at < 3600_000) return freeModels.list;
+    try {
+      const viaNode = /\.m?js$/.test(bin);
+      const r = spawnSync(viaNode ? process.execPath : bin, viaNode ? [bin, "models", "opencode"] : ["models", "opencode"], { encoding: "utf8", timeout: 30000, env: { ...process.env, HOME: join(accountsDir, ".models-home") } });
+      const list = (r.stdout || "").split("\n").map((l) => l.trim()).filter((l) => /^opencode\/(big-pickle|[\w.-]+-free)$/.test(l));
+      if (list.length) freeModels = { at: Date.now(), list: [...new Set([...models.filter((m) => list.includes(m)), ...list])] };
+      else freeModels.at = Date.now();
+    } catch {
+      freeModels.at = Date.now();
+    }
+    return freeModels.list;
+  }
+
+  const modelName = (cfg) => {
+    if (cfg.engine === "free") return cfg.model || models[0];
+    if (cfg.engine === "anthropic" || cfg.engine === "claude") return cfg.model || CLAUDE_MODELS[0].id;
+    return cfg.model;
+  };
+
+  /** Pictures attached to this message, for engines that take them inline. */
+  function pictureData(t, files) {
+    const out = [];
+    for (const f of files.filter(isPicture)) {
+      const src = filePath(t, f.id);
+      if (src && existsSync(src) && f.size < 5_000_000) out.push({ mime: f.mime === "image/jpg" ? "image/jpeg" : f.mime, data: readFileSync(src).toString("base64") });
+    }
+    return out;
+  }
+
+  /** The user's turn for the engines that get the snapshot inline (direct and Claude Code). */
+  const userTurn = (t, text, files) => `${context(t)}\n\nThe user says:\n${text}${files.length ? `\n\nThe user attached (saved in their Drive's "${ASSISTANT_FOLDER}" folder): ${files.map((f) => `${f.name} (${f.mime}, file ${f.id})`).join(", ")}` : ""}`;
+
+  /**
+   * Claude Code on the user's Claude subscription, in the sandbox: its only
+   * tools are Hourglass's (MCP), and the token is read from a file inside the
+   * account folder so it never shows in a command line.
+   */
+  function runClaude(t, chat, message, text, files, cfg) {
+    const token = cfg.keys.claude;
+    if (!token) return Promise.resolve({ error: "Paste your Claude token in the assistant's settings first." });
+    if (!existsSync(claudeBin)) return Promise.resolve({ error: "Claude Code isn't installed on the server yet." });
+    const dirs = accountDir(t);
+    const tokenFile = join(dirs.dir, "claude_token");
+    writeFileSync(tokenFile, token, { mode: 0o600 });
+    if (sandboxIds) chownSync(tokenFile, sandboxIds.uid, sandboxIds.gid);
+    const mcp = JSON.stringify({ mcpServers: { hourglass: { type: "http", url: `${mcpBase}/mcp/${keyOf(t)}` } } });
+    const history = historyTurns(chat, chat.messages.length - 2).map((m) => `${m.role === "user" ? "User" : "You"}: ${m.content}`).join("\n");
+    const prompt = `${history ? `The conversation so far:\n${history}\n\n` : ""}${userTurn(t, text, files)}`;
+    const args = ["-p", "--output-format", "stream-json", "--verbose", "--model", cfg.model || CLAUDE_MODELS[0].id,
+      "--system-prompt", system, "--mcp-config", mcp, "--strict-mcp-config", "--tools", "", "--allowedTools", "mcp__hourglass", "--permission-mode", "dontAsk"];
+    const env = { CLAUDE_CONFIG_DIR: join(dirs.home, ".claude-hourglass"), DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
+    const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
+    // A tiny shell reads the token into the environment, then becomes Claude Code.
+    const sh = `CLAUDE_CODE_OAUTH_TOKEN="$(cat ${JSON.stringify(tokenFile)})" exec "$0" "$@"`;
+    const { file, args: cmdArgs, options } = command(dirs, unit, ["-c", sh, claudeBin, ...args], "/bin/sh", env);
+    return new Promise((resolve) => {
+      const child = spawn(file, cmdArgs, { ...options, stdio: ["pipe", "pipe", "pipe"] });
+      const entry = running.get(t.email);
+      if (entry) Object.assign(entry, { child, unit });
+      const uses = new Map(); // tool_use id -> { name, input, entry }
+      let buffer = "";
+      let stderr = "";
+      let error = null;
+      let anything = false;
+      const timer = setTimeout(() => stop(t), (RUN_SECONDS + 10) * 1000);
+      const onEvent = (ev) => {
+        if (ev.type === "assistant") {
+          for (const b of ev.message?.content || []) {
+            if (b.type === "text" && b.text.trim()) { message.text = b.text.trim(); anything = true; }
+            if (b.type === "tool_use") {
+              const name = String(b.name).replace(/^mcp__hourglass__/, "");
+              const e = { tool: name, status: "running" };
+              message.tools.push(e);
+              uses.set(b.id, { name, input: b.input, entry: e });
+              anything = true;
+            }
+          }
+        } else if (ev.type === "user") {
+          for (const b of ev.message?.content || []) {
+            if (b.type !== "tool_result") continue;
+            const u = uses.get(b.tool_use_id);
+            if (!u) continue;
+            u.entry.status = b.is_error ? "error" : "completed";
+            if (b.is_error) continue;
+            const raw = Array.isArray(b.content) ? b.content.map((c) => c.text || "").join("") : String(b.content || "");
+            let result = null;
+            try { result = JSON.parse(raw); } catch {}
+            message.cards = trimCards([...(message.cards || []), ...cardsFor(t.service, u.name, u.input, result)]);
+          }
+        } else if (ev.type === "result") {
+          if (ev.is_error) error = String(ev.result || ev.subtype || "Claude could not answer");
+          else if (ev.result) message.text = String(ev.result).trim();
+        }
+      };
+      child.stdout.on("data", (d) => {
+        buffer += d;
+        let nl;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          try { onEvent(JSON.parse(line)); } catch {}
+        }
+      });
+      child.stderr.on("data", (d) => { stderr = (stderr + d).slice(-2000); });
+      child.on("error", (e) => { error = `could not start Claude Code: ${e.message}`; });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (buffer.trim()) { try { onEvent(JSON.parse(buffer)); } catch {} }
+        if (/invalid api key|authentication|oauth|401/i.test(error || stderr)) error = "Your Claude token was not accepted. Make a new one with `claude setup-token` and paste it in the assistant's settings.";
+        if (!error && !anything) error = code ? `Claude Code exited (${code})${stderr ? ": " + stderr.trim().slice(-200) : ""}` : "no reply";
+        resolve({ error, anything });
+      });
+      child.stdin.end(prompt);
+    });
+  }
+
   async function run(t, chat, message, text, fresh, files = []) {
+    const cfg = settings.get(t);
+    message.cards = [];
+    if (cfg.engine === "anthropic" || cfg.engine === "openai") {
+      const entry = running.get(t.email);
+      const abort = new AbortController();
+      if (entry) entry.abort = abort;
+      try {
+        await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal });
+        message.model = modelName(cfg);
+      } catch (e) {
+        if (!running.has(t.email)) message.error = "Stopped.";
+        else message.error = e.message || "Something went wrong.";
+        log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`);
+      }
+      if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
+      saveChat(t, chat);
+      running.delete(t.email);
+      return;
+    }
+    if (cfg.engine === "claude") {
+      const r = await runClaude(t, chat, message, text, files, cfg);
+      if (!running.has(t.email)) message.error = message.error || "Stopped.";
+      else if (r.error) message.error = r.error;
+      else message.model = modelName(cfg);
+      if (r.error) log(`assistant (${t.email || "owner"}, claude): ${String(r.error).slice(0, 300)}`);
+      if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
+      saveChat(t, chat);
+      running.delete(t.email);
+      return;
+    }
+    return runFree(t, chat, message, text, fresh, files, cfg);
+  }
+
+  async function runFree(t, chat, message, text, fresh, files, cfg) {
     const dirs = accountDir(t);
     const staged = files.length ? stage(t, dirs, files) : [];
     // Requests the fast lane answered since the last run: the model's conversation lacks them.
@@ -394,7 +567,8 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const prompt = `${fresh ? briefing(skill, guide) + "\n\n" : REMINDER + "\n"}${context(t)}\n\n${direct}The user says:\n${text}${attached}`;
     // Pictures go to the model itself, on a model that can see.
     const pictures = staged.filter(isPicture).map((f) => f.path);
-    const order = pictures.length ? visionModels : models;
+    // The picked model first; the others only if it fails.
+    const order = pictures.length ? visionModels : cfg.model ? [cfg.model, ...models.filter((m) => m !== cfg.model)] : models;
     const errors = [];
     for (const model of order) {
       const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
@@ -417,6 +591,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const r = running.get(t.email);
     if (!r) return;
     running.delete(t.email);
+    try { r.abort?.abort(); } catch {}
     if (runner === "systemd" && r.unit) spawnSync("systemctl", ["stop", r.unit], { timeout: 10000 });
     try { r.child?.kill("SIGKILL"); } catch {}
   }
@@ -444,7 +619,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     try { return JSON.parse(b || "{}"); } catch { return {}; }
   }
 
-  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: m.tools || [], error: m.error || null, files: m.files || [], quick: !!m.quick });
+  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], error: m.error || null, files: m.files || [], quick: !!m.quick, model: m.model || null });
 
   /** The Drive folder attachments go to, made on first use. */
   function assistantFolder(t) {
@@ -474,7 +649,8 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     if (path === "/api/assistant" && m === "GET") {
       const live = running.get(t.email);
       const chat = live ? live.chat : loadChat(t);
-      return send(res, 200, { enabled: true, model: models[0], busy: !!live, messages: chat.messages.map(view) }), true;
+      const cfg = settings.view(t);
+      return send(res, 200, { enabled: true, engine: cfg.engine, model: modelName(cfg), busy: !!live, messages: chat.messages.map(view) }), true;
     }
 
     // Where the apps upload attachments before sending them (the Drive's "Assistant" folder).
@@ -496,7 +672,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const quick = files.length ? null : quickAnswer(t.service, text);
       if (quick) {
         chat.messages.push({ id: `u${now}`, role: "user", time: now, text, tools: [] });
-        chat.messages.push({ id: `a${now}`, role: "assistant", time: now, quick: true, text: quick.text, error: null,
+        chat.messages.push({ id: `a${now}`, role: "assistant", time: now, quick: true, text: quick.text, error: null, cards: quick.cards || [],
           tools: quick.tools.map((x) => ({ tool: x.tool, status: "completed", label: toolLabel(x.tool, "completed") })) });
         // The model hears about it next time, so "make it 9 instead" still makes sense.
         (chat.direct ||= []).push({ user: text, reply: quick.text });
@@ -518,6 +694,37 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         running.delete(t.email);
       });
       return send(res, 202, { ok: true }), true;
+    }
+
+    // Which AI answers: the engine, its model, and the user's key (never sent back).
+    if (path === "/api/assistant/settings" && m === "GET") {
+      return send(res, 200, { ...settings.view(t), engines: ENGINES, claude_models: CLAUDE_MODELS, free_models: listFreeModels().map((id) => ({ id, name: id.replace(/^opencode\//, "") })), presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
+    }
+    if (path === "/api/assistant/settings" && (m === "PUT" || m === "POST")) {
+      const b = await readJson(req);
+      const engine = String(b.engine || settings.view(t).engine);
+      if (!ENGINES.some((e) => e.id === engine)) return send(res, 400, { error: "unknown engine" }), true;
+      const base_url = b.base_url !== undefined ? String(b.base_url || "").trim().replace(/\/+$/, "") : undefined;
+      // https only, so the server can't be pointed at its own local services (tests run a local fake).
+      if (base_url && !/^https:\/\/[^\s/]+/.test(base_url) && !(process.env.HOURGLASS_TEST_HTTP_API === "1" && /^http:\/\/127\.0\.0\.1:\d+/.test(base_url))) return send(res, 400, { error: "The API address must start with https://" }), true;
+      const key = b.key !== undefined ? String(b.key || "").trim() : undefined;
+      if (key) {
+        try { await checkKey({ engine, key, base_url: base_url ?? settings.view(t).base_url }); }
+        catch (e) { return send(res, 400, { error: e.message }), true; }
+      }
+      const model = b.model !== undefined ? String(b.model || "").trim() : undefined;
+      if (model && engine === "free" && !listFreeModels().includes(model)) return send(res, 400, { error: "That free model isn't available." }), true;
+      if (model && (engine === "anthropic" || engine === "claude") && !CLAUDE_MODELS.some((x) => x.id === model)) return send(res, 400, { error: "Unknown Claude model." }), true;
+      return send(res, 200, settings.save(t, { engine, model, base_url, key })), true;
+    }
+    // The models an OpenAI-compatible API offers with the saved (or given) key.
+    if (path === "/api/assistant/models" && m === "GET") {
+      const u = new URL(req.url, "http://x");
+      const base_url = (u.searchParams.get("base_url") || settings.view(t).base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "");
+      const key = settings.get(t).keys[settings.keySlot("openai", base_url)];
+      if (!key) return send(res, 200, { models: [], error: "Add a key for this API first." }), true;
+      try { return send(res, 200, { models: await listOpenAIModels({ key, base_url }) }), true; }
+      catch (e) { return send(res, 200, { models: [], error: e.message }), true; }
     }
 
     if (path === "/api/assistant/stop" && m === "POST") {

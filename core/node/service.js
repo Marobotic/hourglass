@@ -461,7 +461,24 @@ export class Service {
   }
 
   // before: an event id, or a course name for every session of that course.
-  setAlarm({ label, time, days, date, before, minutes_before, enabled = true, alarm_id }) {
+  setAlarm({ label, time, days, date, before, minutes_before, enabled, alarm_id }) {
+    // An edit changes only what it is given: "turn it off" keeps its time,
+    // label and lecture; "make it 9" keeps its label.
+    const old = alarm_id ? this.row("alarms", alarm_id) : null;
+    if (old) {
+      const patch = { id: old.id };
+      if (label !== undefined) patch.label = label || "Alarm";
+      if (enabled !== undefined) patch.enabled = enabled;
+      const lead = old.lead_event_id || old.lead_course_id;
+      if (!before && (time !== undefined || date !== undefined || days !== undefined)) {
+        Object.assign(patch, { time: time ?? old.time, date: date !== undefined ? date : days?.length ? null : old.date, days: (days ?? (lead ? [] : old.days ?? [])).map(parseWeekday), lead_event_id: null, lead_course_id: null, lead_minutes: null });
+      } else if (!before && minutes_before !== undefined && lead) patch.lead_minutes = minutes_before;
+      if (!before) return this.store.upsert("alarms", patch);
+      label ??= old.label;
+      enabled ??= old.enabled ? true : false;
+      minutes_before ??= old.lead_minutes ?? undefined;
+    }
+    enabled ??= true;
     let leadEvent = null;
     let leadCourse = null;
     if (before) {

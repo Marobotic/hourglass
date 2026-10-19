@@ -6,6 +6,7 @@
 // replaces a real answer: every pattern is anchored to the whole message, and
 // a message with words left over that aren't understood is passed on.
 import { WEEKDAYS, addDays, localParts, weekday, zonedToEpoch } from "../core/dates.js";
+import { alarmCard, dayCard, eventCard } from "./cards.js";
 
 const DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
@@ -270,7 +271,7 @@ function alarmRequest(t, raw) {
     text += ` That's ${clock(there.time)} in ${city(w.zone)}; your app runs on ${city(t.tz)} time.`;
   }
   if (finalLabel !== "Alarm") text = text.replace("Alarm set", `"${finalLabel}" set`);
-  return { text, tools: [{ tool: "set_alarm", status: "completed" }], ids: { alarm_id: row.id } };
+  return { text, tools: [{ tool: "set_alarm", status: "completed" }], ids: { alarm_id: row.id }, cards: [alarmCard(t, row, "set")] };
 }
 
 function timerRequest(t, raw) {
@@ -293,6 +294,7 @@ function timerRequest(t, raw) {
     text: `${label ? `"${cap(label)}" timer` : "Timer"} started for ${spell(secs)}. It rings at ${fmtClock(Number(end.time.slice(0, 2)) * 60 + Number(end.time.slice(3)), h12)}.`,
     tools: [{ tool: "start_timer", status: "completed" }],
     ids: { timer_id: row.id },
+    cards: [{ kind: "timer", state: "running", label: row.label, ends_at: row.ends_at, duration_s: row.duration_s }],
   };
 }
 
@@ -325,7 +327,7 @@ function lookupRequest(t, raw) {
       const until = Math.round((Date.parse(e.next.date) - Date.parse(today)) / 864e5);
       return `${e.title}: ${when}${allDay ? "" : `, ${fmtClock(Number(e.next.start_time.slice(0, 2)) * 60 + Number(e.next.start_time.slice(3)), h12)}`}${until > 1 ? ` (in ${until} days)` : ""}${e.repeats && e.repeats !== "once" ? `, ${e.repeats}` : ""}.`;
     });
-    return { text: lines.join("\n"), tools };
+    return { text: lines.join("\n"), tools, cards: found.slice(0, 3).map((e) => eventCard(t, e, "found")) };
   }
   if (!what) return null; // "when is my X" with no event: the model may know better
   tools.push({ tool: "search_notes", status: "completed" });
@@ -352,14 +354,14 @@ function scheduleRequest(t, raw) {
     if (n.active) parts.push(`Now: ${n.active.title}${n.active.location ? ` in ${n.active.location}` : ""}, until ${clock(n.active.end_time)}.`);
     if (n.next) parts.push(`Next: ${n.next.title} at ${clock(n.next.start_time)}${n.next.date && n.next.date !== t.today() ? ` ${dayWord(n.next.date, t.today())}` : ""}${n.next.location ? ` in ${n.next.location}` : ""}.`);
     if (!parts.length) parts.push("Nothing on now, and nothing in the next 12 hours.");
-    return { text: parts.join(" "), tools: [{ tool: "whats_now", status: "completed" }] };
+    return { text: parts.join(" "), tools: [{ tool: "whats_now", status: "completed" }], cards: n.active || n.next?.date === t.today() ? [dayCard(t, t.today(), "today")] : [] };
   }
   const date = addDays(t.today(), day);
   const occ = t.schedule({ from: date, to: date }).occurrences.filter((o) => o.mark !== "off");
   const word = day === 0 ? "today" : "tomorrow";
   if (!occ.length) return { text: `Nothing in your calendar ${word}.`, tools: [{ tool: "get_schedule", status: "completed" }] };
   const lines = occ.map((o) => `${clock(o.start_time)}-${clock(o.end_time)} ${o.title}${o.location ? ` (${o.location})` : ""}`);
-  return { text: `${cap(word)}:\n${lines.join("\n")}`, tools: [{ tool: "get_schedule", status: "completed" }] };
+  return { text: `${cap(word)}:\n${lines.join("\n")}`, tools: [{ tool: "get_schedule", status: "completed" }], cards: [dayCard(t, date, word)] };
 }
 
 function alarmsRequest(t, raw) {
@@ -373,7 +375,152 @@ function alarmsRequest(t, raw) {
     const p = localParts(a.next_at, t.tz);
     return `${a.label}: ${fmtClock(Number(p.time.slice(0, 2)) * 60 + Number(p.time.slice(3)), h12)} ${dayWord(p.date, today)}${a.days?.length ? " (repeats)" : ""}`;
   });
-  return { text: lines.join("\n"), tools: [{ tool: "list_alarms", status: "completed" }] };
+  return { text: lines.join("\n"), tools: [{ tool: "list_alarms", status: "completed" }], cards: list.slice(0, 4).map((a) => alarmCard(t, a, "on")) };
+}
+
+// "Cancel my alarm", "turn off the 7am alarm", "delete the gym alarm", "turn off all alarms".
+// One clear match is acted on; anything unclear goes to the model.
+function cancelAlarmRequest(t, raw) {
+  const s = clean(raw).toLowerCase();
+  const m = /^(cancel|delete|remove|clear|turn off|switch off|disable|stop|turn on|switch on|enable)\s+(?:all\s+(?:of\s+)?(?:my\s+|the\s+)?|my\s+|the\s+|that\s+)?(?:(.+?)\s+)?alarms?(?:\s+(?:for|at)\s+(.+))?$/.exec(s);
+  if (!m) return null;
+  const verb = m[1];
+  const on = /^(?:turn on|switch on|enable)$/.test(verb);
+  const off = /^(?:turn off|switch off|disable|stop)$/.test(verb);
+  const all = /^(?:\S+\s+)?all\b/.test(s.slice(verb.length).trim());
+  const target = (m[2] || m[3] || "").replace(/^(?:my|the)\s+/, "").trim();
+  const list = t.listAlarms();
+  const lecture = (a) => !!(a.lead_event_id || a.lead_course_id);
+  const h12 = t.settings().time_format !== "24h";
+  const tools = [{ tool: on || off ? "set_alarms_enabled" : "remove_alarm", status: "completed" }];
+  if (all && !target) {
+    if (!on && !off) return null; // deleting every alarm: let the model confirm
+    const pick = list.filter((a) => !!a.enabled !== on);
+    for (const a of pick) t.setAlarm({ alarm_id: a.id, enabled: on });
+    return { text: pick.length ? `Turned ${on ? "on" : "off"} ${pick.length} alarm${pick.length > 1 ? "s" : ""}.` : `All your alarms are already ${on ? "on" : "off"}.`, tools, cards: pick.slice(0, 4).map((a) => alarmCard(t, a, on ? "on" : "off")) };
+  }
+  let cands;
+  if (!target) cands = list.filter((a) => (on ? !a.enabled : a.enabled) && !lecture(a) && a.next_at !== null);
+  else {
+    const c = parseClock(target.replace(/^(?:at|for)\s+/, ""));
+    if (c) cands = list.filter((a) => a.time && (Number(a.time.slice(0, 2)) * 60 + Number(a.time.slice(3))) % (c.ampm ? 1440 : 720) === c.minutes % (c.ampm ? 1440 : 720));
+    else {
+      const words = target.split(/\s+/).filter((w) => w.length > 1);
+      cands = list.filter((a) => words.every((w) => a.label.toLowerCase().includes(w)));
+    }
+  }
+  if (cands.length !== 1) return null;
+  const a = cands[0];
+  const card = alarmCard(t, a, "set");
+  const name = a.label && a.label !== "Alarm" ? `"${a.label}"` : `the ${card.time} alarm`;
+  if (on || off) {
+    t.setAlarm({ alarm_id: a.id, enabled: on });
+    return { text: `Turned ${on ? "on" : "off"} ${name}.`, tools, cards: [alarmCard(t, a, on ? "on" : "off")] };
+  }
+  t.removeAlarm({ alarm_id: a.id });
+  return { text: `Removed ${name}${card.when ? ` (${card.when})` : ""}.`, tools, cards: [{ ...card, state: "removed", enabled: false }] };
+}
+
+// "Stop the timer", "cancel all timers", "stop the tea timer".
+function stopTimerRequest(t, raw) {
+  const s = clean(raw).toLowerCase();
+  const m = /^(?:stop|cancel|end|kill|clear|reset|delete|remove)\s+(?:all\s+(?:of\s+)?(?:my\s+|the\s+)?|my\s+|the\s+|that\s+)?(?:(.+?)\s+)?timers?$/.exec(s);
+  if (!m) return null;
+  const all = /\ball\b/.test(s);
+  const running = t.listTimers().filter((x) => x.state === "running" || x.state === "paused");
+  const target = (m[1] || "").trim();
+  const pick = all ? running : target ? running.filter((x) => x.label.toLowerCase().includes(target)) : running;
+  if (!pick.length) return { text: "No timer is running.", tools: [{ tool: "list_timers", status: "completed" }] };
+  if (!all && pick.length > 1) return null;
+  for (const x of pick) t.updateTimer({ timer_id: x.id, action: "reset" });
+  return {
+    text: pick.length === 1 ? `Stopped "${pick[0].label}".` : `Stopped ${pick.length} timers.`,
+    tools: [{ tool: "stop_timers", status: "completed" }],
+    cards: pick.slice(0, 4).map((x) => ({ kind: "timer", state: "stopped", label: x.label, ends_at: null, duration_s: x.duration_s ?? 0 })),
+  };
+}
+
+const MON_RE = MONTH_NAMES.map((m) => m.slice(0, 3) + "[a-z]*").join("|");
+/** "5 march", "march 5th", "5th of march", "2001-03-05" -> "MM-DD" or "YYYY-MM-DD". */
+function parseDayMonth(s) {
+  s = s.trim().toLowerCase().replace(/,/g, "");
+  let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) return s;
+  m = new RegExp(String.raw`^(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(${MON_RE})(?:\s+(\d{4}))?$`).exec(s) || new RegExp(String.raw`^(${MON_RE})\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{4}))?$`).exec(s);
+  if (!m) return null;
+  const [day, mon, year] = /^\d/.test(m[1]) ? [m[1], m[2], m[3]] : [m[2], m[1], m[3]];
+  const mi = MONTH_NAMES.findIndex((x) => mon.startsWith(x.slice(0, 3))) + 1;
+  const d = Number(day);
+  if (!mi || d < 1 || d > 31) return null;
+  const md = `${String(mi).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  return year ? `${year}-${md}` : md;
+}
+
+// "Add Sara's birthday on 5 March", "Sara's birthday is March 5", "remember Omar's bday 3 june".
+function addBirthdayRequest(t, raw) {
+  const s = clean(raw).toLowerCase();
+  const m = /^(?:add|save|remember|put|note|set)?\s*(?:that\s+)?(.+?)(?:'s|s'|s)\s+(?:birthday|bday|b-day)\s+(?:is\s+)?(?:on\s+)?(.+)$/.exec(s)
+    || /^(?:add|save|remember)\s+(?:a\s+)?(?:birthday|bday)\s+(?:for\s+)(.+?)\s+(?:on\s+)?(.+)$/.exec(s);
+  if (!m) return null;
+  const name = m[1].replace(/^(?:my|the)\s+/, "").trim();
+  if (!name || name.split(" ").length > 3) return null;
+  const date = parseDayMonth(m[2]);
+  if (!date) return null;
+  const today = t.today();
+  const start = date.length === 5 ? `${today.slice(0, 4)}-${date}` : date;
+  const nice = name.replace(/\b\w/g, (c) => c.toUpperCase());
+  const row = t.addEvent({ title: `${nice}'s birthday`, kind: "event", date: start, start: "00:00", end: "23:59", repeat: { freq: "yearly" } });
+  const ev = t.findEvents({ limit: 500 }).events.find((e) => e.event_id === row.id);
+  const card = eventCard(t, ev || { title: row.title, date: start, start_time: "00:00", end_time: "23:59" }, "added");
+  return { text: `Added ${nice}'s birthday: every year on ${card.when.replace(/^\w+ /, "").replace(/ \d{4}$/, "")}${card.days_until > 1 ? `, next in ${card.days_until} days` : ""}.`, tools: [{ tool: "add_birthday", status: "completed" }], cards: [card] };
+}
+
+// "Upcoming birthdays", "who's birthday is next", "any birthdays coming up".
+function upcomingRequest(t, raw) {
+  const s = clean(raw).toLowerCase();
+  const birthdays = /birthday|bday/.test(s);
+  if (!/^(?:upcoming|next|coming)\s+(?:birthdays|bdays|events)$|^(?:what|which|any)\s+(?:birthdays|bdays|events)\s+(?:are\s+|do i have\s+)?(?:coming up|soon|this month|next)$|^who(?:'s|se|s| has| is having) (?:a |the next )?birthday(?: is)?(?: next| soon| coming up)?$|^(?:show|list) (?:my )?(?:upcoming )?birthdays$/.test(s)) return null;
+  const today = t.today();
+  const evs = t.findEvents({ personal: true, limit: 500 }).events
+    .filter((e) => e.next && (!birthdays || /birth|bday|b-day/i.test(e.title)))
+    .map((e) => ({ ...e, days: Math.round((Date.parse(e.next.date) - Date.parse(today)) / 864e5) }))
+    .sort((a, b) => a.days - b.days)
+    .slice(0, 4);
+  const tools = [{ tool: "upcoming_events", status: "completed" }];
+  if (!evs.length) return { text: birthdays ? "No birthdays in your calendar yet. Tell me one, like \"Sara's birthday is 5 March\"." : "Nothing coming up in your calendar.", tools };
+  return { text: evs.map((e) => `${e.title}: ${dayWord(e.next.date, today)}${e.days > 1 ? ` (in ${e.days} days)` : ""}`).join("\n"), tools, cards: evs.map((e) => eventCard(t, e, "found")) };
+}
+
+// "How long until Sara's birthday", "how many days till my exam".
+function howLongRequest(t, raw) {
+  const s = clean(raw).toLowerCase();
+  const m = /^how (?:long|many days|much time) (?:is it )?(?:until|till|til|to|before) (?:my |the )?(.+)$/.exec(s);
+  if (!m) return null;
+  const q = m[1].replace(/(?:'s|s')\s+(birthday|bday)/, " $1").trim();
+  const found = t.findEvents({ query: q, limit: 5 }).events.filter((e) => e.next);
+  if (found.length !== 1) return null;
+  const e = found[0];
+  const days = Math.round((Date.parse(e.next.date) - Date.parse(t.today())) / 864e5);
+  return { text: days === 0 ? `${e.title} is today.` : days === 1 ? `${e.title} is tomorrow.` : `${days} days until ${e.title} (${dayWord(e.next.date, t.today())}).`, tools: [{ tool: "find_events", status: "completed" }], cards: [eventCard(t, e, "found")] };
+}
+
+// "Remind me to call mom at 9pm" (an alarm called "Call mom"), "remind me to stretch in 20 minutes" (a timer).
+function remindRequest(t, raw) {
+  const s = clean(raw);
+  const m = /^(?:remind|ping) me to\s+(.+?)\s+((?:at|in|on|tomorrow|tonight|today|this)\b.*)$/i.exec(s);
+  if (!m) return null;
+  const what = m[1];
+  const when = m[2];
+  if (/^in\s/i.test(when)) return timerRequest(t, `remind me in ${when.replace(/^in\s+/i, "")} to ${what}`);
+  return alarmRequest(t, `set an alarm ${when} called ${what}`);
+}
+
+// "Sara birthday", "sara's bday": a bare lookup.
+function bareBirthdayRequest(t, raw) {
+  const s = clean(raw).toLowerCase();
+  const m = /^([a-z][a-z .'-]{0,30}?)(?:'s|s')?\s+(birthday|bday|b-day)$/.exec(s);
+  if (!m || /^(?:my|add|next|upcoming|any|whose|who)\b/.test(m[1])) return null;
+  return lookupRequest(t, `when is ${m[1]}'s birthday`);
 }
 
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
@@ -391,7 +538,7 @@ function spell(secs) {
  */
 export function quickAnswer(service, text) {
   if (!text || text.length > 160 || /\n/.test(text.trim())) return null;
-  for (const f of [timerRequest, alarmRequest, lookupRequest, scheduleRequest, alarmsRequest]) {
+  for (const f of [stopTimerRequest, cancelAlarmRequest, remindRequest, addBirthdayRequest, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
     try {
       const r = f(service, text);
       if (r) return r;

@@ -409,6 +409,73 @@ export const TOOLS = [
     input: { timer_id: z.string(), action: z.enum(["start", "pause", "resume", "restart", "add_minute", "reset", "stop", "done"]) },
     run: (s, a) => s.updateTimer(a),
   },
+  {
+    name: "stop_timers",
+    title: "Stop all timers",
+    description: "Stop every running or paused timer at once (saved timers go back to idle).",
+    input: {},
+    run: (s) => {
+      const stopped = s.listTimers().filter((t) => t.state === "running" || t.state === "paused");
+      for (const t of stopped) s.updateTimer({ timer_id: t.id, action: "reset" });
+      return { stopped: stopped.map((t) => ({ id: t.id, label: t.label })) };
+    },
+  },
+  {
+    name: "set_alarms_enabled",
+    title: "Turn alarms on or off",
+    description: "Turn several alarms on or off at once: the listed alarm_ids, or all of them (all: true). Lecture alarms are included in all unless lectures: false.",
+    input: { enabled: z.boolean(), alarm_ids: z.array(z.string()).optional(), all: z.boolean().optional(), lectures: z.boolean().optional() },
+    run: (s, a) => {
+      const pick = s.listAlarms().filter((x) => (a.all ? a.lectures !== false || !(x.lead_event_id || x.lead_course_id) : (a.alarm_ids ?? []).includes(x.id)));
+      for (const x of pick) s.setAlarm({ alarm_id: x.id, enabled: a.enabled });
+      return { changed: pick.map((x) => ({ id: x.id, label: x.label })), enabled: a.enabled };
+    },
+  },
+  {
+    name: "upcoming_events",
+    title: "Upcoming events and birthdays",
+    description: "The user's own events (birthdays, anniversaries, appointments, exams; not lectures) coming up in the next N days, soonest first, with days_until. birthdays: true for birthdays and anniversaries only.",
+    input: { days: z.number().int().min(1).max(400).optional().describe("Default 60"), birthdays: z.boolean().optional() },
+    readOnly: true,
+    run: (s, a) => {
+      const today = s.today();
+      const days = a.days ?? 60;
+      const dayMs = 86400000;
+      const out = s.findEvents({ personal: true, limit: 500 }).events
+        .filter((e) => e.next && (!a.birthdays || /birth|bday|b-day|anniv/i.test(e.title)))
+        .map((e) => ({ ...e, days_until: Math.round((Date.parse(e.next.date) - Date.parse(today)) / dayMs) }))
+        .filter((e) => e.days_until <= days)
+        .sort((x, y) => x.days_until - y.days_until);
+      return { today, events: out };
+    },
+  },
+  {
+    name: "add_birthday",
+    title: "Add a birthday",
+    description: "Add someone's birthday as one all-day event that repeats every year. date: YYYY-MM-DD (the birth date or any year) or MM-DD.",
+    input: { name: z.string(), date: z.string().regex(/^(\d{4}-)?\d{2}-\d{2}$/) },
+    run: (s, a) => {
+      const today = s.today();
+      let d = a.date.length === 5 ? `${today.slice(0, 4)}-${a.date}` : a.date;
+      const name = a.name.trim().replace(/'s$/i, "");
+      return s.addEvent({ title: `${name}'s birthday`, kind: "event", date: d, start: "00:00", end: "23:59", repeat: { freq: "yearly" } });
+    },
+  },
+  {
+    name: "get_settings",
+    title: "Get settings",
+    description: "The app's settings: time zone, 12/24-hour clock, week start (ISO weekday), alarm sound on/off, ringtone, lecture reminder minutes.",
+    input: {},
+    readOnly: true,
+    run: (s) => s.settings(),
+  },
+  {
+    name: "set_settings",
+    title: "Change settings",
+    description: "Change app settings on every device: time_format \"12h\" or \"24h\", week_start (ISO weekday: 6 Saturday, 7 Sunday, 1 Monday), sound (alarm sound on/off). Time zone: use set_home_zone. Lecture reminders: set_lecture_reminders.",
+    input: { time_format: z.enum(["12h", "24h"]).optional(), week_start: z.union([z.literal(1), z.literal(6), z.literal(7)]).optional(), sound: z.boolean().optional() },
+    run: (s, a) => (s.setSettings(a), s.settings()),
+  },
 ];
 
 export const toolByName = new Map(TOOLS.map((t) => [t.name, t]));

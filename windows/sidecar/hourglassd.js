@@ -1081,8 +1081,8 @@ async function extra(req, res, url, path) {
       if (req.method === "GET") return json(res, 200, { enabled: false, reason: "Sign in to use the assistant.", messages: [] }), true;
       return json(res, 401, { error: "Sign in to use the assistant." }), true;
     }
-    const body = req.method === "POST" ? await readBody(req) : undefined;
-    return json(res, 200, await remote(path, { method: req.method, body })), true;
+    const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
+    return json(res, 200, await remote(path + url.search, { method: req.method, body })), true;
   }
   if (path === "/api/sync/now" && req.method === "POST") {
     await syncOnce();

@@ -33,3 +33,5 @@ DrivePage 1.0 DrivePage.qml
 AttendancePage 1.0 AttendancePage.qml
 ContextMenu 1.0 ContextMenu.qml
 AssistantPage 1.0 AssistantPage.qml
+ResultCard 1.0 ResultCard.qml
+AssistantSettings 1.0 AssistantSettings.qml

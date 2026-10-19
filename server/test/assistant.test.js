@@ -96,7 +96,7 @@ test("needs an account", async () => {
 
 test("a message runs opencode, which works on the account's data through the Hourglass tools", async () => {
   const empty = await call("GET", "/api/assistant");
-  assert.deepEqual(empty.body, { enabled: true, model: "fake/down", busy: false, messages: [] });
+  assert.deepEqual(empty.body, { enabled: true, engine: "free", model: "fake/down", busy: false, messages: [] });
 
   assert.equal((await call("POST", "/api/assistant/message", { text: "Buy eggs and milk" })).status, 202);
   const chat = await waitIdle();

@@ -91,11 +91,22 @@ Item {
     function unattach(key) { page.attachments = page.attachments.filter(a => a.key !== key); }
 
     function stop() { Api.request("POST", "/api/assistant/stop", {}, () => page.load(), true); }
+    // "Free · big-pickle", "Claude · Haiku 5.5", "API · gpt-5-mini".
+    function engineLabel() {
+        const m = String(page.chat.model || "");
+        const shortName = m.replace(/^opencode\//, "").replace(/^claude-/, "").replace(/-(\d+)-(\d+)$/, " $1.$2").replace(/^./, c => c.toUpperCase());
+        if (page.chat.engine === "anthropic") return "Claude API · " + shortName;
+        if (page.chat.engine === "claude") return "Claude plan · " + shortName;
+        if (page.chat.engine === "openai") return "API · " + (m || "pick a model");
+        return "Free · " + (shortName || "auto");
+    }
     function newChat() {
         Api.request("POST", "/api/assistant/new", {}, () => { page.pending = ""; page.load(); }, true);
     }
 
     Component.onCompleted: { load(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
+
+    AssistantSettings { id: aiSettings; onSaved: page.load() }
 
     FileDialog {
         id: attachDialog
@@ -173,7 +184,16 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            Section { Layout.fillWidth: true; text: "Assistant"; detail: page.chat.model ? "via opencode" : "" }
+            Section { Layout.fillWidth: true; text: "Assistant" }
+            // Who answers: opens the AI settings.
+            Btn {
+                compact: true
+                kind: "subtle"
+                icon: "down"
+                text: page.engineLabel()
+                tip: "Choose the AI: free models, your Claude plan or an API key"
+                onClicked: aiSettings.open()
+            }
             Btn { compact: true; icon: "plus"; text: "New chat"; enabled: page.messages.length > 0 && !page.busy; onClicked: page.newChat() }
         }
 
@@ -225,7 +245,8 @@ Item {
                         anchors.left: row.mine ? undefined : parent.left
                         width: Math.min(row.width * (row.mine ? 0.75 : 0.9),
                                         Math.max(row.modelData.text !== "" ? natural.implicitWidth : 0, row.modelData.error ? naturalError.implicitWidth : 0, toolLines.implicitWidth,
-                                                 (row.modelData.files || []).length ? 290 : 0) + 32)
+                                                 (row.modelData.files || []).length ? 290 : 0,
+                                                 (row.modelData.cards || []).length ? ((row.modelData.cards || []).length > 1 ? 688 : 340) : 0) + 32)
                         height: body.implicitHeight + 22
                         color: row.mine ? Theme.surface2 : "transparent"
                         border.width: row.mine ? 1 : 0
@@ -265,6 +286,22 @@ Item {
                                             RotationAnimation on rotation { running: modelData.status !== "completed" && modelData.status !== "error"; from: 0; to: 360; duration: 1200; loops: Animation.Infinite }
                                         }
                                         Text { text: modelData.label; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                                    }
+                                }
+                            }
+                            // What it did, drawn: the alarm's clock, the timer's ring, the birthday's page.
+                            Flow {
+                                visible: !row.mine && (row.modelData.cards || []).length > 0
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: row.width * 0.9 - 30
+                                spacing: 8
+                                Repeater {
+                                    model: row.mine ? [] : (row.modelData.cards || [])
+                                    ResultCard {
+                                        required property var modelData
+                                        info: modelData
+                                        now: page.app ? page.app.clock : Date.now()
+                                        width: Math.min(340, row.width * 0.9 - 30)
                                     }
                                 }
                             }
@@ -339,7 +376,7 @@ Item {
                     Layout.topMargin: 6
                     spacing: 8
                     Repeater {
-                        model: ["What's on today?", "Set an alarm in 30 minutes", "Wake me at 7:30 on weekdays", "Start a 25 minute timer", "Tidy up my latest note", "What did I write last lecture?"]
+                        model: ["What's on today?", "Set my alarm in 1 hour", "Wake me at 7:30 on weekdays", "Start a 25 minute timer", "Upcoming birthdays", "Tidy up my latest note"]
                         Btn { required property string modelData; compact: true; text: modelData; onClicked: page.sendText(modelData) }
                     }
                 }
