@@ -52,6 +52,9 @@ const MAX_TEXT = 4000;
 const PER_HOUR = 60;
 const MAX_RUNNING = 3;              // runs at once, across accounts (the droplet has ~2 GB)
 const RUN_SECONDS = 240;
+// A free model that has said nothing this long has stalled: the next one is tried.
+const FIRST_WORD_SECONDS = Number(process.env.HOURGLASS_ASSISTANT_FIRST_WORD_S || 40); // opencode starting + the first event
+const QUIET_SECONDS = Number(process.env.HOURGLASS_ASSISTANT_QUIET_S || 25); // between events after that
 const KEEP_MESSAGES = 200;
 const SANDBOX_USER = "hourglass-ai";
 const MAX_FILES = 6;                // attachments on one message
@@ -102,6 +105,12 @@ const TOOL_LABELS = {
   update_timer: ["Updating a timer", "Updated a timer"],
   stop_timer: ["Stopping a timer", "Stopped a timer"],
 };
+
+/** One line in the message's "what it's doing" list, shown live under Working. */
+export function step(message, text) {
+  (message.steps ||= []).push({ at: Date.now(), text: String(text).slice(0, 300) });
+  if (message.steps.length > 40) message.steps.splice(0, message.steps.length - 40);
+}
 
 function toolLabel(tool, status) {
   const raw = String(tool || "");
@@ -351,10 +360,27 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const toolsById = new Map();
       const carded = new Set(); // calls whose card is made
       const timer = setTimeout(() => stop(t), (RUN_SECONDS + 10) * 1000);
+      // Watchdog: a model that goes quiet is stopped, so the next one can answer.
+      const started = Date.now();
+      let lastEvent = 0;
+      let stalled = false;
+      const watchdog = setInterval(() => {
+        const now = Date.now();
+        const quiet = lastEvent ? now - lastEvent > QUIET_SECONDS * 1000 : now - started > FIRST_WORD_SECONDS * 1000;
+        if (!quiet || stalled) return;
+        stalled = true;
+        step(message, `${model.replace(/^opencode\//, "")} went quiet for ${lastEvent ? QUIET_SECONDS : FIRST_WORD_SECONDS} s: stopped it`);
+        if (runner === "systemd") spawn("systemctl", ["stop", unit], { stdio: "ignore" }).on("error", () => {});
+        try { child.kill("SIGKILL"); } catch {}
+      }, 2000);
+      let connected = false;
 
       const onEvent = (ev) => {
+        lastEvent = Date.now();
+        if (!connected) { connected = true; step(message, `Connected (${Math.round((lastEvent - started) / 100) / 10} s)`); }
         if (ev.sessionID) sessionId = ev.sessionID;
         const part = ev.part || {};
+        if (ev.type === "reasoning" && part.text) step(message, `Thinking: ${part.text.replace(/\s+/g, " ").slice(0, 240)}`);
         if (ev.type === "step_start") stepText = "";
         else if (ev.type === "text" && part.text) {
           // The answer is the last step's text; earlier steps may hold text written before a tool call.
@@ -371,6 +397,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
             message.cards = trimCards([...(message.cards || []), ...cardsFor(t.service, shaped.tool, part.state?.input || {}, result)]);
             carded.add(key);
           }
+          if (!toolsById.has(key) || toolsById.get(key).status !== shaped.status) step(message, shaped.label);
           toolsById.set(key, shaped);
           message.tools = [...toolsById.values()];
           anything = true;
@@ -392,7 +419,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       child.on("error", (e) => { error = `could not start opencode: ${e.message}`; });
       child.on("close", (code) => {
         clearTimeout(timer);
+        clearInterval(watchdog);
         if (buffer.trim()) { try { onEvent(JSON.parse(buffer)); } catch {} }
+        if (stalled && !anything) error = "stalled";
         if (!error && !anything) error = code ? `opencode exited (${code})${stderr ? ": " + stderr.trim().slice(-200) : ""}` : "no reply";
         resolve({ error, sessionId, anything });
       });
@@ -419,7 +448,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   }
 
   const modelName = (cfg) => {
-    if (cfg.engine === "free") return cfg.model || models[0];
+    if (cfg.engine === "free") return cfg.model && cfg.model.startsWith("opencode/") ? cfg.model : models[0];
     if (cfg.engine === "anthropic" || cfg.engine === "claude") return cfg.model || CLAUDE_MODELS[0].id;
     return cfg.model;
   };
@@ -470,14 +499,18 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       let error = null;
       let anything = false;
       const timer = setTimeout(() => stop(t), (RUN_SECONDS + 10) * 1000);
+      const began = Date.now();
+      step(message, `Starting Claude Code (${cfg.model || CLAUDE_MODELS[0].id}) on your Claude plan…`);
       const onEvent = (ev) => {
         if (ev.type === "assistant") {
           for (const b of ev.message?.content || []) {
+            if (b.type === "thinking" && (b.thinking || "").trim()) step(message, `Thinking: ${b.thinking.trim().slice(0, 240)}`);
             if (b.type === "text" && b.text.trim()) { message.text = b.text.trim(); anything = true; }
             if (b.type === "tool_use") {
               const name = String(b.name).replace(/^mcp__hourglass__/, "");
               const e = { tool: name, status: "running" };
               message.tools.push(e);
+              step(message, toolLabel(name, "running"));
               uses.set(b.id, { name, input: b.input, entry: e });
               anything = true;
             }
@@ -494,6 +527,8 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
             try { result = JSON.parse(raw); } catch {}
             message.cards = trimCards([...(message.cards || []), ...cardsFor(t.service, u.name, u.input, result)]);
           }
+        } else if (ev.type === "system" && ev.subtype === "init") {
+          step(message, `Claude Code started (${Math.round((Date.now() - began) / 100) / 10} s)${(ev.mcp_servers || []).some((m) => m.status !== "connected") ? ", Hourglass tools not connected" : ""}`);
         } else if (ev.type === "result") {
           if (ev.is_error) error = String(ev.result || ev.subtype || "Claude could not answer");
           else if (ev.result) message.text = String(ev.result).trim();
@@ -529,7 +564,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const abort = new AbortController();
       if (entry) entry.abort = abort;
       try {
-        await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal });
+        step(message, `Asking ${modelName(cfg)}…`);
+        await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x) });
+        step(message, "Done");
         message.model = modelName(cfg);
       } catch (e) {
         if (!running.has(t.email)) message.error = "Stopped.";
@@ -564,22 +601,27 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const attached = staged.length
       ? `\n\nThe user attached (already saved in their Drive's "${ASSISTANT_FOLDER}" folder):\n${staged.map((f) => `- ${f.name} (${f.mime}, file ${f.id}), readable at ./${f.path}${isPicture(f) ? " - also attached to this message, you can see it" : ""}`).join("\n")}`
       : "";
-    const prompt = `${fresh ? briefing(skill, guide) + "\n\n" : REMINDER + "\n"}${context(t)}\n\n${direct}The user says:\n${text}${attached}`;
+    const promptFor = (isFresh) => `${isFresh ? briefing(skill, guide) + "\n\n" : REMINDER + "\n"}${context(t)}\n\n${direct}The user says:\n${text}${attached}`;
     // Pictures go to the model itself, on a model that can see.
     const pictures = staged.filter(isPicture).map((f) => f.path);
     // The picked model first; the others only if it fails.
-    const order = pictures.length ? visionModels : cfg.model ? [cfg.model, ...models.filter((m) => m !== cfg.model)] : models;
+    const picked = cfg.model && cfg.model.startsWith("opencode/") ? cfg.model : null;
+    const order = pictures.length ? visionModels : picked ? [picked, ...models.filter((m) => m !== picked)] : models;
     const errors = [];
     for (const model of order) {
       const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
-      const r = await runOnce(t, dirs, chat, message, prompt, model, unit, pictures);
+      step(message, `${errors.length ? "Trying" : "Asking"} ${model.replace(/^opencode\//, "")} (free)…`);
+      const r = await runOnce(t, dirs, chat, message, promptFor(!chat.session), model, unit, pictures);
       // A run that failed before doing anything leaves no session worth resuming.
       if (r.sessionId && (r.anything || !r.error)) chat.session = r.sessionId;
       if (!running.has(t.email)) { message.error = message.error || "Stopped."; break; } // the user pressed Stop
-      if (!r.error) { message.model = model; break; }
+      if (!r.error) { message.model = model; step(message, "Done"); break; }
       errors.push(`${model}: ${r.error}`);
       // Something already happened on this model: do not run the request twice.
       if (r.anything) { message.error = r.error; break; }
+      if (r.error !== "stalled") step(message, `${model.replace(/^opencode\//, "")} failed: ${String(r.error).slice(0, 120)}`);
+      // After a stall the next try starts a fresh conversation: the old one may be what hangs.
+      if (r.error === "stalled") chat.session = null;
     }
     if (!message.text && !message.tools.length && !message.error) message.error = errors.length ? "The assistant could not answer right now. Try again in a moment." : "No reply.";
     if (errors.length) log(`assistant (${t.email || "owner"}): ${errors.join(" ; ").slice(0, 400)}`);
@@ -619,7 +661,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     try { return JSON.parse(b || "{}"); } catch { return {}; }
   }
 
-  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], error: m.error || null, files: m.files || [], quick: !!m.quick, model: m.model || null });
+  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, files: m.files || [], quick: !!m.quick, model: m.model || null });
 
   /** The Drive folder attachments go to, made on first use. */
   function assistantFolder(t) {

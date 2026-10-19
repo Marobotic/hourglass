@@ -16,6 +16,12 @@ appendFileSync("calls.jsonl", JSON.stringify({ args, model, session, prompt, hom
 const sessionID = session || "ses_fake1";
 const emit = (e) => process.stdout.write(JSON.stringify({ sessionID, ...e }) + "\n");
 
+// "fake/stuck" says nothing at all, like a free model that stalls.
+if (model === "fake/stuck") {
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
+
 // The first model in the list "refuses", like a free model that is down.
 if (model === "fake/down") {
   emit({ type: "error", error: { name: "APIError", data: { message: "model is down" } } });

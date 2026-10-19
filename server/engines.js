@@ -95,6 +95,8 @@ export function createSettings(dataDir) {
     },
     save(t, { engine, model, base_url, key }) {
       const s = read(t);
+      // A new engine without a model: its default (the old engine's model would not run on it).
+      if (engine && engine !== s.engine && model === undefined) s.model = null;
       if (engine) s.engine = engine;
       if (model !== undefined) s.model = model || null;
       if (base_url !== undefined) s.base_url = base_url || null;
@@ -168,7 +170,7 @@ export function historyTurns(chat, upTo) {
 
 // --- Claude with an API key -------------------------------------------------------------
 
-async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress }) {
+async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress, onStep }) {
   const client = new Anthropic({ apiKey: key, timeout: TURN_SECONDS * 1000, maxRetries: 1 });
   const id = model || CLAUDE_MODELS[0].id;
   const tools = TOOL_SCHEMAS.map((t, i) => ({ name: t.name, description: t.description, input_schema: t.schema, ...(i === TOOL_SCHEMAS.length - 1 ? { cache_control: { type: "ephemeral" } } : {}) }));
@@ -184,10 +186,15 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
       tools,
       messages,
       output_config: { effort: "low" },
+      // A readable summary of its thinking, for the "what it's doing" list.
+      thinking: { type: "adaptive", display: "summarized" },
     };
+    const sent = Date.now();
     const response = fallback
       ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }, { signal })
       : await client.messages.create(params, { signal });
+    onStep(`Claude answered (${Math.round((Date.now() - sent) / 100) / 10} s)`);
+    for (const b of response.content) if (b.type === "thinking" && (b.thinking || "").trim()) onStep(`Thinking: ${b.thinking.trim().replace(/\s+/g, " ").slice(0, 240)}`);
     const text = response.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
     if (text) message.text = text;
     if (response.stop_reason === "refusal") {
@@ -202,8 +209,10 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
     for (const u of uses) {
       const entry = { tool: u.name, status: "running" };
       message.tools.push(entry);
+      onStep(`Using ${u.name}`);
       onProgress();
       const r = callTool(service, u.name, u.input);
+      if (!r.ok) onStep(`${u.name} failed: ${r.text.slice(0, 160)}`);
       entry.status = r.ok ? "completed" : "error";
       message.cards = trimCards([...(message.cards || []), ...r.cards]);
       results.push({ type: "tool_result", tool_use_id: u.id, content: r.text, ...(r.ok ? {} : { is_error: true }) });
@@ -215,7 +224,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
 
 // --- any OpenAI-compatible API ----------------------------------------------------------
 
-async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress }) {
+async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep }) {
   if (!model) throw new Error("pick a model in Settings first");
   const url = `${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/chat/completions`;
   const tools = TOOL_SCHEMAS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
@@ -241,6 +250,7 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
     for (const c of calls) {
       const entry = { tool: c.function?.name, status: "running" };
       message.tools.push(entry);
+      onStep(`Using ${c.function?.name}`);
       onProgress();
       let args = {};
       try { args = JSON.parse(c.function?.arguments || "{}"); } catch {}
@@ -292,11 +302,11 @@ export async function checkKey({ engine, key, base_url }) {
  * One reply on a direct engine (anthropic or openai): message.text, .tools and
  * .cards fill in as it works. Throws on a failure the user should see.
  */
-export async function runDirect({ settings, system, chat, userText, images, service, message, signal, onProgress = () => {} }) {
+export async function runDirect({ settings, system, chat, userText, images, service, message, signal, onProgress = () => {}, onStep = () => {} }) {
   const history = historyTurns(chat, chat.messages.length - 2);
   const key = settings.keys[settings.engine === "openai" ? `openai:${settings.base_url || ""}` : settings.engine];
   if (!key) throw new Error("Add your key in the assistant's settings first.");
-  const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress };
+  const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep };
   try {
     if (settings.engine === "anthropic") await runAnthropic(args);
     else await runOpenAI(args);

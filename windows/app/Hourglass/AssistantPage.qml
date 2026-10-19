@@ -17,6 +17,8 @@ Item {
     property string pending: ""      // sent, not in the list yet
     property bool sending: false
     property bool wasBusy: false
+    property bool showSteps: true    // "What it's doing" open under Working
+    property var openSteps: ({})     // finished messages whose steps are shown, by id
     property string chatJson: ""     // what `chat` was made from: a poll that changed nothing rebuilds nothing
     property var attachments: []     // [{ key, name, mime, id?, error? }] waiting to be sent
     property var info: null          // { thumb_base, key }: previews of attached pictures
@@ -246,7 +248,8 @@ Item {
                         width: Math.min(row.width * (row.mine ? 0.75 : 0.9),
                                         Math.max(row.modelData.text !== "" ? natural.implicitWidth : 0, row.modelData.error ? naturalError.implicitWidth : 0, toolLines.implicitWidth,
                                                  (row.modelData.files || []).length ? 290 : 0,
-                                                 (row.modelData.cards || []).length ? ((row.modelData.cards || []).length > 1 ? 688 : 340) : 0) + 32)
+                                                 (row.modelData.cards || []).length ? ((row.modelData.cards || []).length > 1 ? 688 : 340) : 0,
+                                                 page.openSteps[row.modelData.id] ? 620 : 0) + 32)
                         height: body.implicitHeight + 22
                         color: row.mine ? Theme.surface2 : "transparent"
                         border.width: row.mine ? 1 : 0
@@ -327,23 +330,79 @@ Item {
                                 font.family: Theme.mono
                                 font.pixelSize: 13
                             }
+                            // How it got there: the steps, for an answer that is done.
+                            readonly property bool hasSteps: !row.mine && (row.modelData.steps || []).length > 0 && !(page.busy && page.chat.messages.length > 0 && row.modelData.id === page.chat.messages[page.chat.messages.length - 1].id)
+                            readonly property bool stepsOpen: !!page.openSteps[row.modelData.id]
+                            Text {
+                                visible: parent.hasSteps
+                                text: (parent.stepsOpen ? "▴" : "▾") + " Steps" + (row.modelData.model ? " · " + String(row.modelData.model).replace(/^opencode\//, "") : "")
+                                color: stepToggle.containsMouse ? Theme.fg : Theme.faint
+                                font.family: Theme.mono
+                                font.pixelSize: 11
+                                MouseArea {
+                                    id: stepToggle
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        const o = Object.assign({}, page.openSteps);
+                                        if (o[row.modelData.id]) delete o[row.modelData.id]; else o[row.modelData.id] = true;
+                                        page.openSteps = o;
+                                    }
+                                }
+                            }
+                            StepList {
+                                visible: parent.hasSteps && parent.stepsOpen
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: row.width * 0.9 - 30
+                                steps: row.modelData.steps || []
+                            }
                         }
                     }
                 }
 
                 header: Item {      // at the bottom, under the newest message (the list runs bottom to top)
+                    id: working
                     width: list.width
-                    height: page.busy ? 34 : 0
+                    height: page.busy ? workCol.implicitHeight + 14 : 0
                     visible: page.busy
-                    Text {
-                        id: dots
-                        anchors { left: parent.left; leftMargin: 16; bottom: parent.bottom }
-                        property int n: 1
-                        text: "Working" + ".".repeat(n)
-                        color: Theme.muted
-                        font.family: Theme.mono
-                        font.pixelSize: 13
-                        Timer { interval: 400; running: dots.visible; repeat: true; onTriggered: dots.n = dots.n % 3 + 1 }
+                    // The message being worked on: its steps, live.
+                    readonly property var current: {
+                        const m = page.chat.messages || [];
+                        const last = m.length ? m[m.length - 1] : null;
+                        return last && last.role === "assistant" ? last : null;
+                    }
+                    ColumnLayout {
+                        id: workCol
+                        anchors { left: parent.left; leftMargin: 16; right: parent.right; bottom: parent.bottom }
+                        spacing: 6
+                        RowLayout {
+                            spacing: 12
+                            Text {
+                                id: dots
+                                property int n: 1
+                                text: "Working" + ".".repeat(n) + (working.current ? "  " + Math.max(0, Math.round((page.app ? page.app.clock : Date.now()) - working.current.time) / 1000).toFixed(0) + " s" : "")
+                                color: Theme.muted
+                                font.family: Theme.mono
+                                font.pixelSize: 13
+                                Timer { interval: 400; running: dots.visible; repeat: true; onTriggered: dots.n = dots.n % 3 + 1 }
+                            }
+                            // "What it's doing": the steps, opened and closed here.
+                            Text {
+                                visible: !!working.current
+                                text: (page.showSteps ? "▴" : "▾") + " What it's doing"
+                                color: stepsHover.containsMouse ? Theme.fg : Theme.faint
+                                font.family: Theme.mono
+                                font.pixelSize: 12
+                                MouseArea { id: stepsHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.showSteps = !page.showSteps }
+                            }
+                        }
+                        StepList {
+                            visible: page.showSteps && !!working.current
+                            Layout.fillWidth: true
+                            Layout.maximumWidth: 720
+                            steps: working.current ? (working.current.steps || []) : []
+                        }
                     }
                 }
             }

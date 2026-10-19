@@ -7,6 +7,7 @@
 // a message with words left over that aren't understood is passed on.
 import { WEEKDAYS, addDays, localParts, weekday, zonedToEpoch } from "../core/dates.js";
 import { alarmCard, dayCard, eventCard } from "./cards.js";
+import { readAnswer } from "./answer.js";
 
 const DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
@@ -538,7 +539,7 @@ function spell(secs) {
  */
 export function quickAnswer(service, text) {
   if (!text || text.length > 160 || /\n/.test(text.trim())) return null;
-  for (const f of [stopTimerRequest, cancelAlarmRequest, remindRequest, addBirthdayRequest, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
+  for (const f of [stopTimerRequest, cancelAlarmRequest, remindRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
     try {
       const r = f(service, text);
       if (r) return r;
