@@ -120,13 +120,23 @@ class Nav(val repo: Repo) {
 }
 
 class MainActivity : ComponentActivity() {
+    // The share screen's "Open Drive" / "Open Notes" asks for a tab.
+    private val openTab = mutableStateOf<Int?>(null)
+    private fun tabOf(i: android.content.Intent?) = when (i?.getStringExtra("open_tab")) { "notes" -> 2; "drive" -> 3; else -> null }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        tabOf(intent)?.let { openTab.value = it }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         val repo = App.repo(this)
-        setContent { HourglassTheme { HourglassApp(repo) } }
+        openTab.value = tabOf(intent)
+        setContent { HourglassTheme { HourglassApp(repo, requestedTab = openTab) } }
     }
 
     override fun onResume() {
@@ -136,8 +146,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null) {
+fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, requestedTab: androidx.compose.runtime.MutableState<Int?>? = null) {
     val nav = remember { Nav(repo).apply { tab = initialTab; initialRoute?.let { push(it) } } }
+    LaunchedEffect(requestedTab?.value) {
+        requestedTab?.value?.let { nav.stack.clear(); nav.tab = it; requestedTab.value = null }
+    }
     val version by repo.store.version.collectAsState()
     var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1000); clock = System.currentTimeMillis() } }
