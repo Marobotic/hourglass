@@ -1,11 +1,11 @@
 // Domain operations behind REST, MCP and the Linux app. Arguments are the
 // friendly shapes an AI would send: course names instead of ids, weekday
 // names, "HH:MM" times.
-import { MONTHS, WEEKDAYS, addDays, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
+import { MONTHS, WEEKDAYS, addDays, formatTime, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
 import { expand } from "../recurrence.js";
 import { markMap, markOf, resolveNow, sessionNotes } from "../now.js";
-import { finishedTimer, nextAlarm } from "../alarms.js";
-import { BUILTIN_RINGTONES, MARKS, PALETTE, markId, parseWeekday } from "../model.js";
+import { finishedTimer, nextAlarm, reminderState } from "../alarms.js";
+import { BUILTIN_RINGTONES, MARKS, PALETTE, REMINDER_TONES, markId, parseWeekday } from "../model.js";
 import { numberedTitle } from "./store.js";
 import { plainText } from "../noteformat.js";
 
@@ -597,6 +597,111 @@ export class Service {
     throw new Error(`cannot ${action} a ${t.state} timer`);
   }
 
+  // --- reminders -------------------------------------------------------------
+
+  // Overdue first, then by when they show; done ones last (newest first).
+  listReminders({ include_done = true } = {}) {
+    const now = this.clock();
+    return this.store
+      .all("reminders")
+      .map((r) => ({ ...r, ...reminderState(r, now, this.tz) }))
+      .filter((r) => include_done || !r.done)
+      .sort((a, b) => (a.done - b.done) || (a.done ? b.done_at - a.done_at : (b.overdue - a.overdue) || (a.due_at ?? Infinity) - (b.due_at ?? Infinity)));
+  }
+
+  // When: date + time, days (repeats), or in_minutes from now. A time alone
+  // is today, or tomorrow once it has passed.
+  addReminder({ label, text, date, time, days, in_minutes }) {
+    const what = String(label ?? text ?? "").trim();
+    if (!what) throw new Error("say what to remind about (label)");
+    const now = this.clock();
+    let d = date ?? null;
+    let t = time ?? null;
+    const repeat = (days ?? []).map(parseWeekday);
+    if (in_minutes !== undefined && in_minutes !== null) {
+      const p = localParts(now + Number(in_minutes) * 60000, this.tz);
+      d = p.date;
+      t = p.time;
+    }
+    if (t === null) throw new Error("give a time (HH:MM) or in_minutes");
+    const hm = parseTime(String(t));
+    if (hm === null) throw new Error("time must be HH:MM");
+    t = formatTime(hm);
+    if (!repeat.length && !d) {
+      const p = localParts(now, this.tz);
+      d = hm > p.minutes ? p.date : addDays(p.date, 1);
+    }
+    return this.store.upsert("reminders", { label: what, time: t, date: repeat.length ? null : d, days: repeat, done_at: repeat.length ? now : null, snooze_at: null });
+  }
+
+  // action: done | undone | snooze (minutes, default from settings). Or change
+  // label, date, time, days.
+  updateReminder({ reminder_id, action, minutes, label, date, time, days }) {
+    const r = this.row("reminders", reminder_id);
+    const now = this.clock();
+    if (action === "done") return this.store.upsert("reminders", { id: r.id, done_at: now, snooze_at: null });
+    if (action === "undone") return this.store.upsert("reminders", { id: r.id, done_at: r.days?.length ? now : null, snooze_at: null });
+    if (action === "snooze") return this.store.upsert("reminders", { id: r.id, snooze_at: now + (Number(minutes) || this.reminderSettings().snooze_min) * 60000 });
+    if (action) throw new Error(`unknown action ${action}: done, undone or snooze`);
+    const patch = { id: r.id };
+    if (label !== undefined) patch.label = String(label).trim() || r.label;
+    if (time !== undefined) {
+      const hm = parseTime(String(time));
+      if (hm === null) throw new Error("time must be HH:MM");
+      patch.time = formatTime(hm);
+    }
+    if (days !== undefined) {
+      patch.days = (days ?? []).map(parseWeekday);
+      if (patch.days.length) patch.date = null;
+    }
+    if (date !== undefined && !patch.days?.length) {
+      patch.date = date;
+      patch.days = [];
+    }
+    const repeats = (patch.days ?? r.days ?? []).length > 0;
+    if (!repeats && !("date" in patch ? patch.date : r.date)) patch.date = this.today();
+    // A new time is a new reminder: it shows again, and a repeating one starts from now.
+    if (patch.time || patch.date || patch.days) Object.assign(patch, { snooze_at: null, done_at: (patch.days ?? r.days)?.length ? now : null });
+    return this.store.upsert("reminders", patch);
+  }
+
+  removeReminder({ reminder_id }) {
+    return this.store.remove("reminders", this.row("reminders", reminder_id).id);
+  }
+
+  // Synced, separate from alarms: notification only or with a tone, which
+  // tone, how long a snooze is.
+  reminderSettings() {
+    const pref = (k) => {
+      const v = this.store.get("prefs", k);
+      return v && !v.deleted ? v.value : null;
+    };
+    const tone = pref("reminder_tone");
+    return {
+      style: pref("reminder_style") === "silent" ? "silent" : "tone",
+      tone: REMINDER_TONES.includes(tone) ? tone : "chime",
+      snooze_min: Number(pref("reminder_snooze")) || 10,
+      tones: REMINDER_TONES,
+    };
+  }
+
+  setReminderSettings({ style, tone, snooze_min }) {
+    if (style !== undefined) {
+      if (!["tone", "silent"].includes(style)) throw new Error('style is "tone" or "silent"');
+      this.store.upsert("prefs", { id: "reminder_style", value: style });
+    }
+    if (tone !== undefined) {
+      if (!REMINDER_TONES.includes(tone)) throw new Error(`tone is one of ${REMINDER_TONES.join(", ")}`);
+      this.store.upsert("prefs", { id: "reminder_tone", value: tone });
+    }
+    if (snooze_min !== undefined) {
+      const m = Math.round(Number(snooze_min));
+      if (!(m >= 1 && m <= 240)) throw new Error("snooze_min is 1-240");
+      this.store.upsert("prefs", { id: "reminder_snooze", value: String(m) });
+    }
+    return this.reminderSettings();
+  }
+
   // --- world clock ---------------------------------------------------------
 
   // Minutes a zone is ahead of UTC at `ms`.
@@ -674,13 +779,24 @@ export class Service {
     return a ? a.lead_minutes : 0;
   }
 
-  // Per-device preferences (not synced). Lecture reminders are synced alarms.
+  // Time format, week start and alarm sound are synced prefs rows, so a change
+  // on one device (or by the assistant) shows on all of them; a device that
+  // never had the row keeps its own older setting. Lecture reminders are
+  // synced alarms.
+  syncedPref(key) {
+    const v = this.store.get("prefs", key);
+    return v && !v.deleted && v.value !== null ? v.value : null;
+  }
+
   settings() {
+    const tf = this.syncedPref("time_format");
+    const ws = Number(this.syncedPref("week_start"));
+    const snd = this.syncedPref("sound");
     return {
       tz: this.tz,
-      time_format: this.store.meta("time_format") || "12h",
-      week_start: this.store.meta("week_start") || 6, // ISO weekday; 6 = Saturday
-      sound: this.store.meta("sound") ?? true,
+      time_format: tf === "12h" || tf === "24h" ? tf : this.store.meta("time_format") || "12h",
+      week_start: [1, 6, 7].includes(ws) ? ws : this.store.meta("week_start") || 6, // ISO weekday; 6 = Saturday
+      sound: snd === "true" ? true : snd === "false" ? false : this.store.meta("sound") ?? true,
       ringtone: this.ringtone,
       lecture_reminder_min: this.lectureReminderMin(),
     };
@@ -728,9 +844,13 @@ export class Service {
       Intl.DateTimeFormat(undefined, { timeZone: tz });
       this.store.setMeta("tz", tz);
     }
-    if (time_format === "12h" || time_format === "24h") this.store.setMeta("time_format", time_format);
-    if ([1, 6, 7].includes(Number(week_start))) this.store.setMeta("week_start", Number(week_start));
-    if (typeof sound === "boolean") this.store.setMeta("sound", sound);
+    const share = (key, value) => {
+      this.store.setMeta(key, value);
+      this.store.upsert("prefs", { id: key, value: String(value) });
+    };
+    if (time_format === "12h" || time_format === "24h") share("time_format", time_format);
+    if ([1, 6, 7].includes(Number(week_start))) share("week_start", Number(week_start));
+    if (typeof sound === "boolean") share("sound", sound);
     if (lecture_reminder_min !== undefined) this.setLectureReminders({ minutes: Number(lecture_reminder_min) || 0 });
     return this.settings();
   }

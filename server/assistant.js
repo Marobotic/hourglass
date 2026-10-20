@@ -99,6 +99,11 @@ const TOOL_LABELS = {
   add_clock: ["Adding a clock", "Added a clock"],
   set_home_zone: ["Changing the time zone", "Changed the time zone"],
   remove_clock: ["Removing a clock", "Removed a clock"],
+  list_reminders: ["Reading reminders", "Read reminders"],
+  add_reminder: ["Adding a reminder", "Added a reminder"],
+  update_reminder: ["Changing a reminder", "Changed a reminder"],
+  remove_reminder: ["Deleting a reminder", "Deleted a reminder"],
+  set_reminder_settings: ["Changing reminder settings", "Changed reminder settings"],
   list_timers: ["Reading timers", "Read timers"],
   start_timer: ["Starting a timer", "Started a timer"],
   save_timer: ["Saving a timer", "Saved a timer"],
@@ -286,6 +291,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     section("Alarms", () => s.listAlarms().slice(0, 12).map((a) => {
       const next = a.next_at ? localParts(a.next_at, tz) : null;
       return `- ${a.label}${a.enabled ? "" : " (off)"}: ${a.lead_minutes ? `${a.lead_minutes} min before sessions` : a.days?.length ? `${a.time} on days ${a.days.join(",")}` : `${a.time}${a.date ? ` on ${a.date}` : ""}`}${next ? `, next ${next.date} ${next.time}` : ""} (alarm ${a.id})`;
+    }));
+    section("Reminders (not done)", () => s.listReminders({ include_done: false }).slice(0, 12).map((r) => {
+      const due = r.due_at ? localParts(r.due_at, tz) : null;
+      return `- ${r.label}: ${r.days?.length ? `${r.time} on days ${r.days.join(",")}` : `${r.time} on ${r.date}`}${r.overdue ? " (overdue)" : ""}${due ? `, shows ${due.date} ${due.time}` : ""} (reminder ${r.id})`;
     }));
     section("Timers", () => s.listTimers().map((x) => `- ${x.label}: ${x.state}, ${x.remaining_s}s left (timer ${x.id})`));
     section("Recent notes", () => s.getNotes({ limit: 8 }).map((n) => `- "${n.title || "Untitled"}"${n.course_name ? ` in ${n.course_name}` : ""}${n.session_date ? ` for ${n.session_date}` : ""} (note ${n.id})`));
@@ -752,10 +761,12 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (c.kind === "alarm" && c.state === "removed" && last.alarm_id === c.id) delete last.alarm_id;
       if (c.kind === "note" && c.id) Object.assign(last, { note_id: c.id, last: "note" });
       if (c.kind === "timer" && c.id && c.state === "running") Object.assign(last, { timer_id: c.id, last: "timer" });
+      if (c.kind === "reminder" && c.id && c.state !== "removed") Object.assign(last, { reminder_id: c.id, last: "reminder" });
     }
     if (ids?.alarm_id) Object.assign(last, { alarm_id: ids.alarm_id, last: "alarm" });
     if (ids?.note_id) Object.assign(last, { note_id: ids.note_id, last: "note" });
     if (ids?.timer_id) Object.assign(last, { timer_id: ids.timer_id, last: "timer" });
+    if (ids?.reminder_id) Object.assign(last, { reminder_id: ids.reminder_id, last: "reminder" });
   }
 
   const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, files: m.files || [], quick: !!m.quick, model: m.model || null });

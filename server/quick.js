@@ -6,8 +6,9 @@
 // replaces a real answer: every pattern is anchored to the whole message, and
 // a message with words left over that aren't understood is passed on.
 import { WEEKDAYS, addDays, localParts, weekday, zonedToEpoch } from "../core/dates.js";
-import { alarmCard, dayCard, eventCard } from "./cards.js";
+import { alarmCard, dayCard, eventCard, reminderCard } from "./cards.js";
 import { findDay, readAnswer } from "./answer.js";
+import { REMINDER_TONES } from "../core/model.js";
 
 const DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
@@ -253,7 +254,6 @@ function alarmRequest(t, raw) {
   else if ((m = /^wake\s+me(?:\s+up)?\s+(.+)$/.exec(s))) { rest = m[1]; wake = true; label = "Wake up"; }
   // "gym alarm 7am on thursdays": the label first.
   else if ((m = /^([a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,3})\s+alarm\s+(.+)$/.exec(s)) && !/^(?:my|the|an?|set|setup|make|create|add|new|cancel|delete|remove|turn|move|change|what|whats|what's|when|which|any|show|list)\b/.test(m[1])) { rest = m[2]; label = m[1]; }
-  else if ((m = /^(?:remind me|ping me)\s+(.+?)\s+(?:to|about)\s+(.+)$/.exec(s)) && /^(?:at|on|tomorrow|tonight|today)\b/.test(m[1])) { rest = m[1]; label = m[2]; }
   if (rest === null || !rest.trim()) return null;
   const w = parseWhen(rest, { tz: t.tz, now: t.clock(), wake });
   if (!w) return null;
@@ -286,7 +286,7 @@ function timerRequest(t, raw) {
   const tail = String.raw`(?:\s+(?:called|named|labell?ed|for|to)\s+(.+))?`;
   if ((m = new RegExp(String.raw`^(?:set|start|make|create|run|put on|begin)?\s*(?:me\s+)?(?:an?\s+|the\s+)?(${D})\s+(?:long\s+)?(?:timer|countdown)${tail}$`).exec(s))) { secs = parseDuration(m[1]); label = m[2]; }
   else if ((m = new RegExp(String.raw`^(?:set|start|make|create|run|begin)?\s*(?:me\s+)?(?:an?\s+|the\s+)?(?:timer|countdown)\s+(?:for\s+|of\s+)?(${D})${tail}$`).exec(s))) { secs = parseDuration(m[1]); label = m[2]; }
-  else if ((m = new RegExp(String.raw`^(?:remind|ping|tell) me in\s+(${D})(?:\s+(?:to|about|that)\s+(.+))?$`).exec(s))) { secs = parseDuration(m[1]); label = m[2] || "Reminder"; }
+  else if ((m = new RegExp(String.raw`^tell me in\s+(${D})(?:\s+(?:to|about|that)\s+(.+))?$`).exec(s))) { secs = parseDuration(m[1]); label = m[2] || "Reminder"; }
   else if ((m = new RegExp(String.raw`^time\s+(${D})$`).exec(s))) secs = parseDuration(m[1]);
   if (!secs || secs > 7 * 86400) return null;
   if (label && new RegExp(String.raw`^${D}$`).test(label)) return null;
@@ -617,6 +617,51 @@ function eventRequest(t, raw) {
 // "pause the timer", "add 5 minutes to my timer", "cancel all timers".
 // A reminder is a timer ("remind me in 1 hour") or an alarm ("remind me at 9pm").
 
+// Reminders by name or "it": "cancel the call mom reminder", "snooze the rent
+// reminder for 30 minutes", "mark the pills reminder as done", "delete all my reminders".
+function reminderEdit(t, raw, ctx) {
+  const s = clean(raw).toLowerCase().replace(/[.!]+$/, "");
+  const itWord = /\b(?:it|that|this one|that one)\b/.test(s) && ctx?.last === "reminder";
+  if (!/\breminders?\b/.test(s) && !itWord) return null;
+  let verb = null;
+  if (/^(?:cancel|delete|remove|clear|drop|scrap|get rid of|forget|erase)\b/.test(s)) verb = "remove";
+  else if (/^snooze\b/.test(s)) verb = "snooze";
+  else if (/^(?:mark|set|put)\b.*\b(?:not done|undone|unfinished|not finished)\b|^(?:undo|untick|uncheck)\b/.test(s)) verb = "undone";
+  else if (/^(?:mark|set|put|tick|check)\b.*\b(?:done|complete|completed|finished|off)\b|^(?:complete|finish|tick off|check off|done with)\b/.test(s)) verb = "done";
+  if (!verb) return null;
+  const list = t.listReminders();
+  const live = list.filter((r) => (verb === "undone" ? r.done : !r.done));
+  const dur = new RegExp(String.raw`\bfor\s+(${DURATION})\b`).exec(s);
+  const minutes = dur ? Math.max(1, Math.round(parseDuration(dur[1]) / 60)) : undefined;
+  const words = s
+    .replace(new RegExp(String.raw`\b(?:for\s+|in\s+)?${DURATION}\b`, "g"), " ")
+    .replace(/^(?:cancel|delete|remove|clear|drop|scrap|get rid of|forget|erase|snooze|mark|set|put|tick off|check off|tick|check|complete|finish|done with|undo|untick|uncheck)\b/, " ")
+    .replace(/\b(?:my|the|that|this|it|one|reminders?|to|about|for|as|done|complete|completed|finished|not|undone|unfinished|off|all|every|please|a|an|of|i|set|made)\b/g, " ")
+    .replace(/['’]s\b/g, "").split(/\s+/).filter((w) => w.length > 1);
+  let pick;
+  if (itWord && ctx.reminder_id && !words.length) pick = live.filter((r) => r.id === ctx.reminder_id);
+  else if (/\ball\b/.test(s) && !words.length) pick = live;
+  else pick = live.filter((r) => words.every((w) => r.label.toLowerCase().includes(w)));
+  if (!pick.length) {
+    if (!list.length) return { text: "You have no reminders.", tools: [{ tool: "list_reminders", status: "completed" }] };
+    return words.length ? null : live.length ? null : { text: verb === "undone" ? "No reminder is done." : "All your reminders are done already.", tools: [{ tool: "list_reminders", status: "completed" }] };
+  }
+  if (pick.length > 1 && !/\ball\b/.test(s)) return null;
+  const tool = verb === "remove" ? "remove_reminder" : "update_reminder";
+  const cards = [];
+  for (const r of pick) {
+    if (verb === "remove") {
+      const card = reminderCard(t, r, "removed");
+      t.removeReminder({ reminder_id: r.id });
+      cards.push({ ...card, state: "removed", at: null });
+    } else cards.push(reminderCard(t, t.updateReminder({ reminder_id: r.id, action: verb, minutes }), verb === "done" ? "done" : verb === "snooze" ? "snoozed" : "set"));
+  }
+  const name = pick.length === 1 ? `"${pick[0].label}"` : `${pick.length} reminders`;
+  const snoozeMin = minutes ?? t.reminderSettings().snooze_min;
+  const text = { remove: `Deleted ${name}.`, done: `Marked ${name} as done.`, undone: `${name} is not done any more.`, snooze: `Snoozed ${name} for ${spell(snoozeMin * 60)}.` }[verb];
+  return { text: text.charAt(0).toUpperCase() + text.slice(1), tools: [{ tool, status: "completed" }], ids: verb === "remove" ? {} : { reminder_id: pick[0].id }, cards: cards.slice(0, 4) };
+}
+
 function reminderCommand(t, raw, ctx) {
   const s = clean(raw).toLowerCase();
   const kindWord = /\b(?:timers?|reminders?|countdowns?)\b/.test(s);
@@ -840,7 +885,19 @@ function settingsCommand(t, raw) {
   const s = clean(raw).toLowerCase();
   let m;
   const done = (text, args, tool = "set_settings") => ({ text, tools: [{ tool, status: "completed" }], cards: [{ kind: "setting", label: "Settings", value: text.replace(/\.$/, "") }], _apply: args });
-  if (/\b24[\s-]?(?:hour|hr|h)\b/.test(s) && /\b(?:use|switch|change|set|make|show|turn on)\b/.test(s)) { t.setSettings({ time_format: "24h" }); return done("Times now show in 24-hour format."); }
+  if (/\breminders?\b/.test(s) && !/^(?:remind|cancel|delete|remove|snooze|mark|what|whats|show|list)\b/.test(s)) {
+    const card = (r, text) => ({ text, tools: [{ tool: "set_reminder_settings", status: "completed" }], cards: [{ kind: "setting", label: "Reminders", value: r.style === "silent" ? "Notification only" : `Notification + ${r.tone} tone, snooze ${r.snooze_min} min` }] });
+    const tone = REMINDER_TONES.find((x) => new RegExp(String.raw`\b${x}\b`).test(s));
+    if (tone && /\b(?:tone|sound|use|set|change|make|switch)\b/.test(s)) return card(t.setReminderSettings({ tone, style: "tone" }), `Reminders now play the ${cap(tone)} tone.`);
+    if (/\b(?:silent|silently|quiet|no sound|without (?:a )?(?:sound|tone)|mute|notification only|just (?:a )?notification)\b/.test(s)) return card(t.setReminderSettings({ style: "silent" }), "Reminders now only show a notification, with no tone.");
+    if (/\b(?:with (?:a )?(?:sound|tone)|unmute|play (?:a )?(?:sound|tone)|sound on|tone on)\b/.test(s)) return card(t.setReminderSettings({ style: "tone" }), `Reminders now play the ${cap(t.reminderSettings().tone)} tone.`);
+    const sn = new RegExp(String.raw`\bsnooze\b.*?\b(${DURATION})\b`).exec(s);
+    if (sn) {
+      const min = Math.round(parseDuration(sn[1]) / 60);
+      if (min >= 1 && min <= 240) return card(t.setReminderSettings({ snooze_min: min }), `Snoozing a reminder now waits ${spell(min * 60)}.`);
+    }
+  }
+  if (/\b24[\s-]?(?:hour|hr|h)\b/.test(s) &&/\b(?:use|switch|change|set|make|show|turn on)\b/.test(s)) { t.setSettings({ time_format: "24h" }); return done("Times now show in 24-hour format."); }
   if (/\b12[\s-]?(?:hour|hr|h)\b/.test(s) && /\b(?:use|switch|change|set|make|show)\b/.test(s)) { t.setSettings({ time_format: "12h" }); return done("Times now show in 12-hour format (AM/PM)."); }
   if ((m = /\b(?:alarm\s+)?sound\s+(off|on)\b|\b(?:turn|switch)\s+(off|on)\s+(?:the\s+)?(?:alarm\s+)?sound\b|\b(?:turn|switch)\s+(?:the\s+)?(?:alarm\s+)?sound\s+(off|on)\b|\b(mute|unmute)\s+(?:the\s+)?alarms?\b/.exec(s))) {
     const on = /^(?:on|unmute)$/.test(m[1] || m[2] || m[3] || m[4]);
@@ -945,15 +1002,59 @@ function howLongRequest(t, raw) {
   return { text: days === 0 ? `${e.title} is today.` : days === 1 ? `${e.title} is tomorrow.` : `${days} days until ${e.title} (${dayWord(e.next.date, t.today())}).`, tools: [{ tool: "find_events", status: "completed" }], cards: [eventCard(t, e, "found")] };
 }
 
-// "Remind me to call mom at 9pm" (an alarm called "Call mom"), "remind me to stretch in 20 minutes" (a timer).
+// Reminders: their own thing, not alarms or timers. "Remind me to call mom at
+// 6", "remind me at 6 to call mom", "remind me in 20 minutes to stretch",
+// "remind me every monday at 9 to take out the trash", "set a reminder for
+// 5pm to pay rent", "remind me tomorrow to buy milk" (9 AM).
 function remindRequest(t, raw) {
-  const s = clean(raw);
-  const m = /^(?:remind|ping) me to\s+(.+?)\s+((?:at|in|on|tomorrow|tonight|today|this)\b.*)$/i.exec(s);
-  if (!m) return null;
-  const what = m[1];
-  const when = m[2];
-  if (/^in\s/i.test(when)) return timerRequest(t, `remind me in ${when.replace(/^in\s+/i, "")} to ${what}`);
-  return alarmRequest(t, `set an alarm ${when} called ${what}`);
+  const s = clean(raw).replace(/[.!]+$/, "");
+  const low = s.toLowerCase();
+  let m;
+  let body = null;
+  if ((m = /^(?:please\s+)?(?:remind|ping) me\s+(.+)$/i.exec(s))) body = m[1];
+  else if ((m = /^(?:set|add|create|make|schedule|put)\s+(?:me\s+)?(?:an?\s+|a new\s+)?reminder\s+(.+)$/i.exec(s))) body = m[1];
+  else if ((m = /^reminder\s+(?:to|for|at|in|on|every|tomorrow)\b\s*(.+)$/i.exec(s))) body = low.startsWith("reminder to") ? "to " + m[1] : m[0].replace(/^reminder\s+/i, "");
+  if (!body) return null;
+  const now = t.clock();
+  const parse = (when) => {
+    const w = parseWhen(when, { tz: t.tz, now, wake: false });
+    if (w) return w;
+    // A day with no time: the morning.
+    const [day, what = ""] = when.split(/(?=\s+(?:to|about|that)\s)/i);
+    if (!/\d|noon|midnight/.test(day) && /\b(?:tomorrow|tmrw|today|tonight|on|every|weekdays|weekends|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(day)) return parseWhen(`${day} at ${/tonight/i.test(day) ? "8pm" : "9am"}${what}`, { tz: t.tz, now, wake: false });
+    return null;
+  };
+  let w = null;
+  let label = null;
+  const words = body.split(/\s+/);
+  // "for 5pm to water the plants": the time first after all.
+  const first = /^for\s+(?:\d|noon|midnight|tomorrow|today|tonight)/i.test(body) ? parse(body.replace(/^for\s+/i, "")) : null;
+  if (first?.label) {
+    w = first;
+    label = first.label;
+  } else if (/^(?:to|about|that|for)\s/i.test(body)) {
+    // "to call mom at 6": the longest ending that is a time.
+    for (let i = 2; i < words.length && !w; i++) {
+      const when = words.slice(i).join(" ");
+      if (!/^(?:at|in|on|by|every|each|tomorrow|tmrw|tonight|today|this|next|daily|weekdays|weekends|noon|midnight|\d)/i.test(when)) continue;
+      const got = parse(when);
+      if (got && !got.label) { w = got; label = words.slice(1, i).join(" "); }
+    }
+  } else {
+    // "at 6 to call mom": the time says where the label starts ("to", "about").
+    w = parse(body);
+    label = w?.label || null;
+    if (w && !label) return null;
+  }
+  if (!w || !label) return null;
+  label = cap(label.replace(/^(?:to|about|that)\s+/i, "").replace(/\s+(?:please)$/i, "").trim());
+  const row = t.addReminder({ label, ...(w.days ? { days: w.days, time: w.time } : { date: w.date, time: w.time }) });
+  const h12 = t.settings().time_format !== "24h";
+  const clock = (hhmm) => fmtClock(Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3)), h12);
+  let when;
+  if (w.days) when = `${clock(w.time)} ${w.days.length === 7 ? "every day" : w.days.join() === "1,2,3,4,5" ? "on weekdays" : w.days.join() === "6,7" ? "on weekends" : "every " + w.days.map((d) => WEEKDAYS[d - 1]).join(", ")}`;
+  else when = `${clock(w.time)} ${dayWord(w.date, t.today())}${w.relative ? ` (in ${spell(w.relative)})` : ""}`;
+  return { text: `Reminder set for ${when}: ${label}.`, tools: [{ tool: "add_reminder", status: "completed" }], ids: { reminder_id: row.id }, cards: [reminderCard(t, row, "set")] };
 }
 
 // "Sara birthday", "sara's bday": a bare lookup.
@@ -979,7 +1080,7 @@ function spell(secs) {
  */
 export function quickAnswer(service, text, ctx = {}) {
   if (!text || text.length > 300 || /\n/.test(text.trim())) return null;
-  for (const f of [reminderCommand, alarmCommand, settingsCommand, clockCommand, attendanceCommand, noteCommand, eventCommand, eventRequest, stopTimerRequest, remindRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
+  for (const f of [remindRequest, reminderEdit, reminderCommand, alarmCommand, settingsCommand, clockCommand, attendanceCommand, noteCommand, eventCommand, eventRequest, stopTimerRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
     try {
       const r = f(service, text, ctx);
       if (r) return r;

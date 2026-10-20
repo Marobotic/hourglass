@@ -51,3 +51,45 @@ export function dueBetween(data, fromMs, toMs, tz) {
 
 // A one-off alarm is spent once it has rung.
 export const isSpent = (alarm, data, fromMs, tz) => !alarm.days?.length && !alarm.lead_event_id && !alarm.lead_course_id && nextAlarm(alarm, data, fromMs, tz) === null;
+
+// --- reminders --------------------------------------------------------------
+//
+// A reminder shows once at its time, then waits (overdue) until it is done,
+// like a to-do. A repeating one is pending from each time until done; its
+// done_at says up to when everything is handled. A snooze moves when it shows.
+//   { due_at: when it shows (next, or now-ish for an overdue snooze), next_at,
+//     occurrence: the time it is about, overdue, done, repeats }
+export function reminderState(r, nowMs, tz) {
+  const days = r.days ?? [];
+  const snooze = r.snooze_at ?? 0;
+  if (!days.length) {
+    const at = r.date && r.time ? zonedToEpoch(r.date, r.time, tz) : null;
+    const done = r.done_at != null;
+    const due = done || at === null ? null : Math.max(at, snooze);
+    return { due_at: due, next_at: due, occurrence: at, overdue: !done && at !== null && at <= nowMs, done, repeats: false };
+  }
+  const today = localParts(nowMs, tz).date;
+  let last = null;
+  let upcoming = null;
+  for (let i = -8; i <= 8; i++) {
+    const d = addDays(today, i);
+    if (!days.includes(weekday(d))) continue;
+    const t = zonedToEpoch(d, r.time, tz);
+    if (t <= nowMs) last = t;
+    else if (upcoming === null) upcoming = t;
+  }
+  const pending = last !== null && last > (r.done_at ?? 0) ? last : null;
+  const due = pending !== null ? Math.max(pending, snooze) : upcoming;
+  return { due_at: due, next_at: due, occurrence: pending ?? upcoming, overdue: pending !== null, done: false, repeats: true };
+}
+
+// Reminders that show in (fromMs, toMs].
+export function remindersDue(data, fromMs, toMs, tz) {
+  const out = [];
+  for (const r of data.reminders ?? []) {
+    if (r.deleted) continue;
+    const s = reminderState(r, toMs, tz);
+    if (s.due_at !== null && s.due_at > fromMs && s.due_at <= toMs) out.push({ kind: "reminder", id: r.id, at: s.due_at, label: r.label || "Reminder" });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}

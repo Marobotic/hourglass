@@ -10,7 +10,7 @@
 import { WEEKDAYS, addDays, localParts, weekday, zonedToEpoch } from "../core/dates.js";
 import { dueBetween } from "../core/alarms.js";
 import { plainText } from "../core/noteformat.js";
-import { alarmCard, dayCard } from "./cards.js";
+import { alarmCard, dayCard, reminderCard } from "./cards.js";
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
@@ -231,6 +231,27 @@ function timers(service) {
   };
 }
 
+function reminders(service, day) {
+  const tz = service.tz;
+  const c = clock(service);
+  let list = service.listReminders({ include_done: false });
+  if (day) {
+    const start = zonedToEpoch(day.from, "00:00", tz);
+    const end = zonedToEpoch(addDays(day.to, 1), "00:00", tz);
+    list = list.filter((r) => r.due_at !== null && r.due_at >= start && r.due_at < end);
+  }
+  const tools = [{ tool: "list_reminders", status: "completed" }];
+  const when = day ? (day.word === "today" || day.word === "tomorrow" || day.word.startsWith("this") || day.word.startsWith("next") ? " " + day.word : " on " + day.word) : "";
+  if (!list.length) return { text: `No reminders${when}.`, tools };
+  const today = service.today();
+  const lines = list.slice(0, 10).map((r) => {
+    const p = r.due_at ? localParts(r.due_at, tz) : null;
+    const dw = !p ? "" : p.date === today ? "today" : p.date === addDays(today, 1) ? "tomorrow" : fmtDay(p.date);
+    return `${r.label}: ${p ? `${c(p.time)} ${dw}` : ""}${r.overdue ? " (overdue)" : ""}`;
+  });
+  return { text: lines.join("\n"), tools, cards: list.slice(0, 4).map((r) => reminderCard(service, r, "found")) };
+}
+
 /** An answer read from the user's data, or null. */
 export function readAnswer(service, raw) {
   const s = String(raw || "").trim().toLowerCase().replace(/[’‘]/g, "'").replace(/[!.]+$/, "").replace(/\s+/g, " ");
@@ -243,6 +264,7 @@ export function readAnswer(service, raw) {
   if (!asks) return null;
   const rest = day ? day.rest : q;
   if (/\balarms?\b|\bwake ?up\b|\bwhen do i (?:need to )?(?:get up|wake)\b/.test(q)) return alarms(service, day);
+  if (/\breminders?\b/.test(q)) return reminders(service, day);
   if (/\btimers?\b|\bcountdown\b/.test(q) && !day) return timers(service);
   if (/\bnotes?\b|\bwrote\b|\bwritten\b|\bdid i write\b/.test(q)) return notes(service, day, rest);
   if (day && /\b(?:schedule|classes|class|lectures?|lessons?|have|on|plans?|agenda|calendar|events?|busy|free|day|week|weekend|happening|going on|doing|due)\b/.test(q)) return schedule(service, day);

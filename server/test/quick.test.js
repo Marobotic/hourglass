@@ -69,8 +69,8 @@ test("alarms: tomorrow, weekdays, labels, ambiguous hours", () => {
   assert.ok(ask("Set an alarm for 6:30 am called gym"));
   assert.equal(alarms(store).at(-1).label, "Gym");
   assert.ok(ask("remind me at 5pm to call mom"));
-  assert.equal(alarms(store).at(-1).label, "Call mom");
-  assert.equal(alarms(store).at(-1).time, "17:00");
+  assert.equal(store.all("reminders").at(-1).label, "Call mom", "a reminder, not an alarm");
+  assert.equal(store.all("reminders").at(-1).time, "17:00");
 });
 
 test("things the fast lane leaves to the model", () => {
@@ -91,7 +91,7 @@ test("timers", () => {
   const { store, ask } = setup();
   assert.match(ask("25 minute timer").text, /25 minutes/);
   assert.match(ask("set a timer for 1h 30m called bread").text, /"Bread" timer started for 1 hour 30 minutes/);
-  assert.match(ask("remind me in 10 minutes to check the oven").text, /Check the oven/);
+  assert.match(ask("10 minute timer to check the oven").text, /Check the oven/);
   const t = store.all("timers");
   assert.deepEqual(t.map((x) => x.duration_s), [1500, 5400, 600]);
 });
@@ -183,14 +183,14 @@ test("reminders and timers by what people call them", () => {
     return r;
   };
   ask("remind me in 1 hour to play a game");
-  assert.match(ask("Remove the 1 hour reminder to play a game").text, /Cancelled "Play a game"/);
+  assert.match(ask("Remove the 1 hour reminder to play a game").text, /Deleted "Play a game"/);
   ask("25 min timer");
   assert.match(ask("pause it").text, /Paused/);
   assert.match(ask("resume the timer").text, /Resumed/);
   assert.match(ask("add 5 minutes to my timer").text, /Added 5 min/);
   assert.match(ask("cancel it").text, /Cancelled/);
   ask("remind me to call mom at 9pm");
-  assert.match(ask("cancel my reminder to call mom").text, /Removed the "Call mom" reminder/);
+  assert.match(ask("cancel my reminder to call mom").text, /Deleted "Call mom"/);
 });
 
 test("events, attendance, world clock and settings at once", () => {
@@ -228,4 +228,70 @@ test("the time and the date, at once", () => {
   const { service } = setup("2026-10-19 22:41");
   for (const q of ["what's the time right now", "whats the time", "what time is it", "time"]) assert.match(quickAnswer(service, q).text, /^It's 10:41 PM, Monday 19 October/, q);
   for (const q of ["what day is it", "whats the date today", "what is today"]) assert.match(quickAnswer(service, q).text, /^Today is Monday 19 October 2026/, q);
+});
+
+test("reminders: their own thing, set, listed, snoozed, done and deleted at once", () => {
+  const { store, service, advance } = setup("2026-10-20 10:14");
+  const ask = (q, ctx) => quickAnswer(service, q, ctx);
+  let r = ask("remind me to call mom at 6pm");
+  assert.match(r.text, /Reminder set for 6:00 PM today: Call mom/);
+  assert.equal(r.cards[0].kind, "reminder");
+  assert.equal(alarms(store).length, 0, "not an alarm");
+  assert.equal(store.all("timers").length, 0, "not a timer");
+  assert.match(ask("remind me at 9 tomorrow to pay rent").text, /9:00 AM tomorrow: Pay rent/);
+  assert.match(ask("remind me in 20 minutes to stretch").text, /10:34 AM today \(in 20 minutes\): Stretch/);
+  assert.match(ask("remind me every monday at 9am to take out the trash").text, /every Mon: Take out the trash/);
+  assert.match(ask("set a reminder for 5pm to water the plants").text, /5:00 PM today: Water the plants/);
+  assert.match(ask("remind me tomorrow to buy milk").text, /9:00 AM tomorrow: Buy milk/);
+  assert.match(ask("remind me to go to the gym at 7pm").text, /7:00 PM today: Go to the gym/);
+  assert.equal(service.listReminders().length, 7);
+  const list = ask("what are my reminders");
+  assert.match(list.text, /^Stretch: 10:34 AM today/);
+  assert.match(ask("any reminders tomorrow?").text, /Pay rent: 9:00 AM tomorrow/);
+  // Due and overdue, then snoozed and done.
+  advance(30 * 60000);
+  const [stretch] = service.listReminders();
+  assert.equal(stretch.label, "Stretch");
+  assert.ok(stretch.overdue);
+  r = ask("snooze the stretch reminder for 15 minutes");
+  assert.match(r.text, /Snoozed "Stretch" for 15 minutes/);
+  assert.equal(service.listReminders().find((x) => x.label === "Stretch").due_at, service.clock() + 15 * 60000);
+  assert.match(ask("mark it as done", { last: "reminder", reminder_id: stretch.id }).text, /Marked "Stretch" as done/);
+  assert.ok(service.listReminders().find((x) => x.label === "Stretch").done);
+  assert.match(ask("cancel the call mom reminder").text, /Deleted "Call mom"/);
+  assert.equal(service.listReminders().length, 6);
+  // Its own settings.
+  assert.match(ask("make reminders silent").text, /only show a notification/);
+  assert.equal(service.reminderSettings().style, "silent");
+  assert.match(ask("use the harp tone for reminders").text, /Harp/);
+  assert.deepEqual([service.reminderSettings().style, service.reminderSettings().tone], ["tone", "harp"]);
+  assert.match(ask("set reminder snooze to 30 minutes").text, /30 minutes/);
+  assert.equal(service.reminderSettings().snooze_min, 30);
+});
+
+test("a repeating reminder is pending from each time until done", () => {
+  const { service, advance } = setup("2026-10-20 10:14"); // a Tuesday
+  const r = service.addReminder({ label: "Pills", time: "09:00", days: [1, 2, 3, 4, 5, 6, 7] });
+  let s = service.listReminders()[0];
+  assert.equal(s.overdue, false, "today's 9:00 was before it existed");
+  advance(24 * 3600000); // Wednesday 10:14
+  s = service.listReminders()[0];
+  assert.ok(s.overdue);
+  service.updateReminder({ reminder_id: r.id, action: "done" });
+  s = service.listReminders()[0];
+  assert.equal(s.overdue, false);
+  assert.equal(s.done, false, "repeating ones are never finished");
+  assert.ok(s.due_at > service.clock());
+});
+
+test("settings changed anywhere are synced prefs", () => {
+  const { store, service } = setup();
+  service.setSettings({ time_format: "24h", week_start: 1, sound: false });
+  assert.equal(store.get("prefs", "time_format").value, "24h");
+  assert.equal(store.get("prefs", "sound").value, "false");
+  // Another device's row wins over this device's old setting.
+  store.upsert("prefs", { id: "time_format", value: "12h" });
+  assert.equal(service.settings().time_format, "12h");
+  assert.equal(service.settings().week_start, 1);
+  assert.equal(service.settings().sound, false);
 });

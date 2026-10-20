@@ -52,6 +52,18 @@ export const TABLES = {
     ["lead_minutes", "int", null],
     ["enabled", "bool", 1],
   ],
+  // "Remind me to call mom at 6": a notification (and, if chosen, a short
+  // tone), not an alarm. Once (date) or on weekdays (days). done_at: when it
+  // was done; for a repeating one, every time up to then is handled.
+  // snooze_at: shows again then.
+  reminders: [
+    ["label", "text", ""],
+    ["time", "text", null],
+    ["date", "text", null],
+    ["days", "json", []],
+    ["done_at", "int", null],
+    ["snooze_at", "int", null],
+  ],
   clocks: [
     ["zone", "text", ""],
     ["label", "text", ""],
@@ -116,6 +128,8 @@ export const TABLES = {
 };
 
 export const BUILTIN_RINGTONES = ["classic", "klaxon", "siren", "digital", "rising", "bell"];
+// Short sounds for reminders, nothing like an alarm.
+export const REMINDER_TONES = ["chime", "ding", "pop", "harp"];
 
 export const TABLE_NAMES = Object.keys(TABLES);
 
@@ -166,6 +180,12 @@ export function validate(table, r) {
   if (table === "alarms") {
     if (!r.lead_event_id && !r.lead_course_id && !isTime(r.time)) fail("time (HH:MM), lead_event_id or lead_course_id is required");
     if (r.date && !isDate(r.date)) fail("date must be YYYY-MM-DD");
+  }
+  if (table === "reminders") {
+    if (!isTime(r.time)) fail("time must be HH:MM");
+    if (r.date && !isDate(r.date)) fail("date must be YYYY-MM-DD");
+    if (!r.date && !r.days?.length) fail("date or days is required");
+    if (r.days?.some((d) => d < 1 || d > 7)) fail("days are ISO weekdays 1-7");
   }
   if (table === "ringtones" && !r.name.trim()) fail("name is required");
   if (table === "events" && r.tz) {

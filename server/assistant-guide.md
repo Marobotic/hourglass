@@ -1,17 +1,17 @@
 # Hourglass, the app
 
 Hourglass is one app on Windows, Linux, Android and iPhone: calendar, notes,
-alarms, timers, world clock, attendance and a Drive, built around one idea:
+alarms, reminders, timers, world clock, attendance and a Drive, built around one idea:
 the right notes at the right moment. Everything syncs through the user's
 account (the same sign-in as the Jukebox music app). It works offline and
 syncs when it can; alarms ring from the device itself.
 
 ## Screens
 
-Desktop (sidebar, keys 1-0): Now, Schedule, Notes, Alarms, Timers, World
-clock, Attendance, Drive, Assistant, Settings.
+Desktop (sidebar, keys 1-0): Now, Schedule, Notes, Alarms, Reminders,
+Timers, World clock, Attendance, Drive, Assistant, Settings.
 Phone (bottom tabs): Now, Schedule (Week and Attendance), Notes, Drive, Time
-(alarms, timers, world clock). The Assistant and Settings are the two icons
+(alarms, reminders, timers, world clock). The Assistant and Settings are the two icons
 at the top right.
 
 - **Now**: what is on right now (a big card with the time left), what is
@@ -35,6 +35,13 @@ at the top right.
   adds one for every lecture). Ringtones: six built in, an uploaded audio
   file, or a song from Jukebox ("Set as alarm" there). Settings has "Test
   alarm" to hear and see a real alarm right away.
+- **Reminders**: "remind me to call mom at 6". Not alarms: at its time a
+  reminder shows a notification (with Done and Snooze) and, if the user chose
+  it, a short tone; then it waits as "overdue" until it is ticked done, like
+  a to-do. Once (a day and a time) or repeating on chosen days. Reminders
+  have their own settings on the Reminders page (desktop) or in Settings
+  (phone): notification only or with a tone (Chime, Ding, Pop, Harp) and the
+  snooze length. Done ones are listed below the others.
 - **Timers**: quick chips (5, 10, 25, 50 min), custom timers, saved timers
   that can be started again, timers scheduled to start later. They ring on
   every device.
@@ -55,7 +62,8 @@ at the top right.
   WhatsApp…). One upload can be up to 1 GB.
 - **Assistant**: this chat. The user can attach pictures and files (the
   paperclip): they are saved in the Drive's "Assistant" folder.
-- **Settings**: 12/24-hour time, week start, time zone, lecture reminders,
+- **Settings**: 12/24-hour time, week start (these two and alarm sound are
+  the same on every device), time zone, lecture reminders,
   ringtone, alarm sound on/off, Test alarm, "Use with AI" (a private link
   that lets ChatGPT, Claude, Gemini or any MCP client use Hourglass), the
   account (sign in, sync now, sign out), and updates (Windows and Android

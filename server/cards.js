@@ -10,6 +10,7 @@
 //   { kind: "day", label, items: [{ start, end, title, color, from, to }] }   (from/to: minutes of the day)
 //   { kind: "note", label, course, state: "added" | "changed" }
 //   { kind: "setting", label, value }
+//   { kind: "reminder", state: "set" | "done" | "snoozed" | "removed" | "found", label, time, when, at, repeats, overdue }
 import { addDays, localParts, WEEKDAYS } from "../core/dates.js";
 
 const MAX_CARDS = 4;
@@ -53,6 +54,19 @@ function alarmCard(service, row, state) {
   else when = next ? f.day(next.date) : a.date ? f.day(a.date) : "";
   const time = next ? next.time : a.time;
   return { kind: "alarm", id: a.id, state, label: a.label || "Alarm", time: f.clock(time), when, at: a.next_at ?? null, minutes: f.minutes(time), enabled: !!a.enabled };
+}
+
+function reminderCard(service, row, state) {
+  const f = fmt(service);
+  const r = service.listReminders().find((x) => x.id === row.id) || row;
+  const at = r.due_at ?? r.occurrence ?? null;
+  const p = at ? localParts(at, f.tz) : null;
+  return {
+    kind: "reminder", id: r.id, state, label: r.label || "Reminder",
+    time: p ? f.clock(p.time) : f.clock(r.time),
+    when: r.days?.length ? daysText(r.days) : p ? f.day(p.date) : f.day(r.date),
+    at, repeats: !!r.days?.length, overdue: !!r.overdue && state !== "done",
+  };
 }
 
 function eventCard(service, ev, state) {
@@ -117,6 +131,16 @@ export function cardsFor(service, tool, args = {}, result = null) {
       case "update_note":
       case "append_note":
         return result?.id ? [{ kind: "note", id: result.id, state: tool === "add_note" ? "added" : "changed", label: result.title || "Untitled", course: result.course_name || "" }] : [];
+      case "add_reminder":
+        return result?.id ? [reminderCard(service, result, "set")] : [];
+      case "update_reminder":
+        return result?.id ? [reminderCard(service, result, args.action === "done" ? "done" : args.action === "snooze" ? "snoozed" : "set")] : [];
+      case "remove_reminder":
+        return result ? [{ kind: "reminder", state: "removed", label: result.label || "Reminder", time: f.clock(result.time), when: "", at: null, repeats: !!result.days?.length, overdue: false }] : [];
+      case "list_reminders":
+        return (Array.isArray(result) ? result : []).filter((r) => !r.done).slice(0, 3).map((r) => reminderCard(service, r, "found"));
+      case "set_reminder_settings":
+        return [{ kind: "setting", label: "Reminders", value: result?.style === "silent" ? "Notification only" : `Notification + ${result?.tone ?? "chime"} tone` }];
       case "set_settings":
         return [{ kind: "setting", label: "Settings", value: Object.entries(args).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join(", ") }];
       case "set_home_zone":
@@ -144,4 +168,4 @@ export function trimCards(cards) {
   return out.slice(-MAX_CARDS);
 }
 
-export { dayCard, eventCard, alarmCard };
+export { dayCard, eventCard, alarmCard, reminderCard };

@@ -15,7 +15,7 @@ const repeat = z
   })
   .describe("Omit for a one-off event");
 
-export const INSTRUCTIONS = `Hourglass is the user's calendar, notes, alarms and timers.
+export const INSTRUCTIONS = `Hourglass is the user's calendar, notes, alarms, reminders and timers.
 Model: courses are folders (e.g. a university module). Events are one-off or recurring blocks of time, usually lectures of a course. Notes are Markdown (one line per line; fonts and sizes as <span style="font-family: Lora; font-size: 20px">, underline as <u>: keep those when rewriting a note), live in a course, and are stamped with a session_date: the date of the lecture they were written for.
 To find anything by name (a person, a birthday, a file) use search: it looks in the calendar first, then notes, Drive and alarms.
 Start with whats_now for anything about "now", "today" or "next"; get_schedule for a week; find_events for a named event at any date ("when is X's birthday", "when is my dentist"). Events are never in notes: do not search notes for them. Times in results are shown in the app's zone (now.tz). Each event also has its own zone (event_tz): its start/end are fixed in that zone, so pass times in the event's zone when you change them (e.g. a Cairo lecture at 08:00 stays "08:00" with tz Africa/Cairo).
@@ -379,6 +379,43 @@ export const TOOLS = [
     input: { clock_id: z.string() },
     destructive: true,
     run: (s, a) => s.removeClock(a),
+  },
+  {
+    name: "list_reminders",
+    title: "List reminders",
+    description: "Reminders (\"remind me to call mom at 6\"): a notification, and a short tone if the user chose one, never an alarm. Each has due_at (when it shows), overdue (its time passed and it is not done yet), done, repeats. Overdue ones first.",
+    input: { include_done: z.boolean().optional() },
+    readOnly: true,
+    run: (s, a) => s.listReminders(a),
+  },
+  {
+    name: "add_reminder",
+    title: "Add a reminder",
+    description: "\"Remind me to X at T\": use this, not an alarm or a timer (alarms are for waking up; the user asked for reminders to be their own thing). label: what to remember, short (\"Call mom\"). When: date + time, a time alone (today, or tomorrow if passed), in_minutes from now, or days for one that repeats (weekdays; all 7 = every day).",
+    input: { label: z.string(), date: date.optional(), time: time.optional(), in_minutes: z.number().optional(), days: z.array(weekday).optional() },
+    run: (s, a) => s.addReminder(a),
+  },
+  {
+    name: "update_reminder",
+    title: "Change a reminder",
+    description: "action: done | undone | snooze (minutes; default the user's snooze length). Or change label, date, time or days (a new time shows it again).",
+    input: { reminder_id: z.string(), action: z.enum(["done", "undone", "snooze"]).optional(), minutes: z.number().optional(), label: z.string().optional(), date: date.optional(), time: time.optional(), days: z.array(weekday).optional() },
+    run: (s, a) => s.updateReminder(a),
+  },
+  {
+    name: "remove_reminder",
+    title: "Delete a reminder",
+    description: "Delete a reminder for good (to finish one, use update_reminder action done).",
+    input: { reminder_id: z.string() },
+    destructive: true,
+    run: (s, a) => s.removeReminder(a),
+  },
+  {
+    name: "set_reminder_settings",
+    title: "Reminder settings",
+    description: "Reminders' own settings, separate from alarms: style \"tone\" (notification with a short tone) or \"silent\" (notification only); tone: chime, ding, pop or harp; snooze_min: how long Snooze waits.",
+    input: { style: z.enum(["tone", "silent"]).optional(), tone: z.enum(["chime", "ding", "pop", "harp"]).optional(), snooze_min: z.number().int().min(1).max(240).optional() },
+    run: (s, a) => s.setReminderSettings(a),
   },
   {
     name: "list_timers",
