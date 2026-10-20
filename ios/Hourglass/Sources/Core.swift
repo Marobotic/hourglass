@@ -459,6 +459,67 @@ enum Now {
     }
 }
 
+// "Remind me to call mom at 6": not an alarm. Once (date) or on weekdays
+// (days); done_at: when it was done (a repeating one: everything up to then
+// is handled); snooze_at: shows again then. core/alarms.js reminderState.
+struct Reminder: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString.lowercased()
+    var label: String = ""
+    var time: String = "09:00"
+    var date: String?
+    var days: [Int] = []
+    var done_at: Int64?
+    var snooze_at: Int64?
+    var updated_at: Int64 = 0
+    var deleted: Int = 0
+    var rev: Int64? = 0
+    var dirty: Int? = 0
+}
+
+struct ReminderState { let dueAt: Int64?; let occurrence: Int64?; let overdue: Bool; let done: Bool; let repeats: Bool }
+
+enum Reminders {
+    static let tones = ["chime", "ding", "pop", "harp"]
+
+    static func state(_ r: Reminder, _ now: Int64) -> ReminderState {
+        let snooze = r.snooze_at ?? 0
+        if r.days.isEmpty {
+            let at = r.date.map { Dates.epoch($0, r.time) }
+            let done = r.done_at != nil
+            let due = done || at == nil ? nil : max(at!, snooze)
+            return ReminderState(dueAt: due, occurrence: at, overdue: !done && at != nil && at! <= now, done: done, repeats: false)
+        }
+        let today = Dates.dayOf(now)
+        var last: Int64?
+        var upcoming: Int64?
+        for i in -8...8 {
+            let d = Dates.add(today, i)
+            if !r.days.contains(Dates.iso(d)) { continue }
+            let t = Dates.epoch(d, r.time)
+            if t <= now { last = t } else if upcoming == nil { upcoming = t }
+        }
+        let pending = last.flatMap { $0 > (r.done_at ?? 0) ? $0 : nil }
+        let due = pending.map { max($0, snooze) } ?? upcoming
+        return ReminderState(dueAt: due, occurrence: pending ?? upcoming, overdue: pending != nil, done: false, repeats: true)
+    }
+
+    // The next times it shows, for notifications scheduled ahead.
+    static func upcoming(_ r: Reminder, _ now: Int64, limit: Int = 8) -> [Int64] {
+        let s = state(r, now)
+        var out: [Int64] = []
+        if let d = s.dueAt, d > now { out.append(d) }
+        guard s.repeats else { return out }
+        let today = Dates.dayOf(now)
+        for i in 0...9 where out.count < limit {
+            let d = Dates.add(today, i)
+            if !r.days.contains(Dates.iso(d)) { continue }
+            let t = Dates.epoch(d, r.time)
+            if t > now && !out.contains(t) && t > (s.dueAt ?? 0) { out.append(t) }
+        }
+        return out
+    }
+}
+
 enum Alarms {
     static func next(_ a: Alarm, _ courses: [Course], _ events: [Event], _ from: Int64) -> Int64? {
         if a.deleted == 1 || a.enabled == 0 { return nil }

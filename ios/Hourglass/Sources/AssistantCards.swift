@@ -13,12 +13,13 @@ struct ResultCard: View {
 
     private var kind: String { info["kind"] as? String ?? "" }
     private var st: String { info["state"] as? String ?? "" }
-    private var gone: Bool { ["removed", "stopped", "off"].contains(st) }
+    private var gone: Bool { ["removed", "stopped", "off", "done"].contains(st) }
     private var accent: Color {
         switch kind {
         case "alarm": return H.accent
         case "timer": return H.teal
         case "event": return (info["birthday"] as? Bool ?? false) ? H.gold : H.orange
+        case "reminder": return H.gold
         default: return H.teal
         }
     }
@@ -40,7 +41,9 @@ struct ResultCard: View {
         case st == "on": return ("ON", H.teal)
         case st == "added": return ("ADDED", H.teal)
         case st == "changed": return ("CHANGED", H.teal)
-        case kind == "alarm" && st == "set": return ("SET", H.teal)
+        case (kind == "alarm" || kind == "reminder") && st == "set": return ("SET", H.teal)
+        case st == "done": return ("DONE", H.teal)
+        case st == "snoozed": return ("SNOOZED", H.gold)
         case kind == "timer" && st == "running": return (secsLeft > 0 ? "RUNNING" : "DONE", H.teal)
         default: return nil
         }
@@ -94,12 +97,14 @@ struct ResultCard: View {
         case "timer": return st == "running" ? (secsLeft > 0 ? "rings in \(countdown(secsLeft))" : "rang") : "stopped"
         case "event": return [info["when"] as? String ?? "", info["time"] as? String ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
         case "note": return (info["course"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (st == "added" ? "New note" : "Note")
+        case "reminder": return [info["time"] as? String ?? "", info["when"] as? String ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
         default: return info["value"] as? String ?? ""
         }
     }
     private var daysUntil: Int? { info["days_until"] as? Int }
     private var third: String {
         if kind == "alarm" { return info["when"] as? String ?? "" }
+        if kind == "reminder" { return (info["overdue"] as? Bool ?? false) ? "overdue" : "" }
         guard kind == "event" else { return "" }
         let rep = info["repeats"] as? String ?? ""
         switch daysUntil {
@@ -109,7 +114,7 @@ struct ResultCard: View {
         default: return rep
         }
     }
-    private var thirdColor: Color { kind == "event" && (daysUntil ?? 99) <= 7 ? accent : H.faint }
+    private var thirdColor: Color { (kind == "event" && (daysUntil ?? 99) <= 7) || kind == "reminder" ? accent : H.faint }
 
     @ViewBuilder private var art: some View {
         switch kind {
@@ -138,7 +143,7 @@ struct ResultCard: View {
             }
             .background(H.bg).overlay(Rectangle().stroke(accent, lineWidth: 2))
         default:
-            Image(systemName: kind == "note" ? "note.text" : "checkmark").font(.system(size: 24)).foregroundStyle(H.teal)
+            Image(systemName: kind == "note" ? "note.text" : kind == "reminder" && st != "done" ? "bell.badge" : "checkmark").font(.system(size: 24)).foregroundStyle(kind == "reminder" ? H.gold : H.teal)
                 .frame(maxWidth: .infinity, maxHeight: .infinity).background(H.bg).overlay(Rectangle().stroke(H.border, lineWidth: 1))
         }
     }

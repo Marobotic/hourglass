@@ -645,6 +645,8 @@ struct SettingsSheet: View {
                 }
             }
 
+            ReminderSettings()
+
             SectionLabel(text: "Time")
             T("CLOCK", 11, H.muted)
             Segmented(options: [("12-hour", "12h"), ("24-hour", "24h")], value: $timeFormat)
@@ -657,6 +659,10 @@ struct SettingsSheet: View {
             }
         }
         .task { alarmStatus = AlarmKitScheduler.status() }
+        // These three are synced: a change here shows on every device.
+        .onChange(of: timeFormat) { _, v in if store.pref("time_format") != v { store.setPref("time_format", v) } }
+        .onChange(of: weekStart) { _, v in if store.pref("week_start") != String(v) { store.setPref("week_start", String(v)) } }
+        .onChange(of: sound) { _, v in if store.pref("sound") != String(v) { store.setPref("sound", String(v)) } }
         .onDisappear { preview.stop() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
             guard case .success(let url) = result else { return }

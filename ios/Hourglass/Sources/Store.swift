@@ -8,6 +8,7 @@ struct DB: Codable {
     var alarms: [Alarm] = []
     var clocks: [Clock] = []
     var timers: [HTimer] = []
+    var reminders: [Reminder] = []
     var ringtones: [Ringtone] = []
     var prefs: [Pref] = []
     var note_versions: [NoteVersion] = []
@@ -25,6 +26,7 @@ struct DB: Codable {
         alarms = try c.decodeIfPresent([Alarm].self, forKey: .alarms) ?? []
         clocks = try c.decodeIfPresent([Clock].self, forKey: .clocks) ?? []
         timers = try c.decodeIfPresent([HTimer].self, forKey: .timers) ?? []
+        reminders = try c.decodeIfPresent([Reminder].self, forKey: .reminders) ?? []
         ringtones = try c.decodeIfPresent([Ringtone].self, forKey: .ringtones) ?? []
         prefs = try c.decodeIfPresent([Pref].self, forKey: .prefs) ?? []
         note_versions = try c.decodeIfPresent([NoteVersion].self, forKey: .note_versions) ?? []
@@ -73,9 +75,9 @@ final class Store: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "token")
         UserDefaults.standard.removeObject(forKey: "server")
         // New table since the last run: pull everything once.
-        if UserDefaults.standard.integer(forKey: "schema") != 6 {
+        if UserDefaults.standard.integer(forKey: "schema") != 7 {
             UserDefaults.standard.set(0, forKey: "cursor")
-            UserDefaults.standard.set(6, forKey: "schema")
+            UserDefaults.standard.set(7, forKey: "schema")
         }
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
         // The share extension reads the server and session from the app group.
@@ -368,6 +370,13 @@ final class Store: ObservableObject {
     func applyZone() {
         Dates.zone = db.clocks.first { $0.deleted == 0 && $0.home == 1 }.flatMap { TimeZone(identifier: $0.zone) } ?? .current
         Ringtones.current = ringtone
+        // Time format, week start and alarm sound are synced prefs (a change on
+        // any device, or by the assistant, shows here); the screens read them
+        // from UserDefaults.
+        let ud = UserDefaults.standard
+        if let v = pref("time_format"), v == "12h" || v == "24h", ud.string(forKey: "time_format") != v { ud.set(v, forKey: "time_format") }
+        if let v = pref("week_start").flatMap({ Int($0) }), [1, 6, 7].contains(v), ud.integer(forKey: "week_start") != v { ud.set(v, forKey: "week_start") }
+        if let v = pref("sound"), v == "true" || v == "false", (ud.object(forKey: "sound") as? Bool) != (v == "true") { ud.set(v == "true", forKey: "sound") }
     }
 
     // MARK: ringtones (synced; audio in Library/Sounds so alarms can use it)
@@ -663,6 +672,60 @@ final class Store: ObservableObject {
 
     // Timers: running (a future start_at means scheduled), paused, idle (a
     // saved timer waiting to start) or done. Every device rings at ends_at.
+    // MARK: reminders
+
+    // Overdue first, then by when they show; done ones last, newest first.
+    func reminders(_ now: Int64 = nowMs()) -> [(Reminder, ReminderState)] {
+        let all = db.reminders.filter { $0.deleted == 0 }.map { ($0, Reminders.state($0, now)) }
+        let open = all.filter { !$0.1.done }.sorted { a, b in a.1.overdue != b.1.overdue ? a.1.overdue : (a.1.dueAt ?? .max) < (b.1.dueAt ?? .max) }
+        let done = all.filter { $0.1.done }.sorted { ($0.0.done_at ?? 0) > ($1.0.done_at ?? 0) }
+        return open + done
+    }
+    @discardableResult
+    func save(_ r: Reminder) -> Reminder {
+        var r = r; r.updated_at = stamp(db.reminders.first { $0.id == r.id }?.updated_at ?? 0); r.dirty = 1
+        if let i = db.reminders.firstIndex(where: { $0.id == r.id }) { db.reminders[i] = r } else { db.reminders.append(r) }
+        changed()
+        return r
+    }
+    // The day a time means with none given: today, or tomorrow once it has passed.
+    func nextDate(for time: String) -> String {
+        let today = Dates.today()
+        return Dates.epoch(today, time) > nowMs() ? today : Dates.add(today, 1)
+    }
+    // A new or changed time is a new reminder: it shows again, a repeating one from now.
+    func setReminder(_ existing: Reminder?, label: String, time: String, date: String?, days: [Int]) {
+        var r = existing ?? Reminder()
+        let text = label.trimmingCharacters(in: .whitespaces)
+        r.label = text.isEmpty ? "Reminder" : text
+        r.time = time
+        r.days = days.sorted()
+        r.date = days.isEmpty ? (date ?? nextDate(for: time)) : nil
+        r.done_at = days.isEmpty ? nil : nowMs()
+        r.snooze_at = nil
+        save(r)
+    }
+    func reminderDone(_ id: String, _ done: Bool = true) {
+        guard var r = db.reminders.first(where: { $0.id == id }) else { return }
+        r.done_at = done || !r.days.isEmpty ? nowMs() : nil
+        r.snooze_at = nil
+        save(r)
+    }
+    func snoozeReminder(_ id: String, minutes: Int? = nil) {
+        guard var r = db.reminders.first(where: { $0.id == id }) else { return }
+        r.snooze_at = nowMs() + Int64(minutes ?? reminderSnooze) * 60_000
+        save(r)
+    }
+    func removeReminder(_ id: String) {
+        guard var r = db.reminders.first(where: { $0.id == id }) else { return }
+        r.deleted = 1
+        save(r)
+    }
+    // Their own settings (synced): a tone or silent, which tone, snooze length.
+    var reminderStyle: String { pref("reminder_style") == "silent" ? "silent" : "tone" }
+    var reminderTone: String { pref("reminder_tone").flatMap { Reminders.tones.contains($0) ? $0 : nil } ?? "chime" }
+    var reminderSnooze: Int { pref("reminder_snooze").flatMap { Int($0) }.flatMap { (1...240).contains($0) ? $0 : nil } ?? 10 }
+
     func timerLeft(_ t: HTimer, _ now: Int64 = nowMs()) -> Int64 {
         switch t.state {
         case "running": return max(0, ((t.ends_at ?? 0) - max(now, t.start_at ?? 0) + 999) / 1000)
@@ -735,6 +798,7 @@ final class Store: ObservableObject {
         for (id, r) in revs["alarms"] ?? [:] { if let i = db.alarms.firstIndex(where: { $0.id == id }) { db.alarms[i].rev = r } }
         for (id, r) in revs["clocks"] ?? [:] { if let i = db.clocks.firstIndex(where: { $0.id == id }) { db.clocks[i].rev = r } }
         for (id, r) in revs["timers"] ?? [:] { if let i = db.timers.firstIndex(where: { $0.id == id }) { db.timers[i].rev = r } }
+        for (id, r) in revs["reminders"] ?? [:] { if let i = db.reminders.firstIndex(where: { $0.id == id }) { db.reminders[i].rev = r } }
         for (id, r) in revs["ringtones"] ?? [:] { if let i = db.ringtones.firstIndex(where: { $0.id == id }) { db.ringtones[i].rev = r } }
         for (id, r) in revs["prefs"] ?? [:] { if let i = db.prefs.firstIndex(where: { $0.id == id }) { db.prefs[i].rev = r } }
         for (id, r) in revs["marks"] ?? [:] { if let i = db.marks.firstIndex(where: { $0.id == id }) { db.marks[i].rev = r } }
@@ -765,22 +829,26 @@ final class Store: ObservableObject {
             dirty.alarms = db.alarms.filter { $0.dirty == 1 }
             dirty.clocks = db.clocks.filter { $0.dirty == 1 }
             dirty.timers = db.timers.filter { $0.dirty == 1 }
+            dirty.reminders = db.reminders.filter { $0.dirty == 1 }
             dirty.ringtones = db.ringtones.filter { $0.dirty == 1 }
             dirty.prefs = db.prefs.filter { $0.dirty == 1 }
             dirty.marks = db.marks.filter { $0.dirty == 1 }
             dirty.folders = db.folders.filter { $0.dirty == 1 }
             dirty.files = db.files.filter { $0.dirty == 1 }
             let pushed = dirty
-            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.clocks.isEmpty && dirty.timers.isEmpty && dirty.ringtones.isEmpty && dirty.prefs.isEmpty && dirty.marks.isEmpty && dirty.folders.isEmpty && dirty.files.isEmpty) {
+            if !(dirty.courses.isEmpty && dirty.events.isEmpty && dirty.notes.isEmpty && dirty.alarms.isEmpty && dirty.clocks.isEmpty && dirty.timers.isEmpty && dirty.reminders.isEmpty && dirty.ringtones.isEmpty && dirty.prefs.isEmpty && dirty.marks.isEmpty && dirty.folders.isEmpty && dirty.files.isEmpty) {
                 var req = request(base.appendingPathComponent("api/sync"))
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.httpBody = try JSONEncoder().encode(["changes": dirty])
                 let (pd, pr) = try await URLSession.shared.data(for: req)
                 try check((pd, pr))
-                clean(pushed)
                 // Record the rev each pushed row got: the base for the next edit.
-                if let res = try? JSONDecoder().decode(PushResult.self, from: pd) { applyRevs(res.revs ?? [:]) }
+                // Only rows the server took are clean: a table an older server
+                // does not know yet stays queued.
+                let revs = (try? JSONDecoder().decode(PushResult.self, from: pd))?.revs ?? [:]
+                clean(pushed, revs)
+                applyRevs(revs)
             }
             var comps = URLComponents(url: base.appendingPathComponent("api/sync"), resolvingAgainstBaseURL: false)!
             comps.queryItems = [URLQueryItem(name: "since", value: String(cursor))]
@@ -822,21 +890,22 @@ final class Store: ObservableObject {
     }
 
     // Clear dirty flags only on rows unchanged since they were pushed.
-    private func clean(_ p: DB) {
-        func c<T: Identifiable & Codable>(_ rows: inout [T], _ sent: [T], _ upd: (T) -> Int64, _ set: (inout T) -> Void) where T.ID == String {
-            for s in sent { if let i = rows.firstIndex(where: { $0.id == s.id }), upd(rows[i]) == upd(s) { set(&rows[i]) } }
+    private func clean(_ p: DB, _ revs: [String: [String: Int64]]) {
+        func c<T: Identifiable & Codable>(_ table: String, _ rows: inout [T], _ sent: [T], _ upd: (T) -> Int64, _ set: (inout T) -> Void) where T.ID == String {
+            for s in sent where revs[table]?[s.id] != nil { if let i = rows.firstIndex(where: { $0.id == s.id }), upd(rows[i]) == upd(s) { set(&rows[i]) } }
         }
-        c(&db.courses, p.courses, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.events, p.events, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.notes, p.notes, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.alarms, p.alarms, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.clocks, p.clocks, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.timers, p.timers, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.ringtones, p.ringtones, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.prefs, p.prefs, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.marks, p.marks, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.folders, p.folders, { $0.updated_at }, { $0.dirty = 0 })
-        c(&db.files, p.files, { $0.updated_at }, { $0.dirty = 0 })
+        c("courses", &db.courses, p.courses, { $0.updated_at }, { $0.dirty = 0 })
+        c("events", &db.events, p.events, { $0.updated_at }, { $0.dirty = 0 })
+        c("notes", &db.notes, p.notes, { $0.updated_at }, { $0.dirty = 0 })
+        c("alarms", &db.alarms, p.alarms, { $0.updated_at }, { $0.dirty = 0 })
+        c("clocks", &db.clocks, p.clocks, { $0.updated_at }, { $0.dirty = 0 })
+        c("timers", &db.timers, p.timers, { $0.updated_at }, { $0.dirty = 0 })
+        c("reminders", &db.reminders, p.reminders, { $0.updated_at }, { $0.dirty = 0 })
+        c("ringtones", &db.ringtones, p.ringtones, { $0.updated_at }, { $0.dirty = 0 })
+        c("prefs", &db.prefs, p.prefs, { $0.updated_at }, { $0.dirty = 0 })
+        c("marks", &db.marks, p.marks, { $0.updated_at }, { $0.dirty = 0 })
+        c("folders", &db.folders, p.folders, { $0.updated_at }, { $0.dirty = 0 })
+        c("files", &db.files, p.files, { $0.updated_at }, { $0.dirty = 0 })
     }
 
     // Last write wins on updated_at.
@@ -853,6 +922,7 @@ final class Store: ObservableObject {
         m(&db.alarms, ch.alarms, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.clocks, ch.clocks, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.timers, ch.timers, { $0.updated_at }, { $0.dirty = 0 })
+        m(&db.reminders, ch.reminders, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.ringtones, ch.ringtones, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.prefs, ch.prefs, { $0.updated_at }, { $0.dirty = 0 })
         m(&db.note_versions, ch.note_versions, { $0.updated_at }, { $0.dirty = 0 })
@@ -887,12 +957,30 @@ enum Notifications {
                 from = at
             }
         }
+        // Reminders: a notification with Done and Snooze, and their own short tone (or none).
+        var reminderOf: [String: String] = [:]
+        for r in store.db.reminders where r.deleted == 0 {
+            for (k, at) in Reminders.upcoming(r, now).enumerated() where at < now + 8 * 86_400_000 {
+                let id = "reminder-\(r.id)-\(k)"
+                reminderOf[id] = r.id
+                fires.append((id, at, r.label, "Reminder · " + Dates.clock(at)))
+            }
+        }
+        let silent = store.reminderStyle == "silent"
+        let tone = UNNotificationSound(named: UNNotificationSoundName("remind_\(store.reminderTone).wav"))
         for (id, at, title, body) in fires.sorted(by: { $0.1 < $1.1 }).prefix(60) {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.sound = UNNotificationSound(named: UNNotificationSoundName(Ringtones.file))
-            content.interruptionLevel = .timeSensitive
+            if let rid = reminderOf[id] {
+                content.categoryIdentifier = ReminderActions.category
+                content.userInfo = ["reminder": rid]
+                content.sound = silent ? nil : tone
+                content.interruptionLevel = .active
+            } else {
+                content.sound = UNNotificationSound(named: UNNotificationSoundName(Ringtones.file))
+                content.interruptionLevel = .timeSensitive
+            }
             let date = Date(timeIntervalSince1970: Double(at) / 1000)
             let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
             center.add(UNNotificationRequest(identifier: id, content: content, trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))

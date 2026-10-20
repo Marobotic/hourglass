@@ -11,7 +11,7 @@ struct HourglassApp: App {
             Group { if store.signedIn { RootView() } else { LoginView() } }
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
-                .onAppear { Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
+                .onAppear { ReminderActions.register(); Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
                 .task { while !Task.isCancelled { await store.syncSoon(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
                 // While an alarm rings with the app open, sync every 5 seconds so
                 // a Dismiss on another device stops it here too.
@@ -49,6 +49,7 @@ final class Sheets: ObservableObject {
     @Published var course: CourseDraft?
     @Published var session: Occ?
     @Published var alarm = false
+    @Published var reminder: ReminderDraft?
     @Published var settings = false
 }
 
@@ -120,10 +121,11 @@ struct RootView: View {
                     case 3: DriveView()
                     default:
                         VStack(spacing: 0) {
-                            SubTabs(items: ["Alarms", "Timers", "Clock"], selected: $timeSub)
+                            SubTabs(items: ["Alarms", "Reminders", "Timers", "Clock"], selected: $timeSub)
                             switch timeSub {
                             case 0: TimeView()
-                            case 1: TimersView()
+                            case 1: RemindersView()
+                            case 2: TimersView()
                             default: ClockView()
                             }
                         }
@@ -165,6 +167,7 @@ struct RootView: View {
         .sheet(item: $sheets.course) { d in CourseSheet(draft: d, path: $path).environmentObject(store) }
         .sheet(item: $sheets.session) { o in SessionSheet(occ: o, path: $path).environmentObject(store).environmentObject(sheets) }
         .sheet(isPresented: $sheets.alarm) { AlarmSheet().environmentObject(store) }
+        .sheet(item: $sheets.reminder) { d in ReminderSheet(draft: d).environmentObject(store) }
         .sheet(isPresented: $sheets.settings) { SettingsSheet().environmentObject(store) }
     }
 }
