@@ -98,15 +98,19 @@ class Sheets {
     var course by mutableStateOf<Pair<Boolean, JSONObject?>?>(null)
     var session by mutableStateOf<Occ?>(null)
     var alarm by mutableStateOf(false)
+    var reminder by mutableStateOf<Pair<Boolean, JSONObject?>?>(null)
     var settings by mutableStateOf(false)
     var confirm by mutableStateOf<Triple<String, String, () -> Unit>?>(null)
 }
+
+// open_tab "reminders": the Time tab's Reminders page.
+const val REMINDERS_TAB = 41
 
 class Nav(val repo: Repo) {
     val stack = mutableStateListOf<Route>()
     var tab by mutableStateOf(0)
     // The page inside a grouped tab: Schedule (Week, Attendance) and Time
-    // (Alarms, Timers, Clock).
+    // (Alarms, Reminders, Timers, Clock).
     var scheduleSub by mutableStateOf(0)
     var timeSub by mutableStateOf(0)
     val sheets = Sheets()
@@ -122,7 +126,7 @@ class Nav(val repo: Repo) {
 class MainActivity : ComponentActivity() {
     // The share screen's "Open Drive" / "Open Notes" asks for a tab.
     private val openTab = mutableStateOf<Int?>(null)
-    private fun tabOf(i: android.content.Intent?) = when (i?.getStringExtra("open_tab")) { "notes" -> 2; "drive" -> 3; else -> null }
+    private fun tabOf(i: android.content.Intent?) = when (i?.getStringExtra("open_tab")) { "notes" -> 2; "drive" -> 3; "reminders" -> REMINDERS_TAB; else -> null }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
@@ -149,7 +153,11 @@ class MainActivity : ComponentActivity() {
 fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, requestedTab: androidx.compose.runtime.MutableState<Int?>? = null) {
     val nav = remember { Nav(repo).apply { tab = initialTab; initialRoute?.let { push(it) } } }
     LaunchedEffect(requestedTab?.value) {
-        requestedTab?.value?.let { nav.stack.clear(); nav.tab = it; requestedTab.value = null }
+        requestedTab?.value?.let {
+            nav.stack.clear()
+            if (it == REMINDERS_TAB) { nav.tab = 4; nav.timeSub = 1 } else nav.tab = it
+            requestedTab.value = null
+        }
     }
     val version by repo.store.version.collectAsState()
     var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -221,11 +229,12 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                         2 -> NotesScreen(nav, version)
                         3 -> DriveScreen(nav, version)
                         else -> Column(Modifier.fillMaxSize()) {
-                            SubTabs(listOf("Alarms", "Timers", "Clock"), nav.timeSub) { nav.timeSub = it }
+                            SubTabs(listOf("Alarms", "Reminders", "Timers", "Clock"), nav.timeSub) { nav.timeSub = it }
                             Box(Modifier.weight(1f)) {
                                 when (nav.timeSub) {
                                     0 -> TimeScreen(nav, version, clock)
-                                    1 -> TimersScreen(nav, version, clock)
+                                    1 -> RemindersScreen(nav, version, clock)
+                                    2 -> TimersScreen(nav, version, clock)
                                     else -> ClockScreen(nav, version, clock)
                                 }
                             }

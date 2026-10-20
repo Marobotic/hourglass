@@ -67,6 +67,7 @@ ApplicationWindow {
         { name: "Schedule", icon: "week", key: "2" },
         { name: "Notes", icon: "note", key: "3" },
         { name: "Alarms", icon: "bell", key: "4" },
+        { name: "Reminders", icon: "reminder", key: "R" },
         { name: "Timers", icon: "timer", key: "5" },
         { name: "World clock", icon: "globe", key: "6" },
         { name: "Attendance", icon: "check-square", key: "7" },
@@ -234,12 +235,12 @@ ApplicationWindow {
     Shortcut { sequences: ["2"]; onActivated: app.go(1) }
     Shortcut { sequences: ["3"]; onActivated: app.go(2) }
     Shortcut { sequences: ["4"]; onActivated: app.go(3) }
-    Shortcut { sequences: ["5"]; onActivated: app.go(4) }
-    Shortcut { sequences: ["6"]; onActivated: app.go(5) }
-    Shortcut { sequences: ["7"]; onActivated: app.go(6) }
-    Shortcut { sequences: ["8"]; onActivated: app.go(7) }
-    Shortcut { sequences: ["9"]; onActivated: app.go(8) }
-    Shortcut { sequences: ["0"]; onActivated: app.go(9) }
+    Shortcut { sequences: ["5"]; onActivated: app.go(5) }
+    Shortcut { sequences: ["6"]; onActivated: app.go(6) }
+    Shortcut { sequences: ["7"]; onActivated: app.go(7) }
+    Shortcut { sequences: ["8"]; onActivated: app.go(8) }
+    Shortcut { sequences: ["9"]; onActivated: app.go(9) }
+    Shortcut { sequences: ["0"]; onActivated: app.go(10) }
     Shortcut {
         sequences: ["n", "Ctrl+N"]
         onActivated: {
@@ -249,8 +250,9 @@ ApplicationWindow {
         }
     }
     Shortcut { sequences: ["a"]; onActivated: app.go(3) }
-    Shortcut { sequences: ["t"]; onActivated: app.go(4) }
-    Shortcut { sequences: ["w"]; onActivated: app.go(5) }
+    Shortcut { sequences: ["r"]; onActivated: app.go(4) }
+    Shortcut { sequences: ["t"]; onActivated: app.go(5) }
+    Shortcut { sequences: ["w"]; onActivated: app.go(6) }
     Shortcut { sequences: ["Escape"]; enabled: app.editingNote !== null; onActivated: app.editingNote = null }
 
     // --- layout ----------------------------------------------------------------------
@@ -478,6 +480,7 @@ ApplicationWindow {
                     SchedulePage { app: app }
                     NotesPage { app: app }
                     TimePage { app: app }
+                    RemindersPage { app: app }
                     TimersPage { app: app }
                     WorldClockPage { app: app }
                     AttendancePage { app: app }
@@ -490,9 +493,9 @@ ApplicationWindow {
                 DropArea {
                     id: anyDrop
                     anchors.fill: parent
-                    enabled: app.editingNote === null && app.page !== 7
+                    enabled: app.editingNote === null && app.page !== 8
                     onEntered: d => { if (d.hasUrls) d.accept(Qt.CopyAction); }
-                    onDropped: d => { if (!d.hasUrls) return; d.accept(Qt.CopyAction); app.go(7); drivePage.upload(d.urls); }
+                    onDropped: d => { if (!d.hasUrls) return; d.accept(Qt.CopyAction); app.go(8); drivePage.upload(d.urls); }
                 }
                 Rectangle {
                     anchors.fill: parent
@@ -625,6 +628,46 @@ ApplicationWindow {
             anchors { fill: parent; leftMargin: 18; rightMargin: 10 }
             Text { Layout.fillWidth: true; text: app.appState.wake_check ? "Wake check: " + app.appState.wake_check.label + " rings again at " + Util.clock(app.appState.wake_check.at) : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
             Btn { text: "I'm up"; kind: "primary"; onClicked: Api.post("/api/ring/awake", {}, () => app.pollState()) }
+        }
+    }
+
+    // Reminders that showed: a card each, bottom right, until Done or Snooze
+    // (here or on another device). Not an alarm: nothing takes over the window.
+    Column {
+        anchors { right: parent.right; bottom: parent.bottom; rightMargin: 18; bottomMargin: (!!app.appState.wake_check && !ringOverlay.visible ? 52 : 0) + 18 }
+        z: 98
+        spacing: 10
+        visible: !ringOverlay.visible
+        Repeater {
+            model: app.appState.reminders || []
+            Rectangle {
+                id: rc
+                required property var modelData
+                width: 360
+                height: 92
+                color: Theme.surface
+                border.color: Theme.gold
+                border.width: 1
+                Lively { key: "remind:" + rc.modelData.id + ":" + rc.modelData.at; sig: rc.modelData.label }
+                ColumnLayout {
+                    anchors { fill: parent; margins: 12 }
+                    spacing: 6
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Icon { name: "reminder"; color: Theme.gold; size: 16 }
+                        Text { Layout.fillWidth: true; text: rc.modelData.label; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold }
+                        Text { text: Util.clock(rc.modelData.at); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Item { Layout.fillWidth: true }
+                        Btn { compact: true; kind: "subtle"; icon: "timer"; text: "Snooze"; onClicked: Api.action("update_reminder", { reminder_id: rc.modelData.id, action: "snooze" }, () => app.pollState()) }
+                        Btn { compact: true; kind: "primary"; icon: "check"; text: "Done"; onClicked: { Motion.burstAt(this, width / 2, height / 2); Api.action("update_reminder", { reminder_id: rc.modelData.id, action: "done" }, () => app.pollState()); } }
+                    }
+                }
+            }
         }
     }
 

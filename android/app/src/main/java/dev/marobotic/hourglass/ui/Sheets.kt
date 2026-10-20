@@ -65,6 +65,7 @@ fun SheetHost(nav: Nav, version: Int) {
     s.course?.let { (_, c) -> CourseSheet(nav, c) { s.course = null } }
     s.session?.let { SessionSheet(nav, it, version) { s.session = null } }
     if (s.alarm) AlarmSheet(nav) { s.alarm = false }
+    s.reminder?.let { (_, r) -> ReminderSheet(nav, r) { s.reminder = null } }
     if (s.settings) SettingsSheet(nav) { s.settings = false }
     s.confirm?.let { (title, msg, action) ->
         AlertDialog(
@@ -78,7 +79,7 @@ fun SheetHost(nav: Nav, version: Int) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Sheet(title: String, onDismiss: () -> Unit, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
+fun Sheet(title: String, onDismiss: () -> Unit, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
     ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = HColors.surface, dragHandle = null) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -94,7 +95,7 @@ private fun Sheet(title: String, onDismiss: () -> Unit, subtitle: String? = null
 }
 
 @Composable
-private fun <T> Segmented(options: List<Pair<String, T>>, value: T, onChange: (T) -> Unit) {
+fun <T> Segmented(options: List<Pair<String, T>>, value: T, onChange: (T) -> Unit) {
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for ((label, v) in options) {
             val on = v == value
@@ -437,6 +438,19 @@ private fun SettingsSheet(nav: Nav, onDismiss: () -> Unit) {
                     if (e.detail.isNotEmpty()) T(e.detail, 12, if (e.broke) HColors.accent else HColors.faint)
                 }
             }
+
+            Section("Reminders")
+            T("Not alarms: a notification with Done and Snooze when one is due. Same on all your devices.", 12, HColors.faint)
+            T("ALERT", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("With a tone" to "tone", "Notification only" to "silent"), repo.reminderStyle) { repo.setReminderPref("reminder_style", it); tick++ }
+            if (repo.reminderStyle == "tone") {
+                T("TONE", 11, HColors.muted, spacing = 0.6)
+                Segmented(dev.marobotic.hourglass.core.Reminders.TONES.map { it.replaceFirstChar { c -> c.uppercase() } to it }, repo.reminderTone) {
+                    repo.setReminderPref("reminder_tone", it); dev.marobotic.hourglass.alarm.ReminderAlarm.preview(ctx, it); tick++
+                }
+            }
+            T("SNOOZE", 11, HColors.muted, spacing = 0.6)
+            Segmented(listOf("5 min" to 5, "10 min" to 10, "15 min" to 15, "30 min" to 30, "1 hour" to 60), repo.reminderSnooze) { repo.setReminderPref("reminder_snooze", it.toString()); tick++ }
 
             Section("Time")
             T("CLOCK", 11, HColors.muted, spacing = 0.6)

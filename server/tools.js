@@ -411,6 +411,14 @@ export const TOOLS = [
     run: (s, a) => s.removeReminder(a),
   },
   {
+    name: "reminder_settings",
+    title: "Reminder settings",
+    description: "Reminders' own settings: style (tone or silent), tone, snooze_min, and the tones to pick from.",
+    input: {},
+    readOnly: true,
+    run: (s) => s.reminderSettings(),
+  },
+  {
     name: "set_reminder_settings",
     title: "Reminder settings",
     description: "Reminders' own settings, separate from alarms: style \"tone\" (notification with a short tone) or \"silent\" (notification only); tone: chime, ding, pop or harp; snooze_min: how long Snooze waits.",

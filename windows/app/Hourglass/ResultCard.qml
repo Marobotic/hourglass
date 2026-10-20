@@ -11,7 +11,7 @@ Rectangle {
     property double now: Date.now()
     readonly property string kind: info.kind || ""
     readonly property string st: info.state || ""
-    readonly property bool gone: st === "removed" || st === "stopped" || st === "off"
+    readonly property bool gone: st === "removed" || st === "stopped" || st === "off" || st === "done"
     // Timer: seconds left, counted here so the ring moves.
     readonly property double secsLeft: kind === "timer" && info.ends_at ? Math.max(0, Math.ceil((info.ends_at - now) / 1000)) : 0
 
@@ -34,6 +34,7 @@ Rectangle {
         if (kind === "alarm") return Theme.accent;
         if (kind === "timer") return Theme.teal;
         if (kind === "event") return info.birthday ? Theme.gold : Theme.orange;
+        if (kind === "reminder") return Theme.gold;
         return Theme.teal;
     }
     function pad(n) { return n < 10 ? "0" + n : "" + n; }
@@ -48,7 +49,9 @@ Rectangle {
         if (st === "on") return { text: "ON", color: Theme.teal };
         if (st === "added") return { text: "ADDED", color: Theme.teal };
         if (st === "changed") return { text: "CHANGED", color: Theme.teal };
-        if (kind === "alarm" && st === "set") return { text: "SET", color: Theme.teal };
+        if ((kind === "alarm" || kind === "reminder") && st === "set") return { text: "SET", color: Theme.teal };
+        if (st === "done") return { text: "DONE", color: Theme.teal };
+        if (st === "snoozed") return { text: "SNOOZED", color: Theme.gold };
         if (kind === "timer" && st === "running") return { text: secsLeft > 0 ? "RUNNING" : "DONE", color: Theme.teal };
         return null;
     }
@@ -162,11 +165,11 @@ Rectangle {
         // Note or setting: an icon in a square.
         Rectangle {
             anchors.fill: parent
-            visible: kind === "note" || kind === "setting"
+            visible: kind === "note" || kind === "setting" || kind === "reminder"
             color: Theme.bg
             border.width: 1
             border.color: Theme.border
-            Icon { anchors.centerIn: parent; name: kind === "note" ? "note" : "check"; size: 26; color: Theme.teal }
+            Icon { anchors.centerIn: parent; name: kind === "note" ? "note" : kind === "reminder" && card.st !== "done" ? "reminder" : "check"; size: 26; color: kind === "reminder" ? Theme.gold : Theme.teal }
         }
     }
 
@@ -215,6 +218,7 @@ Rectangle {
                 : kind === "timer" ? (card.st === "running" ? (card.secsLeft > 0 ? "rings in " + card.countdown(card.secsLeft) : "rang") : "stopped")
                 : kind === "event" ? [card.info.when, card.info.time].filter(x => !!x).join(" · ")
                 : kind === "note" ? (card.info.course || (card.st === "added" ? "New note" : "Note"))
+                : kind === "reminder" ? [card.info.time, card.info.when].filter(x => !!x).join(" · ")
                 : (card.info.value || "")
             color: Theme.muted
             elide: Text.ElideRight
@@ -225,9 +229,10 @@ Rectangle {
             Layout.fillWidth: true
             visible: text !== ""
             text: kind === "alarm" ? (card.info.when || "")
+                : kind === "reminder" ? (card.info.overdue ? "overdue" : "")
                 : kind === "event" ? (card.info.days_until > 1 ? "in " + card.info.days_until + " days" + (card.info.repeats ? " · " + card.info.repeats : "") : card.info.days_until === 1 ? "tomorrow" : card.info.days_until === 0 ? "today!" : (card.info.repeats || ""))
                 : ""
-            color: kind === "event" && card.info.days_until !== null && card.info.days_until <= 7 ? card.accentOf() : Theme.faint
+            color: (kind === "event" && card.info.days_until !== null && card.info.days_until <= 7) || kind === "reminder" ? card.accentOf() : Theme.faint
             elide: Text.ElideRight
             font.family: Theme.mono
             font.pixelSize: 12

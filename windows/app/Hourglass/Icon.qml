@@ -10,7 +10,7 @@ Text {
         "plus": "", "search": "", "pin": "", "place": "",
         "trash": "", "edit": "", "close": "", "check": "",
         "play": "", "pause": "", "stop": "", "left": "",
-        "right": "", "note": "", "bell": "", "bell-off": "",
+        "right": "", "note": "", "bell": "", "bell-off": "", "reminder": "",
         "sync": "", "cloud": "", "person": "", "back": "",
         "eye": "", "code": "", "bolt": "", "folder-open": "",
         "calendar-plus": "", "list": "", "timer": "", "down": "", "gear": "", "globe": ""

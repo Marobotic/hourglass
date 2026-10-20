@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.StickyNote2
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,11 +56,12 @@ import kotlin.math.sin
 fun ResultCardView(info: JSONObject, now: Long, modifier: Modifier = Modifier) {
     val kind = info.optString("kind")
     val st = info.optString("state")
-    val gone = st == "removed" || st == "stopped" || st == "off"
+    val gone = st == "removed" || st == "stopped" || st == "off" || st == "done"
     val accent = when (kind) {
         "alarm" -> HColors.accent
         "timer" -> HColors.teal
         "event" -> if (info.optBoolean("birthday")) HColors.gold else HColors.orange
+        "reminder" -> HColors.gold
         else -> HColors.teal
     }
     val secsLeft = if (kind == "timer" && info.optLong("ends_at") > 0) max(0L, ceil((info.optLong("ends_at") - now) / 1000.0).toLong()) else 0L
@@ -81,7 +83,7 @@ fun ResultCardView(info: JSONObject, now: Long, modifier: Modifier = Modifier) {
                     "timer" -> TimerRing(st == "running", secsLeft, info.optLong("duration_s", 1))
                     "event" -> CalendarPage(info, accent)
                     else -> Box(Modifier.fillMaxSize().border(1.dp, HColors.border).background(HColors.bg), contentAlignment = Alignment.Center) {
-                        Icon(if (kind == "note") Icons.Outlined.StickyNote2 else Icons.Outlined.Check, null, tint = HColors.teal, modifier = Modifier.size(26.dp))
+                        Icon(when (kind) { "note" -> Icons.Outlined.StickyNote2; "reminder" -> if (st == "done") Icons.Outlined.Check else Icons.Outlined.NotificationsActive; else -> Icons.Outlined.Check }, null, tint = if (kind == "reminder") HColors.gold else HColors.teal, modifier = Modifier.size(26.dp))
                     }
                 }
             }
@@ -103,12 +105,14 @@ fun ResultCardView(info: JSONObject, now: Long, modifier: Modifier = Modifier) {
                     "timer" -> if (st == "running") (if (secsLeft > 0) "rings in ${countdown(secsLeft)}" else "rang") else "stopped"
                     "event" -> listOf(info.optString("when"), info.optString("time")).filter { it.isNotBlank() }.joinToString(" · ")
                     "note" -> info.optString("course").ifBlank { if (st == "added") "New note" else "Note" }
+                    "reminder" -> listOf(info.optString("time"), info.optString("when")).filter { it.isNotBlank() }.joinToString(" · ")
                     else -> info.optString("value")
                 }
                 T(sub, 13, HColors.muted, maxLines = 1)
                 val days = if (info.isNull("days_until")) null else info.optInt("days_until")
                 val third = when (kind) {
                     "alarm" -> info.optString("when")
+                    "reminder" -> if (info.optBoolean("overdue")) "overdue" else ""
                     "event" -> when {
                         days != null && days > 1 -> "in $days days" + (info.optString("repeats").takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
                         days == 1 -> "tomorrow"
@@ -117,7 +121,7 @@ fun ResultCardView(info: JSONObject, now: Long, modifier: Modifier = Modifier) {
                     }
                     else -> ""
                 }
-                if (third.isNotBlank()) T(third, 12, if (kind == "event" && days != null && days <= 7) accent else HColors.faint, maxLines = 1)
+                if (third.isNotBlank()) T(third, 12, if ((kind == "event" && days != null && days <= 7) || kind == "reminder") accent else HColors.faint, maxLines = 1)
             }
         }
     }
@@ -131,6 +135,9 @@ private fun badge(kind: String, st: String, secsLeft: Long): Pair<String, Color>
     st == "added" -> "ADDED" to HColors.teal
     st == "changed" -> "CHANGED" to HColors.teal
     kind == "alarm" && st == "set" -> "SET" to HColors.teal
+    kind == "reminder" && st == "set" -> "SET" to HColors.teal
+    st == "done" -> "DONE" to HColors.teal
+    st == "snoozed" -> "SNOOZED" to HColors.gold
     kind == "timer" && st == "running" -> (if (secsLeft > 0) "RUNNING" else "DONE") to HColors.teal
     else -> null
 }

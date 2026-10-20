@@ -80,6 +80,7 @@
             android:taskAffinity="dev.marobotic.hourglass.ring" />
 
         <receiver android:name=".alarm.AlarmReceiver" android:exported="false" />
+        <receiver android:name=".alarm.ReminderReceiver" android:exported="false" />
         <service android:name=".alarm.RingService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
         <service android:name=".alarm.SyncJob" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
         <receiver android:name=".alarm.BootReceiver" android:exported="true">

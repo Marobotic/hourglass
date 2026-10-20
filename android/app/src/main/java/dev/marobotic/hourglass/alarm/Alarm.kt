@@ -23,7 +23,7 @@ object Scheduler {
     const val CHANNEL = "ringing"
     private const val REQ = 4201
 
-    fun reschedule(ctx: Context, repo: Repo) = runCatching { schedule(ctx, repo) }
+    fun reschedule(ctx: Context, repo: Repo) = runCatching { schedule(ctx, repo) }.also { ReminderAlarm.reschedule(ctx, repo) }
 
     private fun schedule(ctx: Context, repo: Repo) {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return

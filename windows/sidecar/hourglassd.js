@@ -15,7 +15,7 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
-import { BUILTIN_RINGTONES, TABLE_NAMES, dueBetween, isSpent, localParts, parseDate } from "../../core/index.js";
+import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
 
 const HOME = homedir();
@@ -417,7 +417,7 @@ let wakeCheck = null; // { label, at, timer }: rings again unless "I'm up"
 
 function notify(item) {
   if (SILENT) return;
-  const title = item.kind === "timer" ? "Timer done" : "Alarm";
+  const title = item.kind === "timer" ? "Timer done" : item.kind === "reminder" ? "Reminder" : "Alarm";
   if (WIN) {
     // A tray balloon shows as a regular Windows notification on 10 and 11.
     const ps = `Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; ` +
@@ -576,8 +576,37 @@ setInterval(() => { if (ringing.size) scheduleSync(0); }, 5000);
 let upcoming = [];
 let dirtyUpcoming = true;
 function refreshUpcoming(now) {
-  upcoming = dueBetween(service.data(), Math.max(lastCheck, now - 10 * 60000), now + 36 * 3600000, service.tz);
+  const data = service.data();
+  const from = Math.max(lastCheck, now - 10 * 60000);
+  upcoming = [...dueBetween(data, from, now + 36 * 3600000, service.tz), ...remindersDue(data, from, now + 36 * 3600000, service.tz)];
   dirtyUpcoming = false;
+}
+
+// --- reminders ------------------------------------------------------------------------
+//
+// Not alarms: a notification and (if chosen in their settings) a short tone
+// once, and a card in the window with Done and Snooze until it is done,
+// snoozed or deleted, here or on another device.
+const shownReminders = new Map(); // id -> { id, label, at }
+function remind(item) {
+  const key = `${item.id}:${item.at}`;
+  if (shownReminders.get(item.id)?.key === key) return;
+  shownReminders.set(item.id, { id: item.id, label: item.label, at: item.at, key });
+  ringLog(item.label, "reminder", `shown at ${new Date(item.at).toLocaleTimeString("en-GB", { timeZone: service.tz })}`);
+  notify({ ...item, kind: "reminder" });
+  const rs = service.reminderSettings();
+  if (!SILENT && rs.style === "tone") playOnce(join(SOUNDS_DIR, `remind_${rs.tone}.wav`));
+}
+// The reminders the window shows as cards: shown here, and still waiting.
+function waitingReminders() {
+  const t = now();
+  for (const [id, r] of shownReminders) {
+    const row = store.get("reminders", id);
+    const st = row && !row.deleted ? reminderState(row, t, service.tz) : null;
+    if (!st || st.done || !st.overdue || (st.due_at ?? 0) > t) shownReminders.delete(id);
+    else r.label = row.label;
+  }
+  return [...shownReminders.values()].map(({ key, ...r }) => r);
 }
 store.onChange(() => { dirtyUpcoming = true; });
 // Bumped by every change to what the window shows (prefs are ring bookkeeping), so the
@@ -593,7 +622,7 @@ setInterval(() => {
   if (dirtyUpcoming) refreshUpcoming(t);
   // ring what fell due since the last check, but nothing older than 10 min
   const from = Math.max(lastCheck, t - 10 * 60000);
-  for (const item of upcoming) if (item.at > from && item.at <= t) ring(item);
+  for (const item of upcoming) if (item.at > from && item.at <= t) (item.kind === "reminder" ? remind(item) : ring(item));
   for (const r of [...ringing.values()]) if (Date.now() - r.started > RING_MS) ringOut(r.id);
   lastCheck = t;
 }, 1000);
@@ -1001,6 +1030,7 @@ async function extra(req, res, url, path) {
       sync: { ...sync, server: config().server ?? null },
       ringing: [...ringing.values()].map(({ stop, ...r }) => r),
       wake_check: wakeCheck ? { label: wakeCheck.label, at: wakeCheck.at } : null,
+      reminders: waitingReminders(),
       settings: service.settings(),
       account: account(),
       tz_offset_min: tzOffsetMin(),
@@ -1076,7 +1106,9 @@ async function extra(req, res, url, path) {
   }
   // Plays a ringtone once, for choosing one in Settings.
   if (path === "/api/ring/preview" && req.method === "POST") {
-    playOnce(soundFile(url.searchParams.get("name")));
+    const name = url.searchParams.get("name");
+    if (url.searchParams.get("reminder")) { if (REMINDER_TONES.includes(name)) playOnce(join(SOUNDS_DIR, `remind_${name}.wav`)); }
+    else playOnce(soundFile(name));
     return json(res, 200, { ok: true }), true;
   }
   // The assistant runs on the server (opencode there, on this account's data);

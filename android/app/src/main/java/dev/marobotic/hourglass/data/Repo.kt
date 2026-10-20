@@ -9,6 +9,8 @@ import dev.marobotic.hourglass.core.NowState
 import dev.marobotic.hourglass.core.Occ
 import dev.marobotic.hourglass.core.PALETTE
 import dev.marobotic.hourglass.core.Recurrence
+import dev.marobotic.hourglass.core.ReminderState
+import dev.marobotic.hourglass.core.Reminders
 import dev.marobotic.hourglass.core.id
 import dev.marobotic.hourglass.core.ints
 import dev.marobotic.hourglass.core.str
@@ -37,7 +39,8 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 // (same semantics as core/node/service.js) and the sync loop.
 // autoConfigure: point a fresh install at the build-time server. Tests pass false
 // so demo data never reaches the real account.
-const val SCHEMA = "6"
+const val SCHEMA = "7"
+private val SYNCED_PREFS = setOf("time_format", "week_start", "sound")
 val BUILTIN_RINGTONES = listOf("classic", "klaxon", "siren", "digital", "rising", "bell") // bump when a table or column is added
 
 class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
@@ -61,10 +64,14 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     // Why the sign-in page is showing when the app signed itself out.
     @Volatile var sessionEnded: String? = null
 
-    // --- device preferences (not synced) ---
-    val h24 get() = store.meta("time_format") == "24h"
-    val firstDay get() = store.meta("week_start")?.toIntOrNull() ?: 6
-    val sound get() = store.meta("sound") != "false"
+    // --- preferences ---
+    // Time format, week start and alarm sound are synced prefs rows (a change
+    // on any device, or by the assistant, shows everywhere); before a row
+    // exists, this phone's older setting.
+    private fun synced(key: String): String? = store.get("prefs", key)?.str("value")
+    val h24 get() = (synced("time_format") ?: store.meta("time_format")) == "24h"
+    val firstDay get() = (synced("week_start") ?: store.meta("week_start"))?.toIntOrNull()?.takeIf { it in listOf(1, 6, 7) } ?: 6
+    val sound get() = (synced("sound") ?: store.meta("sound")) != "false"
     val vibrate get() = store.meta("vibrate") != "false"
     // Synced: a built-in name or a ringtones row id.
     val ringtone: String get() {
@@ -76,7 +83,10 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         val lectures = events().filter { it.optString("kind") == "lecture" }.map { it.id }.toSet()
         return alarms().firstOrNull { it.str("lead_event_id") in lectures && it.optInt("enabled") == 1 }?.optInt("lead_minutes") ?: 0
     }
-    fun setPref(key: String, value: String) = store.setMeta(key, value)
+    fun setPref(key: String, value: String) {
+        store.setMeta(key, value)
+        if (key in SYNCED_PREFS) store.upsert("prefs", mapOf("value" to value), key)
+    }
 
     // One alarm per lecture, N minutes before (0 = off). Synced, so every
     // device rings. Same rules as the server's set_lecture_reminders.
@@ -236,6 +246,56 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             if (c.optInt("home") != want) store.upsert("clocks", mapOf("home" to want), c.optString("id"))
         }
     }
+
+    // --- reminders (core/node/service.js) ---
+    // Overdue first, then by when they show; done ones last, newest first.
+    fun reminders(now: Long = System.currentTimeMillis()): List<Pair<JSONObject, ReminderState>> {
+        val z = zone
+        val all = store.all("reminders").map { it to Reminders.state(it, now, z) }
+        val (done, open) = all.partition { it.second.done }
+        return open.sortedWith(compareBy({ !it.second.overdue }, { it.second.dueAt ?: Long.MAX_VALUE })) +
+            done.sortedByDescending { it.first.optLong("done_at") }
+    }
+
+    // date null + days empty: today, or tomorrow once the time has passed.
+    fun addReminder(label: String, time: String, date: String?, days: List<Int>): JSONObject {
+        val now = System.currentTimeMillis()
+        val d = if (days.isNotEmpty()) null else date ?: nextDateFor(time)
+        return store.upsert("reminders", mapOf("label" to label.trim().ifBlank { "Reminder" }, "time" to time, "date" to d,
+            "days" to JSONArray(days.sorted()), "done_at" to if (days.isNotEmpty()) now else null, "snooze_at" to null))
+    }
+
+    // The day a time means with no day given: today, or tomorrow once it has passed.
+    fun nextDateFor(time: String): String {
+        val now = System.currentTimeMillis()
+        val today = Dates.local(now, zone).toLocalDate()
+        return (if (Dates.epoch(today, time, zone) > now) today else today.plusDays(1)).toString()
+    }
+
+    // A new time is a new reminder: it shows again, a repeating one from now.
+    fun editReminder(id: String, label: String, time: String, date: String?, days: List<Int>) {
+        val now = System.currentTimeMillis()
+        store.upsert("reminders", mapOf("label" to label.trim().ifBlank { "Reminder" }, "time" to time, "date" to if (days.isNotEmpty()) null else date,
+            "days" to JSONArray(days.sorted()), "done_at" to if (days.isNotEmpty()) now else null, "snooze_at" to null), id)
+    }
+
+    fun reminderDone(id: String, done: Boolean = true) {
+        val r = store.get("reminders", id) ?: return
+        val now = System.currentTimeMillis()
+        val repeats = r.ints("days").isNotEmpty()
+        store.upsert("reminders", mapOf("done_at" to if (done || repeats) now else null, "snooze_at" to null), id)
+    }
+
+    fun snoozeReminder(id: String, minutes: Int = reminderSnooze) =
+        store.upsert("reminders", mapOf("snooze_at" to System.currentTimeMillis() + minutes * 60_000L), id)
+
+    fun removeReminder(id: String) = store.remove("reminders", id)
+
+    // Reminders' own settings (synced): a tone or silent, which tone, snooze length.
+    val reminderStyle: String get() = if (synced("reminder_style") == "silent") "silent" else "tone"
+    val reminderTone: String get() = synced("reminder_tone")?.takeIf { it in Reminders.TONES } ?: "chime"
+    val reminderSnooze: Int get() = synced("reminder_snooze")?.toIntOrNull()?.takeIf { it in 1..240 } ?: 10
+    fun setReminderPref(key: String, value: String) = store.upsert("prefs", mapOf("value" to value), key)
 
     fun setAlarmEnabled(id: String, on: Boolean) = store.upsert("alarms", mapOf("enabled" to if (on) 1 else 0), id)
     fun removeAlarm(id: String) = store.remove("alarms", id)

@@ -83,7 +83,7 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val SUGGESTIONS = listOf("What's on today?", "Set my alarm in 1 hour", "Wake me at 7:30 on weekdays", "Start a 25 minute timer", "Upcoming birthdays", "Tidy up my latest note")
+private val SUGGESTIONS = listOf("What's on today?", "Remind me to call mom at 6pm", "Set my alarm in 1 hour", "Wake me at 7:30 on weekdays", "Start a 25 minute timer", "Upcoming birthdays", "Tidy up my latest note")
 
 // A picture or file for the next message: uploading, then its Drive id.
 private data class Attachment(val key: Long, val name: String, val mime: String, val id: String? = null, val error: String? = null)

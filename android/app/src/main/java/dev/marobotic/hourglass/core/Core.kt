@@ -307,6 +307,40 @@ object Alarms {
     }
 }
 
+// A reminder at `now` (core/alarms.js reminderState): when it shows, whether
+// it is overdue (its time passed, not done yet), done, repeating.
+data class ReminderState(val dueAt: Long?, val occurrence: Long?, val overdue: Boolean, val done: Boolean, val repeats: Boolean)
+
+object Reminders {
+    val TONES = listOf("chime", "ding", "pop", "harp")
+
+    fun state(r: JSONObject, now: Long, zone: ZoneId): ReminderState {
+        val days = r.ints("days")
+        val snooze = if (r.isNull("snooze_at")) 0L else r.optLong("snooze_at")
+        val time = r.str("time")
+        if (days.isEmpty()) {
+            val at = r.str("date")?.takeIf { time != null }?.let { Dates.epoch(Dates.date(it), time!!, zone) }
+            val done = !r.isNull("done_at") && r.has("done_at")
+            val due = if (done || at == null) null else maxOf(at, snooze)
+            return ReminderState(due, at, !done && at != null && at <= now, done, false)
+        }
+        if (time == null) return ReminderState(null, null, false, false, true)
+        val today = Dates.local(now, zone).toLocalDate()
+        var last: Long? = null
+        var upcoming: Long? = null
+        for (i in -8..8) {
+            val d = today.plusDays(i.toLong())
+            if (Dates.iso(d) !in days) continue
+            val t = Dates.epoch(d, time, zone)
+            if (t <= now) last = t else if (upcoming == null) upcoming = t
+        }
+        val doneAt = if (r.isNull("done_at")) 0L else r.optLong("done_at")
+        val pending = last?.takeIf { it > doneAt }
+        val due = if (pending != null) maxOf(pending, snooze) else upcoming
+        return ReminderState(due, pending ?: upcoming, pending != null, false, true)
+    }
+}
+
 val PALETTE = listOf("#B14242", "#D66E36", "#F0BE66", "#4A8B8B", "#7E6BAF", "#5B8C4A", "#C2587E", "#8A8A8A")
 val KINDS = listOf("lecture", "lab", "tutorial", "exam", "event")
 
