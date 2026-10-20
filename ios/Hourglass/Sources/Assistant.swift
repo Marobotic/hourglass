@@ -27,6 +27,7 @@ struct AssistantView: View {
     @State private var now = Date()
     @State private var seen: Set<String> = []        // on screen once: later messages rise in
     @State private var ready = false
+    @FocusState private var typing: Bool              // the message box has the keyboard
     private var uploading: Bool { attachments.contains { $0.fileId == nil && $0.error == nil } }
 
     private static let suggestions = ["What's on today?", "Set my alarm in 1 hour", "Wake me at 7:30 on weekdays", "Start a 25 minute timer", "Upcoming birthdays", "Tidy up my latest note"]
@@ -123,6 +124,10 @@ struct AssistantView: View {
                 Button { dismiss() } label: { Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium)).foregroundStyle(H.fg).frame(width: 44, height: 44) }
                 T("Assistant", 18, bold: true)
                 Spacer()
+                // Puts the keyboard away (dragging the list down does too).
+                if typing {
+                    Button { typing = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.system(size: 17)).foregroundStyle(H.muted).frame(width: 40, height: 44) }
+                }
                 // Who answers: opens the AI settings.
                 Button { settingsOpen = true } label: {
                     HStack(spacing: 3) {
@@ -137,7 +142,11 @@ struct AssistantView: View {
             .padding(.horizontal, 8)
 
             if shown.isEmpty {
-                Spacer()
+                // Scrolls when the keyboard leaves less room than it needs; otherwise
+                // centred. Without this the page overflowed with the keyboard up: the
+                // header went off the top and the message box under the keyboard.
+                GeometryReader { geo in
+                ScrollView {
                 VStack(spacing: 12) {
                     PixelLogo(cell: 5)
                     T(enabled ? "Ask Hourglass to do it for you" : (chat["reason"] as? String ?? "The assistant is not available."), 17, bold: true)
@@ -148,7 +157,10 @@ struct AssistantView: View {
                     }
                 }
                 .padding(24)
-                Spacer()
+                .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -168,6 +180,7 @@ struct AssistantView: View {
                         }
                         .padding(.horizontal, 16).padding(.vertical, 8)
                     }
+                    .scrollDismissesKeyboard(.interactively)
                     .onChange(of: shown.count) { _, _ in withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
                     .onChange(of: ((shown.last?["text"] as? String)?.count ?? 0) + ((current?["steps"] as? [Any])?.count ?? 0)) { _, _ in withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
                     .onAppear { proxy.scrollTo("end", anchor: .bottom) }
@@ -197,6 +210,7 @@ struct AssistantView: View {
                 .disabled(!enabled || busy)
                 TextField("", text: $input, prompt: Text(busy ? "Working on it…" : "Ask Hourglass…").foregroundStyle(H.faint), axis: .vertical)
                     .lineLimit(1...6)
+                    .focused($typing)
                     .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent)
                     .padding(.horizontal, 12).padding(.vertical, 11)
                     .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
