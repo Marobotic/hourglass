@@ -78,6 +78,8 @@ final class Store: ObservableObject {
             UserDefaults.standard.set(6, forKey: "schema")
         }
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
+        // The share extension reads the server and session from the app group.
+        SharedBox.save(server: server, session: Keychain.get("session"))
         applyZone()
     }
 
@@ -471,7 +473,11 @@ final class Store: ObservableObject {
         guard signedIn, let base = URL(string: server) else {
             throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "Sign in to use the assistant."])
         }
-        var req = request(base.appendingPathComponent("api/assistant" + path))
+        // A query ("/models?base_url=…") stays a query, not part of the path.
+        let parts = path.split(separator: "?", maxSplits: 1).map(String.init)
+        var comps = URLComponents(url: base.appendingPathComponent("api/assistant" + (parts.first ?? "")), resolvingAgainstBaseURL: false)!
+        if parts.count > 1 { comps.percentEncodedQuery = parts[1] }
+        var req = request(comps.url!)
         req.httpMethod = method
         if method == "POST" {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -500,6 +506,7 @@ final class Store: ObservableObject {
             cursor = 0
         }
         Keychain.set("session", session)
+        SharedBox.save(server: server, session: session)
         Keychain.delete("sync-token")
         UserDefaults.standard.removeObject(forKey: "signed_out")
         UserDefaults.standard.set(who, forKey: "account")
@@ -517,6 +524,7 @@ final class Store: ObservableObject {
             Task { _ = try? await URLSession.shared.data(for: req) }
         }
         Keychain.delete("session")
+        SharedBox.save(server: server, session: nil)
         Keychain.delete("sync-token")
         UserDefaults.standard.set(true, forKey: "signed_out")
         signedIn = false
@@ -527,6 +535,7 @@ final class Store: ObservableObject {
     // so signing in again with the same account sends the unsynced changes.
     private func endSession() {
         Keychain.delete("session")
+        SharedBox.save(server: server, session: nil)
         Keychain.delete("sync-token")
         UserDefaults.standard.set(true, forKey: "signed_out")
         signedIn = false

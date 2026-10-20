@@ -15,6 +15,9 @@ targets:
     sources:
       - Hourglass/Sources
       - Hourglass/Resources
+    dependencies:
+      - target: HourglassShare
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.marobotic.hourglass
@@ -58,3 +61,32 @@ targets:
           - PlayfairDisplay-Bold.ttf
           - NoteJetBrainsMono-Regular.ttf
           - NoteJetBrainsMono-Bold.ttf
+
+  # "Share to Hourglass": files, photos and videos to the Drive, text and links to Notes.
+  HourglassShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Share
+      - path: Hourglass/Sources/SharedBox.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.marobotic.hourglass.share
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Share/Info.plist
+      properties:
+        CFBundleDisplayName: Hourglass
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsFileWithMaxCount: 20
+              NSExtensionActivationSupportsImageWithMaxCount: 20
+              NSExtensionActivationSupportsMovieWithMaxCount: 20
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
