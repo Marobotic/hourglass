@@ -13,6 +13,17 @@ Rectangle {
     border.color: hoverable && hovered ? Theme.faint : Theme.border
     Behavior on color { ColorAnimation { duration: 90 } }
 
+    // A hoverable card lifts a pixel and casts a square shadow, like Tasks' cards.
+    transform: Translate { y: card.hoverable && card.hovered ? -2 : 0; Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutBack } } }
+    Rectangle {
+        z: -2
+        x: 3; y: 3
+        width: card.width; height: card.height
+        color: "#000000"
+        opacity: card.hoverable && card.hovered ? 0.35 : 0
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+    }
+
     Rectangle {
         visible: card.stripe.a > 0
         width: 4

@@ -580,6 +580,10 @@ function refreshUpcoming(now) {
   dirtyUpcoming = false;
 }
 store.onChange(() => { dirtyUpcoming = true; });
+// Bumped by every change to what the window shows (prefs are ring bookkeeping), so the
+// window can reload when a sync, the assistant or an AI changes something.
+let dataRev = 0;
+store.onChange((table) => { if (table !== "prefs") dataRev++; });
 setInterval(() => { dirtyUpcoming = true; }, 60000);
 
 setInterval(() => {
@@ -1001,6 +1005,7 @@ async function extra(req, res, url, path) {
       account: account(),
       tz_offset_min: tzOffsetMin(),
       clock_skew_ms: skewMs,
+      data_rev: dataRev,
       version: VERSION,
       update: update.latest ? { version: update.latest.version, notes: update.latest.notes, installing: update.installing } : null,
     }), true;

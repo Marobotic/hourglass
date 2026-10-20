@@ -16,11 +16,21 @@ Popup {
     padding: 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-    Overlay.modal: Rectangle { color: Theme.alpha("#000000", 0.55) }
+    Overlay.modal: Rectangle {
+        color: Theme.alpha("#000000", 0.55)
+        NumberAnimation on opacity { from: 0; to: 1; duration: 180 }
+    }
     background: Rectangle { color: Theme.surface; radius: 0; border.color: Theme.border }
 
-    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 } NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: 110; easing.type: Easing.OutCubic } }
-    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
+    // Springs in a little past full size and settles; leaves quicker than it came.
+    enter: Transition {
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+        NumberAnimation { property: "scale"; from: 0.9; to: 1; duration: 340; easing.type: Easing.OutBack; easing.overshoot: 1.6 }
+    }
+    exit: Transition {
+        NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 110 }
+        NumberAnimation { property: "scale"; from: 1; to: 0.96; duration: 110; easing.type: Easing.InQuad }
+    }
 
     contentItem: ColumnLayout {
         spacing: 0

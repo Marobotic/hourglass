@@ -35,6 +35,12 @@ Popup {
     modal: false
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    // Pops open from the cursor.
+    enter: Transition {
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 }
+        NumberAnimation { property: "scale"; from: 0.92; to: 1; duration: 220; easing.type: Easing.OutBack }
+    }
+    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
 
     background: Rectangle {
         color: Qt.darker(Theme.fg, 3.0) // as Jukebox's menu

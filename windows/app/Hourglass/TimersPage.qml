@@ -37,9 +37,18 @@ Item {
         }
         Text {
             Layout.alignment: Qt.AlignHCenter
+            id: countdown
             text: Util.countdown(page.secs)
             color: page.current ? Theme.fg : Theme.muted
             font.family: Theme.mono; font.pixelSize: 120; font.weight: Font.Bold
+            // Running: every second gives a small beat.
+            onTextChanged: if (page.current && page.current.state === "running") beat.restart()
+            transformOrigin: Item.Center
+            SequentialAnimation {
+                id: beat
+                NumberAnimation { target: countdown; property: "scale"; to: 1.025; duration: 90; easing.type: Easing.OutQuad }
+                NumberAnimation { target: countdown; property: "scale"; to: 1; duration: 260; easing.type: Easing.OutBack }
+            }
             MouseArea {
                 anchors.fill: parent
                 enabled: !page.current
@@ -51,13 +60,15 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             spacing: 10
             Btn {
+                id: startBtn
                 Layout.preferredWidth: 200
                 kind: "primary"
                 icon: page.current ? "stop" : "play"
                 text: page.current ? "Stop timer" : "Start timer"
-                onClicked: page.current
-                    ? Api.action("update_timer", { timer_id: page.current.id, action: "stop" })
-                    : Api.action("start_timer", { minutes: page.length })
+                onClicked: {
+                    if (page.current) Api.action("update_timer", { timer_id: page.current.id, action: "stop" });
+                    else { Motion.burstAt(startBtn, startBtn.width / 2, startBtn.height / 2); Api.action("start_timer", { minutes: page.length }); }
+                }
             }
             Btn { icon: "plus"; onClicked: dialog.ask(true) }
         }
@@ -76,6 +87,7 @@ Item {
                     Layout.fillWidth: true
                     height: 50
                     color: "transparent"
+                    Lively { key: "timer:" + row.modelData.id; sig: row.modelData.label + "|" + row.modelData.start_at }
                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
                     RowLayout {
                         anchors { fill: parent; leftMargin: 4; rightMargin: 2 }

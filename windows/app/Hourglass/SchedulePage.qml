@@ -122,6 +122,7 @@ Item {
                                 implicitHeight: agendaCol.implicitHeight + 26
                                 stripe: modelData.color
                                 hoverable: true
+                                Lively { key: "occ:" + modelData.title + "|" + modelData.start_ms; sig: modelData.title + "|" + modelData.end_ms + "|" + (modelData.location || "") + "|" + (modelData.mark || "") }
                                 onClicked: page.app.openSession(modelData.parts[0])
                                 ColumnLayout {
                                     id: agendaCol
@@ -234,6 +235,7 @@ Item {
                                     y: (s - page.startHour * 60) / 60 * page.hourH + 1
                                     height: (e - s) / 60 * page.hourH - 2
                                     z: 2
+                                    Lively { key: "occ:" + card.o.title + "|" + card.o.start_ms; sig: card.o.title + "|" + card.o.end_ms + "|" + (card.o.location || "") + "|" + (card.o.mark || "") }
                                     // solid: nothing behind shows through
                                     color: Theme.mix(Theme.bg, Qt.color(o.color), hover.containsMouse ? 0.34 : 0.24)
                                     border.width: 1

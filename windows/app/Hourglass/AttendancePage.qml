@@ -95,6 +95,7 @@ Item {
                         id: card
                         required property var modelData
                         readonly property var list: modelData.sessions
+                        Lively { key: "attend:" + (card.modelData.course_id || card.modelData.title || ""); sig: JSON.stringify(card.list.map(s => s.mark || "")) }
                         readonly property int past: list.filter(s => !s.future).length
                         readonly property int yes: page.count(list, "attended")
                         readonly property int no: page.count(list, "absent")

@@ -139,6 +139,9 @@ Item {
                                 readonly property var c: page.app.courseById(modelData.course_id)
                                 width: parent.width
                                 height: cardCol.implicitHeight + 28
+                                transform: Translate { y: cardMouse.containsMouse ? -2 : 0; Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutBack } } }
+                                Behavior on color { ColorAnimation { duration: 90 } }
+                                Lively { key: "note:" + card.modelData.id; sig: String(card.modelData.updated_at) + "|" + (card.modelData.title || "") + "|" + (card.modelData.body || "").length }
                                 color: c ? Theme.mix(Theme.bg, Qt.color(c.color), cardMouse.containsMouse ? 0.2 : 0.13) : (cardMouse.containsMouse ? Theme.surface2 : Theme.surface)
                                 border.width: 1
                                 border.color: cardMouse.containsMouse ? Theme.faint : c ? Theme.alpha(c.color, 0.45) : Theme.border

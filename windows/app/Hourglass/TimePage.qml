@@ -107,10 +107,13 @@ Item {
                 Repeater {
                     model: page.alarms
                     Card {
+                        id: alarmCard
                         required property var modelData
                         Layout.fillWidth: true
                         implicitHeight: 74
                         opacity: modelData.enabled ? 1 : 0.55
+                        Behavior on opacity { NumberAnimation { duration: 160 } }
+                        Lively { key: "alarm:" + modelData.id; sig: [modelData.time, modelData.label, modelData.enabled, JSON.stringify(modelData.days || []), modelData.date || ""].join("|") }
                         RowLayout {
                             anchors { fill: parent; leftMargin: 18; rightMargin: 12 }
                             spacing: 16
@@ -135,7 +138,13 @@ Item {
                                 color: modelData.enabled ? Theme.accent : Theme.surface2
                                 border.color: Theme.border
                                 Rectangle { width: 16; height: 16; radius: 0; y: 3; x: modelData.enabled ? 21 : 3; color: modelData.enabled ? Theme.accentInk : Theme.muted; Behavior on x { NumberAnimation { duration: 120 } } }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: Api.put("/api/alarms/" + modelData.id, { enabled: !modelData.enabled }) }
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (!modelData.enabled) Motion.burstAt(parent, 31, 11);
+                                        Api.put("/api/alarms/" + modelData.id, { enabled: !modelData.enabled });
+                                    }
+                                }
                             }
                             Btn { icon: "trash"; kind: "subtle"; onClicked: Api.action("remove_alarm", { alarm_id: modelData.id }) }
                         }

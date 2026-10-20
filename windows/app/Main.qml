@@ -20,6 +20,9 @@ ApplicationWindow {
     property var courses: []
     // The sidecar's correction for a wrong PC clock (it compares with the server's time).
     property double clockSkew: 0
+    // The service's change counter: a jump this window didn't cause is someone
+    // else's change (a sync, the assistant, an AI), so the pages reload and glow.
+    property int dataRev: -1
     property double clock: Date.now()
     property var editingNote: null
     property bool loaded: false
@@ -176,6 +179,10 @@ ApplicationWindow {
                 app.settings = d.settings;
             }
             if (d.tz_offset_min !== undefined) Util.offsetMin = d.tz_offset_min;
+            if (d.data_rev !== undefined) {
+                if (app.dataRev >= 0 && d.data_rev !== app.dataRev) Api.changed();
+                app.dataRev = d.data_rev;
+            }
             if (d.clock_skew_ms !== undefined && d.clock_skew_ms !== app.clockSkew) {
                 app.clockSkew = d.clock_skew_ms;
                 app.clock = Date.now() + app.clockSkew;
@@ -272,7 +279,7 @@ ApplicationWindow {
                         Layout.leftMargin: app.narrow ? 9 : 8
                         Layout.bottomMargin: 18
                         spacing: 12
-                        Logo { cell: 3 }
+                        Logo { cell: 3; alive: true }
                         Text { visible: !app.narrow; text: "Hourglass"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Bold }
                     }
 
@@ -286,7 +293,15 @@ ApplicationWindow {
                             height: 38
                             radius: 0
                             color: current ? Theme.surface2 : navMouse.containsMouse ? Theme.alpha(Theme.fg, 0.04) : "transparent"
-                            Rectangle { visible: parent.current; width: 3; height: 18; radius: 0; color: Theme.accent; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            // The marker grows in on the page you go to.
+                            Rectangle {
+                                width: 3; radius: 0; color: Theme.accent
+                                height: parent.current ? 18 : 0
+                                visible: height > 0.5
+                                anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                                Behavior on height { NumberAnimation { duration: 260; easing.type: Easing.OutBack; easing.overshoot: 2 } }
+                            }
                             RowLayout {
                                 anchors { fill: parent; leftMargin: app.narrow ? 0 : 14; rightMargin: 10 }
                                 spacing: 12
@@ -295,6 +310,7 @@ ApplicationWindow {
                                     Layout.fillWidth: app.narrow
                                     name: modelData.icon; size: 15
                                     color: parent.parent.current ? Theme.fg : Theme.muted
+                                    transform: Translate { x: navMouse.containsMouse && !parent.parent.current && !app.narrow ? 2 : 0; Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutBack } } }
                                 }
                                 Text { visible: !app.narrow; Layout.fillWidth: true; text: modelData.name; color: parent.parent.current ? Theme.fg : Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
                                 }
@@ -311,13 +327,17 @@ ApplicationWindow {
                         Layout.bottomMargin: 10
                         height: 58
                         radius: 0
+                        id: liveCard
                         color: Theme.alpha(Theme.accent, 0.12)
                         border.color: Theme.alpha(Theme.accent, 0.35)
                         readonly property var a: app.nowData ? app.nowData.active : null
                         ColumnLayout {
                             anchors { fill: parent; margins: 10 }
                             spacing: 2
-                            Text { text: "● LIVE"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1 }
+                            Text {
+                                text: "● LIVE"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1
+                                SequentialAnimation on opacity { running: liveCard.visible; loops: Animation.Infinite; NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine } NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine } }
+                            }
                             Text { Layout.fillWidth: true; text: parent.parent.a ? parent.parent.a.title : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                         }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.go(0) }
@@ -398,8 +418,31 @@ ApplicationWindow {
                         spacing: 8
                         readonly property string st: app.appState.sync ? app.appState.sync.state : "local"
                         Rectangle {
+                            id: syncDot
                             width: 7; height: 7; radius: 0
                             color: parent.st === "synced" ? Theme.teal : parent.st === "offline" ? Theme.orange : Theme.faint
+                            // Synced: a ring ripples out now and then. Offline: the dot blinks.
+                            Rectangle {
+                                id: ripple
+                                anchors.centerIn: parent
+                                width: 7; height: 7
+                                color: "transparent"; border.width: 1; border.color: syncDot.color
+                                opacity: 0
+                                SequentialAnimation {
+                                    running: syncDot.parent.st === "synced"
+                                    loops: Animation.Infinite
+                                    ParallelAnimation {
+                                        NumberAnimation { target: ripple; property: "scale"; from: 1; to: 2.8; duration: 1100; easing.type: Easing.OutCubic }
+                                        NumberAnimation { target: ripple; property: "opacity"; from: 0.8; to: 0; duration: 1100 }
+                                    }
+                                    PauseAnimation { duration: 1800 }
+                                }
+                            }
+                            SequentialAnimation on opacity {
+                                running: syncDot.parent.st === "offline"
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
+                            }
                         }
                         Text {
                             visible: !app.narrow
@@ -418,9 +461,19 @@ ApplicationWindow {
                 Layout.fillHeight: true
 
                 StackLayout {
+                    id: stack
                     anchors.fill: parent
                     currentIndex: app.page
                     visible: app.editingNote === null
+                    // The page you go to rises in.
+                    transform: Translate { id: pageShift }
+                    onCurrentIndexChanged: pageIn.restart()
+                    onVisibleChanged: if (visible) pageIn.restart()
+                    ParallelAnimation {
+                        id: pageIn
+                        NumberAnimation { target: stack; property: "opacity"; from: 0; to: 1; duration: 200; easing.type: Easing.OutQuad }
+                        NumberAnimation { target: pageShift; property: "y"; from: 16; to: 0; duration: 340; easing.type: Easing.OutCubic }
+                    }
                     NowPage { app: app }
                     SchedulePage { app: app }
                     NotesPage { app: app }
@@ -452,10 +505,19 @@ ApplicationWindow {
                 }
 
                 NoteEditor {
+                    id: noteEditor
                     anchors.fill: parent
                     visible: app.editingNote !== null
                     app: app
                     note: app.editingNote
+                    // Opens with the same rise as a page.
+                    transform: Translate { id: editorShift }
+                    onVisibleChanged: if (visible) editorIn.restart()
+                    ParallelAnimation {
+                        id: editorIn
+                        NumberAnimation { target: noteEditor; property: "opacity"; from: 0; to: 1; duration: 200 }
+                        NumberAnimation { target: editorShift; property: "y"; from: 16; to: 0; duration: 340; easing.type: Easing.OutCubic }
+                    }
                 }
 
                 // Service down
@@ -466,7 +528,10 @@ ApplicationWindow {
                     ColumnLayout {
                         anchors.centerIn: parent
                         spacing: 14
-                        Logo { Layout.alignment: Qt.AlignHCenter; cell: 6 }
+                        Logo {
+                            Layout.alignment: Qt.AlignHCenter; cell: 6; alive: true
+                            SequentialAnimation on y { running: !app.loaded; loops: Animation.Infinite; NumberAnimation { to: -5; duration: 900; easing.type: Easing.InOutSine } NumberAnimation { to: 0; duration: 900; easing.type: Easing.InOutSine } }
+                        }
                         Text { Layout.alignment: Qt.AlignHCenter; text: "Starting Hourglass…"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
                     }
                 }
@@ -498,9 +563,11 @@ ApplicationWindow {
         readonly property var item: visible ? app.appState.ringing[0] : null
         MouseArea { anchors.fill: parent }
         Rectangle {
+            id: ringCard
             anchors.centerIn: parent
             width: 380
             height: ringCol.implicitHeight + 56
+            NumberAnimation on scale { running: ringOverlay.visible; from: 0.8; to: 1; duration: 420; easing.type: Easing.OutBack; easing.overshoot: 2 }
             radius: 0
             color: Theme.surface
             border.color: Theme.accent
@@ -561,6 +628,45 @@ ApplicationWindow {
         }
     }
 
+    // Pixel bursts for finishing things (Motion.burstAt from any page).
+    Item {
+        id: fx
+        anchors.fill: parent
+        z: 150
+        Connections {
+            target: Motion
+            function onBurst(x, y) { for (let i = 0; i < 16; i++) particle.createObject(fx, { x0: x, y0: y, i: i }); }
+        }
+        Component {
+            id: particle
+            Rectangle {
+                id: px
+                property real x0
+                property real y0
+                property int i
+                readonly property real a: Math.PI * 2 * i / 16 + Math.random() * 0.5
+                readonly property real v: 40 + Math.random() * 70
+                width: 3 + Math.round(Math.random() * 4)
+                height: width
+                color: [Theme.gold, Theme.accent, Theme.fg, Theme.teal][i % 4]
+                x: x0; y: y0
+                ParallelAnimation {
+                    running: true
+                    onFinished: px.destroy()
+                    NumberAnimation { target: px; property: "x"; to: px.x0 + Math.cos(px.a) * px.v * 1.15; duration: 850; easing.type: Easing.OutCubic }
+                    SequentialAnimation {
+                        NumberAnimation { target: px; property: "y"; to: px.y0 + Math.sin(px.a) * px.v - 30; duration: 380; easing.type: Easing.OutCubic }
+                        NumberAnimation { target: px; property: "y"; to: px.y0 + Math.sin(px.a) * px.v + 40; duration: 470; easing.type: Easing.InQuad }
+                    }
+                    SequentialAnimation {
+                        PauseAnimation { duration: 450 }
+                        NumberAnimation { target: px; property: "opacity"; to: 0; duration: 400 }
+                    }
+                }
+            }
+        }
+    }
+
     // Toast
     Rectangle {
         id: toast
@@ -575,7 +681,8 @@ ApplicationWindow {
         opacity: 0
         visible: opacity > 0
         z: 200
-        Behavior on opacity { NumberAnimation { duration: 150 } }
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        transform: Translate { y: (1 - toast.opacity) * 14 }
         Text { id: toastText; anchors.centerIn: parent; width: Math.min(implicitWidth, app.width - 80); text: toast.message; color: Theme.fg; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 14 }
         Timer { id: toastTimer; interval: 3500; onTriggered: toast.opacity = 0 }
     }

@@ -2,6 +2,8 @@ module Hourglass
 singleton Theme 1.0 Theme.qml
 singleton Api 1.0 Api.qml
 singleton Util 1.0 Util.qml
+singleton Motion 1.0 Motion.qml
+Lively 1.0 Lively.qml
 Icon 1.0 Icon.qml
 Btn 1.0 Btn.qml
 Card 1.0 Card.qml

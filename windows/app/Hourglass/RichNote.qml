@@ -220,6 +220,7 @@ ScrollView {
             const r = ed.positionToRectangle(g);
             const r2 = ed.positionToRectangle(g + 1);
             if (x >= r.x - 4 && x <= Math.max(r2.x, r.x + 14) + 2 && Math.abs(y - (r.y + r.height / 2)) <= r.height) {
+                if (!k.checked) Motion.burstAt(ed, r.x + 6, r.y + r.height / 2);
                 ed.remove(g, g + 1);
                 ed.insert(g, k.checked ? NF.BOX : NF.CHECKED);
                 ed.cursorPosition = l.end;

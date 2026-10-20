@@ -24,6 +24,9 @@ Rectangle {
     border.color: Theme.border
     opacity: enabled ? 1 : 0.4
     Behavior on color { ColorAnimation { duration: 90 } }
+    // A press squishes it a little, then it springs back.
+    scale: mouse.pressed ? 0.95 : 1
+    Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack; easing.overshoot: 2 } }
 
     RowLayout {
         id: row

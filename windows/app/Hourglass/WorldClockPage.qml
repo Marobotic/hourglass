@@ -97,6 +97,7 @@ Item {
                             width: 300
                             height: 170
                             stripe: modelData.home ? Theme.accent : "transparent"
+                            Lively { key: "clock:" + (card.modelData.id || card.modelData.zone || card.modelData.label); sig: card.modelData.label + "|" + card.modelData.offset_min }
                             ColumnLayout {
                                 anchors { fill: parent; margins: 18; leftMargin: 22 }
                                 spacing: 4

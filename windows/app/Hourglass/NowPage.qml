@@ -56,7 +56,18 @@ Item {
         ColumnLayout {
             spacing: 0
             Text { text: page.d ? Util.longDate(page.d.now.date) : ""; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
-            Text { text: Util.clock(page.app.clock); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 44; font.weight: Font.Bold }
+            Text {
+                id: bigClock
+                text: Util.clock(page.app.clock); color: Theme.fg; font.family: Theme.mono; font.pixelSize: 44; font.weight: Font.Bold
+                // Each new minute drops in.
+                transform: Translate { id: tick }
+                onTextChanged: tickIn.restart()
+                ParallelAnimation {
+                    id: tickIn
+                    NumberAnimation { target: bigClock; property: "opacity"; from: 0.25; to: 1; duration: 260 }
+                    NumberAnimation { target: tick; property: "y"; from: -8; to: 0; duration: 420; easing.type: Easing.OutBack; easing.overshoot: 2 }
+                }
+            }
         }
 
         // the one thing that matters
@@ -65,6 +76,16 @@ Item {
             Layout.maximumWidth: 760
             implicitHeight: heroCol.implicitHeight + 48
             stripe: page.block ? page.block.color : Theme.border
+            Lively { key: page.block ? "now:" + page.block.title + "|" + page.block.start_ms : "now:off"; sig: page.block ? page.block.title + "|" + page.block.end_ms + "|" + (page.block.location || "") : "" }
+            // How far through the class: a bar along the bottom that fills as it runs.
+            Rectangle {
+                visible: page.live
+                anchors { left: parent.left; bottom: parent.bottom; margins: 1 }
+                height: 3
+                color: page.block ? page.block.color : Theme.accent
+                width: page.block && page.live ? (parent.width - 2) * Math.min(1, (page.app.clock - page.block.start_ms) / Math.max(1, page.block.end_ms - page.block.start_ms)) : 0
+                Behavior on width { NumberAnimation { duration: 900; easing.type: Easing.OutCubic } }
+            }
             ColumnLayout {
                 id: heroCol
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24; leftMargin: 28 }
@@ -132,6 +153,9 @@ Item {
                     Layout.fillWidth: true
                     height: 52
                     color: lrMouse.containsMouse ? Theme.surface2 : Theme.surface
+                    Behavior on color { ColorAnimation { duration: 90 } }
+                    transform: Translate { y: lrMouse.containsMouse ? -2 : 0; Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutBack } } }
+                    Lively { key: "occ:" + lr.modelData.title + "|" + lr.modelData.start_ms; sig: lr.modelData.title + "|" + lr.modelData.end_ms + "|" + (lr.modelData.location || "") }
                     border.width: 1
                     border.color: Theme.border
                     Rectangle { width: 4; height: parent.height; color: lr.modelData.color }
@@ -170,6 +194,8 @@ Item {
                         width: (parent.width - 10) / 2
                         height: Math.min(ncCol.implicitHeight + 24, 170)
                         clip: true
+                        transform: Translate { y: ncMouse.containsMouse ? -2 : 0; Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutBack } } }
+                        Lively { key: "note:" + nc.modelData.id; sig: String(nc.modelData.updated_at) + "|" + (nc.modelData.title || "") + "|" + (nc.modelData.body || "").length }
                         color: c ? Theme.mix(Theme.bg, Qt.color(c.color), ncMouse.containsMouse ? 0.2 : 0.13) : (ncMouse.containsMouse ? Theme.surface2 : Theme.surface)
                         border.width: 1
                         border.color: c ? Theme.alpha(c.color, 0.45) : Theme.border

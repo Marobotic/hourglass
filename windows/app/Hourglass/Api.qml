@@ -35,7 +35,7 @@ QtObject {
             let data = null;
             try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (e) {}
             if (xhr.status >= 200 && xhr.status < 300) {
-                if (method !== "GET" && !readOnly) { api.revision++; api.changed(); }
+                if (method !== "GET" && !readOnly) { Motion.touchLocal(); api.revision++; api.changed(); }
                 if (cb) cb(data);
             } else {
                 const msg = data && data.error ? data.error : (xhr.status ? "HTTP " + xhr.status : "Hourglass service is not running");
