@@ -299,7 +299,9 @@ async function syncOnce() {
       if (!r.ok) throw new Error(`push ${r.status}`);
       const { revs = {} } = await r.json();
       for (const t of TABLE_NAMES) for (const row of dirty[t]) {
-        if (revs[t]?.[row.id] != null) store.setRev(t, row.id, revs[t][row.id]);
+        // Only what the server took: a table it doesn't know yet (an older server) stays queued.
+        if (revs[t]?.[row.id] == null) continue;
+        store.setRev(t, row.id, revs[t][row.id]);
         store.clearDirty(t, row.id, row.updated_at);
       }
     }

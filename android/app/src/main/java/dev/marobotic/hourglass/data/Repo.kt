@@ -694,7 +694,9 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
                 val res = JSONObject(http("POST", "$server/api/sync", token, JSONObject().put("changes", changes).toString()))
                 val revs = res.optJSONObject("revs")
                 for ((t, rows) in dirty) for (r in rows) {
-                    revs?.optJSONObject(t)?.let { if (it.has(r.id)) store.setRev(t, r.id, it.getLong(r.id)) }
+                    // Only what the server took: a table it doesn't know yet (an older server) stays queued.
+                    val took = revs?.optJSONObject(t)?.takeIf { it.has(r.id) } ?: continue
+                    store.setRev(t, r.id, took.getLong(r.id))
                     store.clearDirty(t, r.id, r.optLong("updated_at"))
                 }
             }
