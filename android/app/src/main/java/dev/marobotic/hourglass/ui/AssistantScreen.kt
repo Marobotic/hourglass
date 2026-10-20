@@ -72,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
@@ -325,9 +326,10 @@ private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Bo
         }
         return
     }
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-        Box(Modifier.width(3.dp).fillMaxHeight().background(HColors.accent))
-        Column(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // The red bar on the left is drawn behind, not measured: a card with a lazy
+    // or BoxWithConstraints layout (the day card) can't be measured intrinsically.
+    Row(Modifier.fillMaxWidth().drawBehind { drawRect(HColors.accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }) {
+        Column(Modifier.padding(start = 15.dp, top = 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // What it did, one line per tool: a spinner, then a tick that pops in.
             for (t in m.optJSONArray("tools").list()) ToolLine(t.optString("label"), t.optString("status"))
             // What it did, drawn.
