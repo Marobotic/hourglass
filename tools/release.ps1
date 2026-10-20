@@ -198,3 +198,6 @@ if (-not (Test-Path 'assets\icon-256.png')) { throw "no assets\icon-256.png" }
 & scp @ssh "$out\sidestore.json" "${Droplet}:$WebRoot/sidestore.json.new"
 & ssh @ssh $Droplet "mv $WebRoot/hourglass/latest.json.new $WebRoot/hourglass/latest.json && mv $WebRoot/sidestore.json.new $WebRoot/sidestore.json && chmod -R a+rX $WebRoot"
 Step "Hourglass $Version is out: $Base/hourglass/latest.json"
+# Depot (the marobotic app updater) reads a signed catalog of every app's feed.
+$depot = "C:\Users\Maro\Documents\GitHub\maro-projects-plans\depot\tools\publish-catalog.ps1"
+if (Test-Path $depot) { Step "Depot catalog"; & $depot }
