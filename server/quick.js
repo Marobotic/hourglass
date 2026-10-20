@@ -761,19 +761,29 @@ function attendanceCommand(t, raw) {
   let status = null;
   if (/\b(?:attended|present|went to|was at|was in|made it to|been to)\b/.test(s)) status = "attended";
   else if (/\b(?:absent|missed|skipped|didn't go|did not go|wasn't at|was not at|couldn't make)\b/.test(s)) status = "absent";
-  else if (/\b(?:no class|no lecture|class is off|lecture is off|cancelled class|class cancelled|is cancelled|day off|off day)\b/.test(s)) status = "off";
+  else if (/\b(?:no class|no lecture|class is off|lecture is off|cancelled class|class cancelled|is cancelled|day off|off day|as off|to off)\b/.test(s)) status = "off";
   else if (/\b(?:clear|unmark|remove)\b.*\bmark\b/.test(s)) status = "none";
   if (!status || /\b(?:alarm|timer|note)\b/.test(s)) return null;
   // Only about classes: "I missed my bus today" is not an absence.
-  const classWord = /\b(?:mark|marked|class|classes|lecture|lectures|session|sessions|course|absent|attended|present)\b/.test(s);
-  const day = findDay(s, t.today()) || { from: t.today(), to: t.today(), word: "today", rest: s };
+  const classWord = /\b(?:mark|marked|class|classes|lecture|lectures|session|sessions|course|absent|attended|present|attendance|attendence|attendace)\b/.test(s);
+  // The closest day: attendance is mostly marked after the class.
+  const day = findDay(s, t.today(), { near: true }) || { from: t.today(), to: t.today(), word: "today", rest: s };
   if (day.from !== day.to) return null;
-  let occ = t.schedule({ from: day.from, to: day.from }).occurrences.filter((o) => o.course_id);
-  // A course named: only that one.
-  const words = day.rest.replace(/\b(?:mark|marked|as|i|was|were|am|the|my|class|lecture|session|attended|present|absent|missed|skipped|went|to|at|in|off|no|today|it|didn't|did|not|go|clear|unmark|remove|is|cancelled)\b/g, " ").split(/\s+/).filter((w) => w.length > 2);
+  const all = t.schedule({ from: day.from, to: day.from }).occurrences;
+  let occ = all.filter((o) => o.course_id);
+  // A course named: only that one. Everything else in the sentence is filler.
+  const words = day.rest
+    .replace(/[.,!?]/g, " ")
+    .replace(/\b(?:mark|marked|set|put|make|change|update|log|record|as|for|on|of|i|was|were|am|the|my|all|every|each|class|classes|lecture|lectures|session|sessions|course|courses|attendance|attendence|attendace|attendances|attended|present|absent|missed|skipped|went|to|at|in|off|no|today|it|didn't|did|not|go|clear|unmark|remove|is|cancelled|day|please|and|me|that|this|status)\b/g, " ")
+    .split(/\s+/).filter((w) => w.length > 2);
   if (words.length) occ = occ.filter((o) => words.every((w) => o.title.toLowerCase().includes(w)));
   if (!classWord && (!words.length || !occ.length)) return null;
-  if (!occ.length) return { text: `No class ${day.word === "today" || day.word === "tomorrow" || day.word === "yesterday" ? day.word : "on " + day.word}${words.length ? ` matching "${words.join(" ")}"` : ""} to mark.`, tools: [{ tool: "get_schedule", status: "completed" }] };
+  const when = day.word === "today" || day.word === "tomorrow" || day.word === "yesterday" ? day.word : "on " + day.word;
+  if (!occ.length) {
+    const classes = all.filter((o) => o.course_id).map((o) => o.title);
+    const text = words.length && classes.length ? `No class ${when} matching "${words.join(" ")}". ${cap(when)} you have ${classes.join(" and ")}.` : `You have no classes ${when}, so there's nothing to mark.`;
+    return { text, tools: [{ tool: "get_schedule", status: "completed" }], cards: [dayCard(t, day.from, day.word)] };
+  }
   for (const o of occ) t.markSession({ event_id: o.event_id, date: day.from, status });
   const what = { attended: "attended", absent: "absent", off: "off (no class)", none: "unmarked" }[status];
   return { text: `Marked ${occ.map((o) => o.title).join(" and ")} ${day.word} as ${what}.`, tools: [{ tool: "mark_session", status: "completed" }], cards: [dayCard(t, day.from, day.word)] };
@@ -871,7 +881,7 @@ function stopTimerRequest(t, raw) {
   };
 }
 
-const MON_RE = MONTH_NAMES.map((m) => m.slice(0, 3) + "[a-z]*").join("|");
+const MON_RE = MONTH_NAMES.map((m) => m.slice(0, 3) + (m === "september" ? "(?:t|tember)?" : `(?:${m.slice(3)})?`)).join("|");
 /** "5 march", "march 5th", "5th of march", "2001-03-05" -> "MM-DD" or "YYYY-MM-DD". */
 function parseDayMonth(s) {
   s = s.trim().toLowerCase().replace(/,/g, "");

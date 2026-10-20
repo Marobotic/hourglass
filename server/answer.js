@@ -15,16 +15,22 @@ import { alarmCard, dayCard } from "./cards.js";
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MON_RE = MONTHS.map((m) => m.slice(0, 3) + "[a-z]*").join("|");
+// A month's name or its short form ("oct", "sept"), never the start of another word ("mark").
+const MON_RE = MONTHS.map((m) => m.slice(0, 3) + (m === "september" ? "(?:t|tember)?" : `(?:${m.slice(3)})?`)).join("|");
 
 // Words that ask for a change: those go to actions or the model, never here.
 const WRITE = /\b(?:set|add|create|make|start|cancel|delete|remove|turn|switch|change|move|rename|edit|update|snooze|stop|pause|resume|mark|put|write|save|remind|wake me|book|clear|reset|disable|enable|tidy|fix|format|summari[sz]e|rewrite|translate)\b/;
 const QUESTION = /^(?:what|whats|what's|when|whens|when's|which|do i|did i|have i|am i|is there|are there|is anything|any|show|list|tell|give|read|open|check|see|display|get|how many|how much|how long|whats on|my|today|tomorrow|tonight)\b|\?$/;
 
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 const fmtDay = (d) => `${WEEKDAYS[weekday(d) - 1]} ${Number(d.slice(8))} ${MON[Number(d.slice(5, 7)) - 1]}`;
 
-/** A day or a range named in the text: { from, to, word, rest } or null. */
-export function findDay(s, today) {
+/**
+ * A day or a range named in the text: { from, to, word, rest } or null.
+ * A bare weekday or date means the next one; with near, the closest one, so
+ * "mark monday as absent" on a Tuesday is yesterday. "last monday" is always past.
+ */
+export function findDay(s, today, { near = false } = {}) {
   const hit = (re, from, to, word) => {
     const m = re.exec(s);
     return m ? { from, to: to ?? from, word, rest: (s.slice(0, m.index) + " " + s.slice(m.index + m[0].length)).replace(/\s+/g, " ").trim() } : null;
@@ -39,12 +45,17 @@ export function findDay(s, today) {
     hit(/\b(?:this|the) week(?:'s)?\b|\bthis weeks\b/, today, addDays(today, 7 - wd), "this week") ||
     hit(/\b(?:the )?(?:weekend|this weekend)\b/, addDays(today, ((6 - wd) + 7) % 7), addDays(today, ((6 - wd) + 7) % 7 + 1), "this weekend");
   if (r) return r;
-  const w = new RegExp(String.raw`\b(?:(next|this|on)\s+)?(${DAYS.join("|")})(?:'s|s)?\b`).exec(s);
+  const iso = /\b(?:on\s+)?(\d{4}-\d{2}-\d{2})\b/.exec(s);
+  if (iso) return { from: iso[1], to: iso[1], word: iso[1] === today ? "today" : fmtDay(iso[1]), rest: (s.slice(0, iso.index) + " " + s.slice(iso.index + iso[0].length)).replace(/\s+/g, " ").trim() };
+  const w = new RegExp(String.raw`\b(?:(next|this|on|last)\s+)?(${DAYS.join("|")})(?:'s|s)?\b`).exec(s);
   if (w) {
     const target = DAYS.indexOf(w[2]) + 1;
     let d = today;
     while (weekday(d) !== target) d = addDays(d, 1);
     if (w[1] === "next" && d === today) d = addDays(d, 7);
+    // "last monday", or (near) a bare weekday that was closer behind than ahead.
+    if (w[1] === "last" || (near && !w[1] && d !== today && daysBetween(today, d) > 3)) d = addDays(d, -7);
+    if (d === addDays(today, -1)) return { from: d, to: d, word: "yesterday", rest: (s.slice(0, w.index) + " " + s.slice(w.index + w[0].length)).replace(/\s+/g, " ").trim() };
     return { from: d, to: d, word: d === today ? "today" : d === addDays(today, 1) ? "tomorrow" : fmtDay(d), rest: (s.slice(0, w.index) + " " + s.slice(w.index + w[0].length)).replace(/\s+/g, " ").trim() };
   }
   const md = new RegExp(String.raw`\b(?:on\s+)?(?:the\s+)?(?:(\d{1,2})(?:st|nd|rd|th)?(?:\s+(?:of\s+)?(${MON_RE}))?|(${MON_RE})\s+(\d{1,2})(?:st|nd|rd|th)?)\b`).exec(s);
@@ -53,8 +64,8 @@ export function findDay(s, today) {
     let mon = md[2] || md[3] ? MONTHS.findIndex((m) => (md[2] || md[3]).startsWith(m.slice(0, 3))) + 1 : Number(today.slice(5, 7));
     let year = Number(today.slice(0, 4));
     let d = `${year}-${String(mon).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    if (d < today && !(md[2] || md[3])) { mon = mon === 12 ? 1 : mon + 1; if (mon === 1) year++; d = `${year}-${String(mon).padStart(2, "0")}-${String(day).padStart(2, "0")}`; }
-    else if (d < today) d = `${year + 1}${d.slice(4)}`;
+    if (d < today && !near && !(md[2] || md[3])) { mon = mon === 12 ? 1 : mon + 1; if (mon === 1) year++; d = `${year}-${String(mon).padStart(2, "0")}-${String(day).padStart(2, "0")}`; }
+    else if (d < today && !near && daysBetween(d, today) > 60) d = `${year + 1}${d.slice(4)}`; // "13 october" a week ago is that day, not next year
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || day < 1 || day > 31) return null;
     return { from: d, to: d, word: fmtDay(d), rest: (s.slice(0, md.index) + " " + s.slice(md.index + md[0].length)).replace(/\s+/g, " ").trim() };
   }

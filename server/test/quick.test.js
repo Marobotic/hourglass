@@ -210,6 +210,20 @@ test("events, attendance, world clock and settings at once", () => {
   assert.match(quickAnswer(service, "set my ringtone to klaxon").text, /Klaxon/);
 });
 
+test("attendance by any day, however it's said", () => {
+  const { service } = setup("2026-10-20 10:14");
+  service.addCourse({ name: "Printmaking" });
+  service.addEvent({ course: "Printmaking", date: "2026-09-22", start: "08:30", end: "15:29", repeat: { freq: "weekly", days: [2] } });
+  assert.match(quickAnswer(service, "Mark today's attendence as attended").text, /Printmaking today as attended/);
+  assert.match(quickAnswer(service, "mark attendance for today as present").text, /Printmaking today as attended/);
+  assert.match(quickAnswer(service, "set attendance on 2026-10-13 to absent").text, /Tue 13 Oct as absent/);
+  assert.match(quickAnswer(service, "mark 13 october as attended").text, /Tue 13 Oct as attended/);
+  assert.match(quickAnswer(service, "mark last tuesday as off").text, /Tue 13 Oct as off/);
+  assert.match(quickAnswer(service, "mark monday as attended").text, /no classes yesterday/);
+  assert.match(quickAnswer(service, "mark history today as attended").text, /Today you have Printmaking/);
+  assert.match(quickAnswer(service, "what do I have on 13 october").text, /Tue 13 Oct/);
+});
+
 test("the time and the date, at once", () => {
   const { service } = setup("2026-10-19 22:41");
   for (const q of ["what's the time right now", "whats the time", "what time is it", "time"]) assert.match(quickAnswer(service, q).text, /^It's 10:41 PM, Monday 19 October/, q);
