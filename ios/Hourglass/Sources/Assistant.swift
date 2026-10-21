@@ -226,6 +226,7 @@ struct AssistantView: View {
         .background(H.bg)
         .toolbar(.hidden, for: .navigationBar)
         .quickLookPreview($opener.url)
+        .fullScreenCover(item: $opener.viewing) { set in MediaViewer(set: set, opener: opener).environmentObject(store) }
         .sheet(isPresented: $settingsOpen) { AssistantSettingsSheet(onSaved: { Task { await load() } }).environmentObject(store) }
         // A clock for timer cards and "Working N s".
         .task { while !Task.isCancelled { try? await Task.sleep(nanoseconds: 1_000_000_000); now = Date() } }

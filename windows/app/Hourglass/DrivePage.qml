@@ -799,9 +799,15 @@ Item {
         visible: f !== null
         color: Qt.rgba(0, 0, 0, 0.88)
         z: 10
-        function show(file) { f = file; if (video) { player.source = page.src(file); player.play(); } forceActiveFocus(); }
+        function show(file) { player.stop(); player.source = ""; f = file; if (video) { player.source = page.src(file); player.play(); } forceActiveFocus(); }
         function hide() { player.stop(); player.source = ""; f = null; }
+        // The pictures and videos here, in the order shown: the arrows go through them.
+        readonly property var all: page.items.filter(x => x.table === "files" && (page.isImage(x.row) || page.isVideo(x.row))).map(x => x.row)
+        readonly property int at: f ? all.findIndex(x => x.id === f.id) : -1
+        function step(by) { if (all.length > 1 && at >= 0) show(all[(at + by + all.length) % all.length]); }
         Keys.onEscapePressed: hide()
+        Keys.onLeftPressed: step(-1)
+        Keys.onRightPressed: step(1)
         Keys.onSpacePressed: if (video) player.playbackState === MediaPlayer.PlayingState ? player.pause() : player.play()
         MouseArea { anchors.fill: parent; onClicked: preview.hide() }
 
@@ -841,10 +847,23 @@ Item {
                 color: "white"; font.family: Theme.mono; font.pixelSize: 13
             }
         }
+        // Previous and next (or the Left and Right keys).
+        Repeater {
+            model: preview.all.length > 1 ? [-1, 1] : []
+            Rectangle {
+                required property int modelData
+                anchors.verticalCenter: parent.verticalCenter
+                x: modelData < 0 ? 12 : preview.width - width - 12
+                width: 44; height: 64
+                color: arrowMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.06)
+                Icon { anchors.centerIn: parent; name: parent.modelData < 0 ? "left" : "right"; size: 18; color: "white" }
+                MouseArea { id: arrowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: preview.step(parent.modelData) }
+            }
+        }
         RowLayout {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 24 }
             spacing: 10
-            Text { Layout.fillWidth: true; text: preview.f ? preview.f.name + "   " + page.size(preview.f.size) : ""; color: "white"; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 15 }
+            Text { Layout.fillWidth: true; text: preview.f ? preview.f.name + "   " + page.size(preview.f.size) + (preview.all.length > 1 ? "   ·   " + (preview.at + 1) + " of " + preview.all.length : "") : ""; color: "white"; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 15 }
             Btn { text: "Open in its app"; icon: "folder-open"; onClicked: { const f = preview.f; preview.hide(); page.openFile(f); } }
             Btn { text: "Close"; icon: "close"; onClicked: preview.hide() }
         }

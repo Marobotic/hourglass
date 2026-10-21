@@ -108,19 +108,31 @@ fun openExternally(ctx: Context, file: File, mime: String) {
     runCatching { ctx.startActivity(Intent.createChooser(i, file.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
-// Tap a Drive file: pictures preview here, everything else opens in its own app.
+fun isMedia(f: JSONObject): Boolean {
+    val mime = f.optString("mime")
+    return (mime.startsWith("image/") && !mime.contains("svg")) || mime.startsWith("video/")
+}
+
+// Tap a Drive file: pictures and videos show here, full screen, and swipe to
+// the others in the same list (among); everything else opens in its own app.
 class FileOpener(val repo: Repo, val ctx: Context) {
-    var preview by mutableStateOf<Pair<JSONObject, ImageBitmap>?>(null)
+    var viewing by mutableStateOf<Pair<List<JSONObject>, Int>?>(null)
     var busy by mutableStateOf<String?>(null)
     var error by mutableStateOf<String?>(null)
-    fun open(f: JSONObject) {
+    fun open(f: JSONObject, among: List<JSONObject> = listOf(f)) {
+        if (isMedia(f)) {
+            val list = among.filter(::isMedia).ifEmpty { listOf(f) }
+            viewing = list to list.indexOfFirst { it.id == f.id }.coerceAtLeast(0)
+            return
+        }
+        openOutside(f)
+    }
+    fun openOutside(f: JSONObject) {
         busy = "Opening ${f.optString("name")}…"
         repo.download(f.id) { file, err ->
             busy = null
             if (file == null) { error = err ?: "Could not download it"; return@download }
-            val mime = f.optString("mime")
-            val bmp = if (mime.startsWith("image/")) runCatching { decodeScaled(file, 2048) }.getOrNull() else null
-            if (bmp != null) preview = f to bmp else openExternally(ctx, file, mime)
+            openExternally(ctx, file, f.optString("mime"))
         }
     }
 }
@@ -141,15 +153,7 @@ fun rememberFileOpener(repo: Repo): FileOpener {
 
 @Composable
 fun FileOpenerHost(o: FileOpener) {
-    o.preview?.let { (f, bmp) ->
-        AlertDialog(
-            onDismissRequest = { o.preview = null }, containerColor = HColors.surface, shape = RectangleShape,
-            title = { T(f.optString("name"), 15, bold = true, maxLines = 2) },
-            text = { Image(bmp, f.optString("name"), Modifier.fillMaxWidth().heightIn(max = 520.dp), contentScale = ContentScale.Fit) },
-            confirmButton = { HButton("Close") { o.preview = null } },
-            dismissButton = { HButton("Open in app") { val p = o.preview; o.preview = null; p?.let { (row, _) -> o.repo.driveCopy(row.id)?.let { openExternally(o.ctx, it, row.optString("mime")) } } } },
-        )
-    }
+    o.viewing?.let { (list, start) -> MediaViewer(o, list, start) }
     o.error?.let { e ->
         AlertDialog(onDismissRequest = { o.error = null }, containerColor = HColors.surface, shape = RectangleShape,
             title = { T("Could not open it", 16, bold = true) }, text = { T(e, 13, HColors.muted) },
@@ -348,14 +352,14 @@ fun DriveScreen(nav: Nav, version: Int) {
                 val picture: (@Composable (Modifier) -> Unit)? = if (hasPreview(f)) { m -> DriveThumb(repo, f, mode == "gallery", icon, m) } else null
                 DriveRow(mode, icon, f.optString("name"), fmtBytes(f.optLong("size")) + (f.optLong("updated_at").takeIf { it > 0 }?.let { "  ·  " + Dates.short(java.time.Instant.ofEpochMilli(it).atZone(repo.zone).toLocalDate()) } ?: ""), HColors.muted, picture = picture,
                     shared = shares.containsKey(f.id), dragAs = "file:${f.id}", menu = buildList {
-                    add("Open" to { opener.open(f) })
+                    add("Open" to { opener.open(f, files) })
                     add("Send file…" to { send(f) })
                     add((if (shares.containsKey(f.id)) "Shared · link…" else "Share link…") to { sharing = "files" to f })
                     add("Download…" to { saving = f; saver.launch(f.optString("name").ifBlank { "file" }) })
                     add("Move to…" to { moving = "files" to f })
                     add("Rename" to { naming = "Rename file" to { s: String -> if (s.isNotBlank()) repo.renameDrive("files", f.id, s) } })
                     add("Delete" to { nav.sheets.confirm = Triple("Delete file?", "\"${f.optString("name")}\" will be removed from every device.") { repo.removeFile(f.id) } })
-                }) { opener.open(f) }
+                }) { opener.open(f, files) }
             }
         }
     }

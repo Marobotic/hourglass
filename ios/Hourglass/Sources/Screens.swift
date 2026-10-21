@@ -725,6 +725,7 @@ struct NoteView: View {
             }
         }
         .quickLookPreview($opener.url)
+        .fullScreenCover(item: $opener.viewing) { set in MediaViewer(set: set, opener: opener).environmentObject(store) }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 T(uploading ?? (dirty ? "Edited" : "Saved"), 11, uploading != nil ? H.gold : H.faint)

@@ -622,6 +622,10 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         return bmp
     }
 
+    // A Drive file's bytes on the server, for a video to play while it streams.
+    fun rawUrl(id: String) = "${BuildConfig.SERVER}/api/files/$id/raw"
+    fun authHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
+
     // This phone's copy of a Drive file, under its real name so other apps
     // know what it is; null until downloaded.
     fun driveCopy(id: String): File? {

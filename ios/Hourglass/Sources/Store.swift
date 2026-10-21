@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import UserNotifications
 
 struct DB: Codable {
@@ -273,6 +274,10 @@ final class Store: ObservableObject {
     }
 
     // Fetch a file's bytes once (kept until it changes size).
+    /// A Drive video, playing while it streams from the server.
+    func stream(_ f: DriveFile) -> URL? { URL(string: server)?.appendingPathComponent("api/files/\(f.id)/raw") }
+    var authHeaders: [String: String] { ["Authorization": "Bearer \(token)"] }
+
     func download(_ f: DriveFile) async throws -> URL {
         let dest = driveCopy(f)
         if let size = (try? FileManager.default.attributesOfItem(atPath: dest.path))?[.size] as? Int64, size == f.size { return dest }

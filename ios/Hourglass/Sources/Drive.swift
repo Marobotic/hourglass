@@ -87,14 +87,28 @@ private struct CourseAttendance: View {
 
 // MARK: drive
 
-// Downloads a Drive file and shows it with Quick Look: pictures, video, PDFs
-// and Office files preview here, with Share to open it in its own app.
+// Pictures and videos open full screen and swipe to the others in the same
+// list (among); anything else is downloaded and shown with Quick Look (PDFs,
+// Office files...), with Share to open it in its own app.
+struct MediaSet: Identifiable { let id = UUID(); let files: [DriveFile]; let start: Int }
+
 @MainActor
 final class FileOpener: ObservableObject {
     @Published var url: URL?
     @Published var busy: String?
     @Published var error: String?
-    func open(_ f: DriveFile, _ store: Store) {
+    @Published var viewing: MediaSet?
+    static func isMedia(_ f: DriveFile) -> Bool { (f.mime.hasPrefix("image/") && !f.mime.contains("svg")) || f.mime.hasPrefix("video/") }
+    func open(_ f: DriveFile, _ store: Store, among: [DriveFile] = []) {
+        if FileOpener.isMedia(f) {
+            let list = among.filter(FileOpener.isMedia)
+            let files = list.contains(where: { $0.id == f.id }) ? list : [f]
+            viewing = MediaSet(files: files, start: files.firstIndex { $0.id == f.id } ?? 0)
+            return
+        }
+        quickLook(f, store)
+    }
+    func quickLook(_ f: DriveFile, _ store: Store) {
         busy = "Opening \(f.name)…"
         Task {
             do { url = try await store.download(f) } catch { self.error = error.localizedDescription }
@@ -289,7 +303,7 @@ struct DriveView: View {
         Button("Delete", role: .destructive) { deleting = ("\"\(d.name)\" and everything in it will be removed from every device.", { store.removeFolder(d.id) }) }
     }
     @ViewBuilder private func fileMenu(_ f: DriveFile) -> some View {
-        Button("Open") { opener.open(f, store) }
+        Button("Open") { opener.open(f, store, among: files(store.drive(folderId, course: courseId))) }
         Button("Send file…") { send(f) }
         Button(shares[f.id] != nil ? "Shared · link…" : "Share link…") { sharing = ShareTarget(table: "files", id: f.id, name: f.name) }
         moveMenu("file", f.id, here: f.course_id == nil ? f.folder_id : "course")
@@ -339,7 +353,7 @@ struct DriveView: View {
                 }
                 LazyVGrid(columns: cols, spacing: 8) {
                     ForEach(fs) { f in
-                        Button { opener.open(f, store) } label: {
+                        Button { opener.open(f, store, among: fs) } label: {
                             if gallery {
                                 VStack(spacing: 0) {
                                     Color.clear.aspectRatio(4.0 / 3.0, contentMode: .fit)
@@ -403,7 +417,7 @@ struct DriveView: View {
                         .contextMenu { folderMenu(d) }
                 }
                 ForEach(files(view)) { f in
-                    row(icon(f), f.name, fmtBytes(f.size) + (f.updated_at > 0 ? "  ·  " + Dates.short(Dates.dayOf(f.updated_at)) : ""), H.muted, shared: shares[f.id] != nil, picture: hasPreview(f) ? f : nil) { opener.open(f, store) }
+                    row(icon(f), f.name, fmtBytes(f.size) + (f.updated_at > 0 ? "  ·  " + Dates.short(Dates.dayOf(f.updated_at)) : ""), H.muted, shared: shares[f.id] != nil, picture: hasPreview(f) ? f : nil) { opener.open(f, store, among: files(view)) }
                         .draggable(dragKey("file", f.id))
                         .contextMenu { fileMenu(f) }
                 }
@@ -428,6 +442,7 @@ extension DriveView {
             upload(urls)
         }
         .quickLookPreview($opener.url)
+        .fullScreenCover(item: $opener.viewing) { set in MediaViewer(set: set, opener: opener).environmentObject(store) }
         .fileMover(isPresented: Binding(get: { saving != nil }, set: { if !$0 { saving = nil } }), file: saving) { r in
             switch r {
             case .success(let to): status = "Saved \(to.lastPathComponent)"
