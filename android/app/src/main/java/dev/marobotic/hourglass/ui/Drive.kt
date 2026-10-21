@@ -181,7 +181,8 @@ fun DriveScreen(nav: Nav, version: Int) {
     var shares by remember { mutableStateOf<Map<String, JSONObject>>(emptyMap()) }
     val opener = rememberFileOpener(repo)
     fun loadShares() = repo.shares { list, _ -> if (list != null) shares = list.associateBy { it.optString("file_id").ifBlank { it.optString("folder_id") } } }
-    LaunchedEffect(Unit) { loadShares(); while (true) { repo.driveUsage { usage = it }; delay(5000) } }
+    // The server's disk barely moves: read it every minute (and the links with it).
+    LaunchedEffect(Unit) { while (true) { loadShares(); repo.driveUsage { usage = it }; delay(60000) } }
 
     fun up() { if (courseId != null) courseId = null else folderId = view.path.dropLast(1).lastOrNull()?.id }
     BackHandler(enabled = folderId != null || courseId != null) { up() }

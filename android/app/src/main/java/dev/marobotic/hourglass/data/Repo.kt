@@ -713,7 +713,18 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         }
     }
 
-    private fun http(method: String, url: String, token: String?, body: String?, raw: ByteArray? = null): String {
+    // A read that timed out or lost its connection is tried once more on a fresh
+    // one: a connection that switches between two routes strands the first.
+    private fun http(method: String, url: String, token: String?, body: String?, raw: ByteArray? = null): String =
+        try { http1(method, url, token, body, raw) } catch (e: Unreachable) {
+            if (method != "GET") throw RuntimeException(e.message)
+            Thread.sleep(800)
+            try { http1(method, url, token, body, raw) } catch (e2: Unreachable) { throw RuntimeException(e2.message) }
+        }
+
+    private class Unreachable(message: String) : Exception(message)
+
+    private fun http1(method: String, url: String, token: String?, body: String?, raw: ByteArray?): String {
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = method
         c.connectTimeout = 8000
@@ -725,9 +736,9 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             c.outputStream.use { it.write(raw ?: body!!.toByteArray()) }
         }
         val code = try { c.responseCode } catch (e: java.net.SocketTimeoutException) {
-            throw RuntimeException("The Hourglass server took too long to answer. Try again.")
+            throw Unreachable("The Hourglass server took too long to answer. Try again.")
         } catch (e: java.io.IOException) {
-            throw RuntimeException("Can't reach the Hourglass server. Check your internet connection.")
+            throw Unreachable("Can't reach the Hourglass server. Check your internet connection.")
         }
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
         // The server says 401 only when the account server turned the session

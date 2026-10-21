@@ -265,7 +265,8 @@ struct DriveView: View {
             .scrollContentBackground(.hidden)
         }
         .background(H.bg)
-        .task { loadShares(); while !Task.isCancelled { usage = await store.driveUsage(); try? await Task.sleep(nanoseconds: 5_000_000_000) } }
+        // The server's disk barely moves: read it every minute (and the links with it).
+        .task { while !Task.isCancelled { loadShares(); usage = await store.driveUsage(); try? await Task.sleep(nanoseconds: 60_000_000_000) } }
         .sheet(item: $sending) { item in ActivityView(items: [item.url]) }
         .sheet(item: $sharing, onDismiss: loadShares) { t in
             ShareSheet(target: t, existing: shares[t.id], onSendFile: { if let f = store.file(t.id) { sharing = nil; send(f) } }).environmentObject(store)

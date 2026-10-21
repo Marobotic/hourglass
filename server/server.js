@@ -16,7 +16,8 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rm, statfs } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { dirname, join, resolve } from "node:path";
 import { Store } from "../core/node/store.js";
@@ -263,11 +264,16 @@ const drivePath = (t, id) => {
 };
 
 // Drop the bytes (and preview) of files deleted here or by a device's sync.
+// The Drive folder is a network mount, where a call can stall for seconds: the
+// removes run off the main thread, once per deleted file, so a slow one never
+// holds up other requests.
+const swept = new Set(); // "<dir>/<file id>" already removed
 function sweepDrive(t) {
   for (const f of t.store.all("files", { withDeleted: true })) {
-    if (!f.deleted) continue;
-    rmSync(drivePath(t, f.id), { force: true });
-    rmSync(thumbPath(t, f.id), { force: true });
+    const key = `${t.dir}/${f.id}`;
+    if (!f.deleted || swept.has(key)) continue;
+    swept.add(key);
+    Promise.all([rm(drivePath(t, f.id), { force: true }), rm(thumbPath(t, f.id), { force: true })]).catch(() => swept.delete(key));
   }
 }
 
@@ -328,15 +334,31 @@ async function thumbnail(t, row) {
   return thumbing.get(out);
 }
 
-function diskUsage(t) {
-  const s = statfsSync(driveDir || t.dir);
-  const total = s.blocks * s.bsize;
-  const free = s.bavail * s.bsize;
+// The disks are asked at most every 30 s (the mount asks Google, which can be
+// slow) and never on the main thread; every app with Drive open asks often.
+let disks = null; // { at, total, free, room }
+let disksAsking = null;
+async function readDisks(t) {
+  if (disks && Date.now() - disks.at < 30_000) return disks;
+  disksAsking ??= (async () => {
+    try {
+      const s = await statfs(driveDir || t.dir);
+      // rclone writes an upload to the droplet's disk before sending it to Google,
+      // so the droplet needs room for it too.
+      const local = await statfs(t.dir);
+      const free = s.bavail * s.bsize;
+      disks = { at: Date.now(), total: s.blocks * s.bsize, free, room: Math.min(free, local.bavail * local.bsize) };
+      return disks;
+    } finally {
+      disksAsking = null;
+    }
+  })();
+  return disksAsking;
+}
+
+async function diskUsage(t) {
+  const { total, free, room } = await readDisks(t);
   const mine = t.store.all("files").reduce((n, f) => n + (f.size || 0), 0);
-  // rclone writes an upload to the droplet's disk before sending it to Google,
-  // so the droplet needs room for it too.
-  const local = statfsSync(t.dir);
-  const room = Math.min(free, local.bavail * local.bsize);
   return { total, free, used: total - free, mine, usable: Math.max(0, room - DISK_RESERVE), max_file: MAX_FILE };
 }
 
@@ -350,13 +372,13 @@ async function driveRoutes(t, req, res, url, path) {
   const m = req.method;
   // Any change may delete files (a row, a folder, a sync): drop their bytes after.
   if (m !== "GET") res.on("finish", () => sweepDrive(t));
-  if (path === "/api/drive/usage" && m === "GET") return send(res, 200, diskUsage(t)), true;
+  if (path === "/api/drive/usage" && m === "GET") return send(res, 200, await diskUsage(t)), true;
   if (path === "/api/files/upload" && m === "POST") {
     const name = (url.searchParams.get("name") || "file").replace(/[\\/]/g, "_").trim().slice(0, 200) || "file";
     const declared = Number(req.headers["content-length"] || 0);
     if (declared > MAX_FILE) return send(res, 413, { error: TOO_BIG }), true;
     if (!driveOnline()) return send(res, 503, { error: OFFLINE }), true;
-    if (declared && declared > diskUsage(t).usable) return send(res, 507, { error: "Not enough space left on the server." }), true;
+    if (declared && declared > (await diskUsage(t)).usable) return send(res, 507, { error: "Not enough space left on the server." }), true;
     const folder = url.searchParams.get("folder") || null;
     if (folder && !t.store.get("folders", folder)) return send(res, 400, { error: "no folder with that id" }), true;
     const id = crypto.randomUUID();

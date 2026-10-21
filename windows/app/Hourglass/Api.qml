@@ -39,7 +39,9 @@ QtObject {
                 if (cb) cb(data);
             } else {
                 const msg = data && data.error ? data.error : (xhr.status ? "HTTP " + xhr.status : "Hourglass service is not running");
-                if (method !== "GET" || xhr.status) api.error(msg);
+                // A read that couldn't reach the server is mostly a page refreshing
+                // itself: the sidebar already says "Offline, saved here", so no toast.
+                if (method !== "GET" || (xhr.status && xhr.status < 502)) api.error(msg);
                 if (cb && cb.length > 1) cb(null, msg);
             }
         };

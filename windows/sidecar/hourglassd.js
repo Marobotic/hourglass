@@ -137,7 +137,9 @@ let skewMs = 0;
 const now = () => Date.now() + skewMs;
 function learnClock(r, sentAt) {
   const server = Date.parse(r.headers.get("date") || "");
-  if (!server) return;
+  // A slow answer (a busy or switching connection) says little about the time: its
+  // middle can be seconds from when the header was written, and the guess flip-flops.
+  if (!server || Date.now() - sentAt > 1500) return;
   // The header has whole seconds: compare with the middle of the request, half a second in.
   const skew = server + 500 - (sentAt + Date.now()) / 2;
   const next = Math.abs(skew) < 2000 ? 0 : Math.round(skew / 1000) * 1000;
@@ -177,17 +179,22 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
   if (body !== undefined && !raw) headers["content-type"] = "application/json";
   let r;
   // A dropped connection (the server restarted, a kept-alive socket went stale)
-  // fails at once: try once more before telling anyone.
+  // fails at once: try once more before telling anyone. A read that timed out is
+  // tried once more too, on a fresh connection: a connection that switches between
+  // two routes leaves a request hanging on the one that went away.
   for (let attempt = 0; ; attempt++) {
     try {
       const sentAt = Date.now();
       r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
       learnClock(r, sentAt);
+      if (sync.state === "offline") scheduleSync(0);
       break;
     } catch (e) {
       const slow = e.name === "TimeoutError";
-      if (!slow && attempt === 0) { await new Promise((ok) => setTimeout(ok, 800)); continue; }
+      if (attempt === 0 && (!slow || (method === "GET" && !raw))) { await new Promise((ok) => setTimeout(ok, 800)); continue; }
       log(`server ${method} ${path}: ${e.cause?.code || e.cause?.message || e.message}`);
+      // The sidebar says "Offline, saved here" until the server answers again.
+      Object.assign(sync, { state: "offline", error: e.message });
       throw Object.assign(new Error(slow ? "The Hourglass server took too long to answer. Try again in a moment." : "Can't connect to the Hourglass server right now. Check that this computer is online, then try again."), { status: slow ? 504 : 503 });
     }
   }

@@ -35,21 +35,28 @@ Item {
     function load() {
         const args = course ? { course_id: course } : folder ? { folder_id: folder } : {};
         Api.action("list_drive", args, d => { if (d) page.drive = d; else { page.folder = ""; page.course = ""; } });
-        Api.request("GET", "/api/shares", null, (list) => {
-            const m = {};
-            for (const s of list || []) if (s.active) m[s.file_id || s.folder_id] = s;
-            page.shares = m;
-        }, true);
         Api.get("/api/folders", d => { if (d) page.allFolders = d; });
     }
-    function loadUsage() { Api.get("/api/drive/usage", d => { if (d) page.usage = d; }); }
+    // Links live on the server only: read when the page opens, after a change
+    // here, and with the disk every minute (one made on another device).
+    function loadShares() {
+        Api.request("GET", "/api/shares", null, (list) => {
+            if (!list) return;
+            const m = {};
+            for (const s of list) if (s.active) m[s.file_id || s.folder_id] = s;
+            page.shares = m;
+        }, true);
+    }
+    function loadUsage() { Api.get("/api/drive/usage", d => { if (d) page.usage = d; }); loadShares(); }
     function go(f, c) { page.folder = f || ""; page.course = c || ""; load(); }
     Component.onCompleted: { load(); loadUsage(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
     onVisibleChanged: if (visible) { load(); loadUsage(); }
     Connections { target: Api; function onChanged() { if (page.visible) page.load(); } }
-    // Real time: the disk is read again every few seconds while you look,
-    // and the list too (an edited file's new size, files from other devices).
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: { page.loadUsage(); page.load(); } }
+    // Real time: the list is read again every few seconds while you look (an
+    // edited file's new size, files from other devices); the server's disk, which
+    // barely moves, every minute and after each upload or delete.
+    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 60000; running: page.visible; repeat: true; onTriggered: page.loadUsage() }
 
     function size(n) {
         if (n === undefined || n === null) return "";
@@ -308,7 +315,7 @@ Item {
                 link = s;
                 page.copy(s.url);
                 note = "Link copied. Paste it anywhere.";
-                page.load();
+                page.loadShares();
             }, true);
         }
         function stop() {
@@ -316,7 +323,7 @@ Item {
                 if (err) { note = err; return; }
                 link = null;
                 note = "Sharing stopped: the link no longer opens anything.";
-                page.load();
+                page.loadShares();
             }, true);
         }
         Text { text: "WHO CAN SEE IT"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 2 }
