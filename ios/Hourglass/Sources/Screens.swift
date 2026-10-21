@@ -41,7 +41,7 @@ struct NowView: View {
                         Text("NOTES FOR TODAY").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted)
                         if todays.isEmpty { T("Nothing yet. Notes you take in class show up here.", 13, H.faint) }
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], alignment: .leading, spacing: 8) {
-                            ForEach(todays) { n in noteCard(n, today) }
+                            ForEach(todays) { n in noteCard(n, today).lively("note:\(n.id)", "\(n.updated_at)") }
                         }
                     }
                     if let al = alarm {
@@ -149,17 +149,20 @@ struct TimerCard: View {
     let t: HTimer
     let clock: Int64
     var big = false
+    @State private var playFrame = CGRect.zero
     var body: some View {
         let running = t.state == "running"
         let remain = store.timerLeft(t, clock)
-        Card(stripe: big ? (running ? H.accent : H.faint) : nil) {
+        Card(stripe: big ? (running ? H.accent : H.faint) : nil, live: ("timer:\(t.id)", "\(t.updated_at)")) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     T(Dates.countdown(remain), big ? 34 : 22, running ? H.fg : H.muted, bold: true)
                     T(t.label + (running ? "" : "  ·  paused"), 12, H.muted, lines: 1)
                 }
                 Spacer()
-                Button { running ? store.pause(t) : store.resume(t) } label: { Image(systemName: running ? "pause.fill" : "play.fill").foregroundStyle(H.fg).frame(width: 40, height: 40) }
+                // Starting it again: a little burst.
+                Button { if running { store.pause(t) } else { store.resume(t); Motion.shared.burst(in: playFrame) } } label: { Image(systemName: running ? "pause.fill" : "play.fill").foregroundStyle(H.fg).frame(width: 40, height: 40) }
+                    .burstAnchor($playFrame)
                 Button { store.stop(t) } label: { Image(systemName: "xmark").foregroundStyle(H.muted).frame(width: 40, height: 40) }
             }
             if big {
@@ -342,7 +345,7 @@ struct NotesView: View {
                 .buttonStyle(.plain)
                 HStack(alignment: .top, spacing: 8) {
                     ForEach(0..<2, id: \.self) { k in
-                        VStack(spacing: 8) { ForEach(cols[k]) { n in keepCard(n) } }.frame(maxWidth: .infinity, alignment: .top)
+                        VStack(spacing: 8) { ForEach(cols[k]) { n in keepCard(n).lively("note:\(n.id)", "\(n.updated_at)") } }.frame(maxWidth: .infinity, alignment: .top)
                     }
                 }
                 if list.isEmpty { T(query.isEmpty ? "Notes you take will show up here." : "No notes match.", 14, H.faint).padding(.top, 16) }
@@ -450,7 +453,7 @@ struct TimeView: View {
                         ForEach(alarms, id: \.0.id) { item in
                             let a = item.0
                             let next = item.1
-                            Card {
+                            Card(live: ("alarm:\(a.id)", "\(a.updated_at)")) {
                                 HStack(spacing: 12) {
                                     T(a.time.map(Dates.t) ?? next.map(Dates.clock) ?? "—", 24, bold: true).frame(width: 128, alignment: .leading)
                                     VStack(alignment: .leading, spacing: 2) {
@@ -458,7 +461,7 @@ struct TimeView: View {
                                         T(alarmSub(a) + (next.map { "  ·  next " + Dates.short(Dates.dayOf($0)) + " " + Dates.clock($0) } ?? ""), 11, H.muted, lines: 2)
                                     }
                                     Spacer()
-                                    SquareToggle(on: a.enabled == 1) { store.setEnabled(a, $0) }
+                                    BurstToggle(on: a.enabled == 1) { store.setEnabled(a, $0) }
                                     Button { store.removeAlarm(a) } label: { Image(systemName: "trash").foregroundStyle(H.muted) }
                                 }
                             }

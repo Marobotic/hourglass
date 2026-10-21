@@ -471,7 +471,8 @@ final class Store: ObservableObject {
 
     // MARK: writes
 
-    private func stamp(_ old: Int64) -> Int64 { max(nowMs(), old + 1) }
+    // Every change this phone makes is stamped here: those don't glow.
+    private func stamp(_ old: Int64) -> Int64 { Motion.shared.touchLocal(); return max(nowMs(), old + 1) }
 
     func applyZone() {
         Dates.zone = db.clocks.first { $0.deleted == 0 && $0.home == 1 }.flatMap { TimeZone(identifier: $0.zone) } ?? .current

@@ -44,7 +44,7 @@ struct RemindersView: View {
     }
 
     private func row(_ r: Reminder, _ s: ReminderState, _ clock: Int64) -> some View {
-        Card(stripe: s.overdue ? H.accent : nil) {
+        Card(stripe: s.overdue ? H.accent : nil, live: ("reminder:\(r.id)", "\(r.updated_at)")) {
             HStack(spacing: 12) {
                 Button { store.reminderDone(r.id, !s.done) } label: {
                     Image(systemName: s.done ? "checkmark.circle.fill" : "circle").font(.system(size: 24)).foregroundStyle(s.done ? H.teal : H.muted)

@@ -507,6 +507,10 @@ final class RichNoteController: ObservableObject {
                 // Only a tap on the box itself, not anywhere on the line.
                 if let start = tv.position(from: tv.beginningOfDocument, offset: i), let end = tv.position(from: start, offset: 1),
                    let r = tv.textRange(from: start, to: end), !tv.firstRect(for: r).insetBy(dx: -10, dy: -8).contains(point) { continue }
+                if c == NoteFormat.box, let s0 = tv.position(from: tv.beginningOfDocument, offset: i), let e0 = tv.position(from: s0, offset: 1), let rg = tv.textRange(from: s0, to: e0) {
+                    let g = tv.convert(tv.firstRect(for: rg), to: nil)
+                    Motion.shared.burst(at: CGPoint(x: g.midX, y: g.midY))
+                }
                 replace(NSRange(location: i, length: 1), with: c == NoteFormat.box ? NoteFormat.checkedBox : NoteFormat.box)
                 decorate()
                 onEdited()

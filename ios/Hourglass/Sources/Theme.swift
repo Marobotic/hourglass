@@ -41,6 +41,7 @@ struct T: View {
 
 struct Card<Content: View>: View {
     var stripe: Color? = nil
+    var live: (String, String)? = nil // key and content signature: pops in, glows on outside changes
     @ViewBuilder var content: () -> Content
     var body: some View {
         HStack(spacing: 0) {
@@ -52,6 +53,7 @@ struct Card<Content: View>: View {
         .background(H.surface)
         .clipShape(Rectangle())
         .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .lively(live?.0 ?? "", live?.1 ?? "")
     }
 }
 
@@ -107,16 +109,28 @@ struct SectionLabel: View {
 
 struct PixelLogo: View {
     var cell: CGFloat = 3
+    var alive = false // a grain of sand keeps falling through the neck, and a tap turns the glass over
+    @State private var turns = 0
     static let rows = ["#########", ".#.....#.", ".#ooooo#.", "..#ooo#..", "...#o#...", "...#o#...", "..#.o.#..", ".#.ooo.#.", ".#ooooo#.", "#########"]
     var body: some View {
-        Canvas { ctx, _ in
-            for (r, row) in PixelLogo.rows.enumerated() {
-                for (k, ch) in row.enumerated() where ch != "." {
-                    ctx.fill(Path(CGRect(x: CGFloat(k) * cell, y: CGFloat(r) * cell, width: cell + 0.5, height: cell + 0.5)), with: .color(ch == "o" ? H.gold : H.accent))
+        TimelineView(.animation(paused: !alive)) { tl in
+            Canvas { ctx, _ in
+                for (r, row) in PixelLogo.rows.enumerated() {
+                    for (k, ch) in row.enumerated() where ch != "." {
+                        ctx.fill(Path(CGRect(x: CGFloat(k) * cell, y: CGFloat(r) * cell, width: cell + 0.5, height: cell + 0.5)), with: .color(ch == "o" ? H.gold : H.accent))
+                    }
+                }
+                // The falling grain: from the neck to the pile, then again.
+                if alive {
+                    let f = tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.4) / 1.4
+                    ctx.fill(Path(CGRect(x: 4 * cell, y: CGFloat(Int(4.5 + f * 3)) * cell, width: cell + 0.5, height: cell + 0.5)), with: .color(H.gold))
                 }
             }
         }
         .frame(width: cell * 9, height: cell * 10)
+        .rotationEffect(.degrees(Double(turns) * 180))
+        .animation(.spring(response: 0.6, dampingFraction: 0.55), value: turns)
+        .onTapGesture { if alive { turns += 1 } }
     }
 }
 

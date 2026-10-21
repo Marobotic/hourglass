@@ -74,7 +74,7 @@ struct RootView: View {
             // sixth into "More").
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    PixelLogo(cell: 2.6)
+                    PixelLogo(cell: 2.6, alive: true)
                     T("Hourglass", 18, bold: true)
                     Spacer()
                     Button { path.append(.assistant) } label: {
@@ -132,6 +132,10 @@ struct RootView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // The tab you go to rises in.
+                .id(tab)
+                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity))
+                .animation(.easeOut(duration: 0.3), value: tab)
                 HStack(spacing: 0) {
                     ForEach(Array(RootView.tabs.enumerated()), id: \.offset) { i, t in
                         let on = tab == i
@@ -164,6 +168,7 @@ struct RootView: View {
         }
         // Above the tab bar (or the bottom of a page): the upload panel.
         .overlay(alignment: .bottom) { UploadPanel().padding(.bottom, path.isEmpty ? 58 : 4) }
+        .overlay { BurstLayer() }
         .environmentObject(sheets)
         .sheet(item: $sheets.event) { d in EventSheet(draft: d).environmentObject(store) }
         .sheet(item: $sheets.course) { d in CourseSheet(draft: d, path: $path).environmentObject(store) }

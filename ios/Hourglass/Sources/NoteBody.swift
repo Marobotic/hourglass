@@ -159,15 +159,17 @@ private struct TaskRow: View {
     let done: Bool
     let text: String
     let toggle: (() -> Void)?
+    @State private var frame = CGRect.zero
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Button { toggle?() } label: {
+            Button { if !done && toggle != nil { Motion.shared.burst(in: frame) }; toggle?() } label: {
                 ZStack {
                     Rectangle().fill(done ? H.accent : .clear)
                         .overlay(Rectangle().stroke(done ? H.accent : H.muted, lineWidth: 1))
                     if done { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(H.bg) }
                 }
                 .frame(width: 20, height: 20)
+                .burstAnchor($frame)
                 .padding(.top, 1)
                 .contentShape(Rectangle().inset(by: -8)) // a bigger target than the box
             }
