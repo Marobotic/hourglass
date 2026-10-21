@@ -232,13 +232,8 @@ fun DriveScreen(nav: Nav, version: Int) {
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        var left = uris.size
-        status = if (left > 1) "Uploading $left files…" else "Uploading…"
-        for (u in uris) repo.upload(u, folderId, courseId) { _, err ->
-            left--
-            if (err != null) status = "Upload failed: $err"
-            else if (left == 0) status = null
-        }
+        // The upload panel shows each file going up.
+        for (u in uris) repo.upload(u, folderId, courseId) { _, _ -> }
     }
     fun send(f: JSONObject) {
         status = "Getting ${f.optString("name")} ready…"

@@ -261,6 +261,8 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                 }
             }
         }
+        // Above the tab bar (or the bottom of a note): the upload panel.
+        UploadPanel(repo, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (top == null) 64.dp else 0.dp))
         SheetHost(nav, version)
     }
 }

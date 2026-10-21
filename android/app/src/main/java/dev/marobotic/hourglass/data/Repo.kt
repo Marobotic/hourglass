@@ -51,6 +51,10 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _sync = MutableStateFlow(SyncState())
     val sync: StateFlow<SyncState> = _sync
+    // Uploads going up and just done, for the upload panel (like Google Drive's).
+    private val _uploads = MutableStateFlow<List<Upload>>(emptyList())
+    val uploads: StateFlow<List<Upload>> = _uploads
+    private val cancelled = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private var pending: Job? = null
     private var syncEnabled = true
     // The Jukebox session once signed in; before that the build's
@@ -507,9 +511,17 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         return f.id
     }
 
+    private fun setUpload(id: String, change: (Upload) -> Upload) {
+        _uploads.value = _uploads.value.map { if (it.id == id) change(it) else it }
+    }
+    fun cancelUpload(id: String) { cancelled.add(id) }
+    // Close the panel: the finished ones go.
+    fun clearUploads() { _uploads.value = _uploads.value.filter { it.state == "sending" } }
+
     // Stream a file from the phone to the Drive. noteId: attached to that note
     // (its course's folder, or "Note attachments"). Returns the new row.
     fun upload(uri: android.net.Uri, folderId: String?, courseId: String?, noteId: String? = null, done: (JSONObject?, String?) -> Unit) = scope.launch {
+        val upId = java.util.UUID.randomUUID().toString()
         val r = runCatching {
             val t = token ?: error("Sign in first")
             val cr = ctx.contentResolver
@@ -530,6 +542,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             val q = StringBuilder("name=").append(java.net.URLEncoder.encode(name, "UTF-8")).append("&mime=").append(java.net.URLEncoder.encode(mime, "UTF-8"))
             if (courseId != null) q.append("&course=").append(courseId) else if (folder != null) q.append("&folder=").append(folder)
             if (noteId != null) q.append("&note=").append(noteId)
+            _uploads.value = listOf(Upload(upId, name, size)) + _uploads.value.filter { it.state == "sending" || System.currentTimeMillis() - it.at < 600_000 }
             val c = URL("${BuildConfig.SERVER}/api/files/upload?$q").openConnection() as HttpURLConnection
             c.requestMethod = "POST"
             c.doOutput = true
@@ -538,15 +551,47 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             c.setRequestProperty("Authorization", "Bearer $t")
             c.setRequestProperty("Content-Type", mime)
             if (size > 0) c.setFixedLengthStreamingMode(size) else c.setChunkedStreamingMode(64 * 1024)
-            (cr.openInputStream(uri) ?: error("Could not read that file")).use { i -> c.outputStream.use { i.copyTo(it, 64 * 1024) } }
+            // Copied by hand to count what has gone, and how fast (over the last three seconds).
+            (cr.openInputStream(uri) ?: error("Could not read that file")).use { i ->
+                c.outputStream.use { o ->
+                    val buf = ByteArray(64 * 1024)
+                    val started = System.currentTimeMillis()
+                    val samples = ArrayDeque<Pair<Long, Long>>().apply { add(started to 0L) }
+                    var sent = 0L
+                    var shown = 0L
+                    while (true) {
+                        if (upId in cancelled) { c.disconnect(); throw java.util.concurrent.CancellationException("Cancelled") }
+                        val n = i.read(buf)
+                        if (n < 0) break
+                        o.write(buf, 0, n)
+                        sent += n
+                        val now = System.currentTimeMillis()
+                        samples.addLast(now to sent)
+                        while (samples.size > 2 && now - samples.first().first > 3000) samples.removeFirst()
+                        if (now - shown > 250) {
+                            shown = now
+                            val (t0, s0) = samples.first()
+                            val speed = if (now > t0 && now - started > 1000) (sent - s0) * 1000 / (now - t0) else 0L
+                            setUpload(upId) { it.copy(sent = sent, speed = speed) }
+                        }
+                    }
+                    setUpload(upId) { it.copy(sent = sent, speed = 0) }
+                }
+            }
             val code = c.responseCode
             val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
             if (code !in 200..299) error(runCatching { JSONObject(text).optString("error") }.getOrNull()?.ifBlank { null } ?: "HTTP $code")
             val row = JSONObject(text)
+            setUpload(upId) { it.copy(state = "done", sent = it.size.coerceAtLeast(it.sent), at = System.currentTimeMillis()) }
             syncOnce()
             row
         }
-        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+        val gone = cancelled.remove(upId)
+        r.exceptionOrNull()?.let { e ->
+            setUpload(upId) { it.copy(state = if (gone) "cancelled" else "failed", error = if (gone) "Cancelled" else e.message, speed = 0, at = System.currentTimeMillis()) }
+        }
+        // A cancelled upload is no problem to report: the panel says it.
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), if (gone) null else r.exceptionOrNull()?.message) }
     }
 
     // This phone's copy of a Drive file, under its real name so other apps

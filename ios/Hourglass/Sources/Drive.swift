@@ -324,17 +324,15 @@ struct DriveView: View {
         }
     }
 
+    // The upload panel shows each file going up.
     private func upload(_ urls: [URL]) {
-        status = urls.count > 1 ? "Uploading \(urls.count) files…" : "Uploading…"
         let folder = folderId, course = courseId
         Task {
-            var failed: String?
             for u in urls {
                 let scoped = u.startAccessingSecurityScopedResource()
                 defer { if scoped { u.stopAccessingSecurityScopedResource() } }
-                do { _ = try await store.upload(u, folder: folder, course: course) } catch { failed = error.localizedDescription }
+                _ = try? await store.upload(u, folder: folder, course: course)
             }
-            status = failed.map { "Upload failed: \($0)" }
         }
     }
 

@@ -56,6 +56,9 @@ final class Store: ObservableObject {
     @Published var signedIn = Keychain.get("session") != nil
     // Why the sign-in screen is showing when the app signed itself out.
     @Published var sessionEnded: String?
+    // Uploads going up and just done, for the upload panel (like Google Drive's).
+    @Published var uploads: [UploadItem] = []
+    private var uploadTasks: [String: Task<(Data, URLResponse), Error>] = [:]
     var account: String? { UserDefaults.standard.string(forKey: "account") }
     private var cursor: Int64 { get { Int64(UserDefaults.standard.integer(forKey: "cursor")) } set { UserDefaults.standard.set(Int(newValue), forKey: "cursor") } }
 
@@ -327,14 +330,39 @@ final class Store: ObservableObject {
         req.httpMethod = "POST"
         req.timeoutInterval = 900
         req.setValue(mime, forHTTPHeaderField: "Content-Type")
-        let (d, r) = try await URLSession.shared.upload(for: req, fromFile: url)
-        try check((d, r))
+        // Shown in the upload panel while it goes: bytes sent, speed, cancel.
+        let id = UUID().uuidString
+        uploads.removeAll { $0.state != "sending" && Date().timeIntervalSince($0.at) > 600 }
+        uploads.insert(UploadItem(id: id, name: fileName, size: size), at: 0)
+        let progress = UploadProgress { [weak self] sent, speed in Task { @MainActor in self?.setUpload(id) { $0.sent = sent; $0.speed = speed } } }
+        let task = Task { try await URLSession.shared.upload(for: req, fromFile: url, delegate: progress) }
+        uploadTasks[id] = task
+        defer { uploadTasks[id] = nil }
+        let d: Data, r: URLResponse
+        do {
+            (d, r) = try await task.value
+            try check((d, r))
+        } catch {
+            let gone = task.isCancelled
+            setUpload(id) { $0.state = gone ? "cancelled" : "failed"; $0.error = gone ? "Cancelled" : error.localizedDescription; $0.speed = 0; $0.at = Date() }
+            if gone { throw CancellationError() }
+            throw error
+        }
+        setUpload(id) { $0.state = "done"; $0.sent = max($0.sent, $0.size); $0.speed = 0; $0.at = Date() }
         let row = try JSONDecoder().decode(DriveFile.self, from: d)
         var clean = row; clean.dirty = 0
         if let i = db.files.firstIndex(where: { $0.id == row.id }) { db.files[i] = clean } else { db.files.append(clean) }
         await syncSoon()
         return clean
     }
+
+    private func setUpload(_ id: String, _ change: (inout UploadItem) -> Void) {
+        guard let i = uploads.firstIndex(where: { $0.id == id }) else { return }
+        change(&uploads[i])
+    }
+    func cancelUpload(_ id: String) { uploadTasks[id]?.cancel() }
+    /// Close the panel: the finished ones go.
+    func clearUploads() { uploads.removeAll { $0.state != "sending" } }
 
     // Older text of a note, newest first.
     func versions(_ noteId: String) -> [NoteVersion] {

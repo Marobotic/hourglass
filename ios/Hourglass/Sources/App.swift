@@ -162,6 +162,8 @@ struct RootView: View {
             }
             .background(H.bg)
         }
+        // Above the tab bar (or the bottom of a page): the upload panel.
+        .overlay(alignment: .bottom) { UploadPanel().padding(.bottom, path.isEmpty ? 58 : 4) }
         .environmentObject(sheets)
         .sheet(item: $sheets.event) { d in EventSheet(draft: d).environmentObject(store) }
         .sheet(item: $sheets.course) { d in CourseSheet(draft: d, path: $path).environmentObject(store) }
