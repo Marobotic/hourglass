@@ -40,3 +40,4 @@ ResultCard 1.0 ResultCard.qml
 AssistantSettings 1.0 AssistantSettings.qml
 StepList 1.0 StepList.qml
 UploadPanel 1.0 UploadPanel.qml
+VersionsDialog 1.0 VersionsDialog.qml

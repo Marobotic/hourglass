@@ -244,6 +244,7 @@ Item {
             { key: "download", label: "Download…" },
             { key: "reveal", label: "Show in folder" },
             { key: "share", label: page.shares[f.id] ? "Shared · link…" : "Share…" },
+            { key: "versions", label: "Versions…" },
             { separator: true },
             { key: "move", label: "Move to…", sub: page.folderChoices(it) },
             { key: "course", label: "Set course", sub: courses.concat([{ separator: true }, { key: "course:", label: "No course", disabled: !f.course_id }]) },
@@ -263,10 +264,13 @@ Item {
             else if (key.startsWith("course:")) page.moveTo(f, key.slice(7) || null);
             else if (key.startsWith("into:")) page.moveInto(it, key.slice(5));
             else if (key === "share") shareDlg.ask(it);
+            else if (key === "versions") versionsDlg.ask(f);
             else if (key === "rename") nameDlg.ask(it);
             else if (key === "delete") page.remove(it);
         }
     }
+
+    VersionsDialog { id: versionsDlg; page: page }
 
     // QML has no clipboard API: copy through a hidden text field.
     TextEdit { id: clip; visible: false }

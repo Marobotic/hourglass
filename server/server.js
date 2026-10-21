@@ -26,6 +26,7 @@ import { createHandler, openApi, VERSION } from "./app.js";
 import { makeClip } from "./sounds.js";
 import { createAssistant } from "./assistant.js";
 import { createShares } from "./share.js";
+import { createVersions, isText, lineDiff, whoOf } from "./versions.js";
 
 const dataDir = resolve(process.env.HOURGLASS_DATA || join(import.meta.dirname, "data"));
 const driveDir = process.env.HOURGLASS_DRIVE_DIR ? resolve(process.env.HOURGLASS_DRIVE_DIR) : null;
@@ -263,7 +264,9 @@ const drivePath = (t, id) => {
   return join(t.dir, "drive", id);
 };
 
-// Drop the bytes (and preview) of files deleted here or by a device's sync.
+const versions = createVersions({ drivePath });
+
+// Drop the bytes (and preview, and old versions) of files deleted here or by a device's sync.
 // The Drive folder is a network mount, where a call can stall for seconds: the
 // removes run off the main thread, once per deleted file, so a slow one never
 // holds up other requests.
@@ -273,7 +276,7 @@ function sweepDrive(t) {
     const key = `${t.dir}/${f.id}`;
     if (!f.deleted || swept.has(key)) continue;
     swept.add(key);
-    Promise.all([rm(drivePath(t, f.id), { force: true }), rm(thumbPath(t, f.id), { force: true }), rm(thumbPath(t, f.id, true), { force: true })]).catch(() => swept.delete(key));
+    Promise.all([rm(drivePath(t, f.id), { force: true }), rm(thumbPath(t, f.id), { force: true }), rm(thumbPath(t, f.id, true), { force: true }), versions.remove(t, f.id)]).catch(() => swept.delete(key));
   }
 }
 
@@ -361,7 +364,9 @@ async function readDisks(t) {
 
 async function diskUsage(t) {
   const { total, free, room } = await readDisks(t);
-  const mine = t.store.all("files").reduce((n, f) => n + (f.size || 0), 0);
+  const files = t.store.all("files");
+  // Old versions take room too.
+  const mine = files.reduce((n, f) => n + (f.size || 0), 0) + versions.bytes(t, files.map((f) => f.id));
   return { total, free, used: total - free, mine, usable: Math.max(0, room - DISK_RESERVE), max_file: MAX_FILE };
 }
 
@@ -408,6 +413,7 @@ async function driveRoutes(t, req, res, url, path) {
     renameSync(tmp, drivePath(t, id));
     const course = url.searchParams.get("course") || null;
     const row = t.store.upsert("files", { id, name, folder_id: course ? null : folder, course_id: course, size, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
+    versions.started(t, id, whoOf(t, req), size);
     return send(res, 201, row), true;
   }
   // New contents for an existing file (it was edited on a device).
@@ -430,8 +436,54 @@ async function driveRoutes(t, req, res, url, path) {
       rmSync(tmp, { force: true });
       throw Object.assign(e, { status: e.status || 400 });
     }
-    renameSync(tmp, drivePath(t, row.id));
+    // The contents it had stay as a version.
+    versions.replace(t, row, tmp, whoOf(t, req), { size });
     return send(res, 200, t.store.upsert("files", { id: row.id, size })), true;
+  }
+  // Versions: the list (with who changed it and when), one's bytes, what
+  // changed (text files), and putting one back.
+  const ver = /^\/api\/files\/([0-9a-f-]{36})\/versions(?:\/([0-9a-f-]{36})(?:\/(raw|diff|restore))?)?$/.exec(path);
+  if (ver) {
+    const row = t.store.get("files", ver[1]);
+    if (!row || row.deleted) return send(res, 404, { error: "not found" }), true;
+    const [, , vid, what] = ver;
+    if (!vid && m === "GET") return send(res, 200, versions.list(t, row)), true;
+    const v = vid ? versions.get(t, row.id, vid) : null;
+    if (!v || !existsSync(versions.path(t, row.id, vid))) return send(res, 404, { error: "That version is no longer kept." }), true;
+    if (!driveOnline()) return send(res, 503, { error: OFFLINE }), true;
+    if (what === "raw" && m === "GET") {
+      const f = versions.path(t, row.id, vid);
+      const stamp = new Date(v.at).toISOString().slice(0, 16).replace("T", " ").replace(":", ".");
+      const name = row.name.replace(/(\.[^.]*)?$/, (ext) => ` (${stamp})${ext}`);
+      res.writeHead(200, {
+        "content-type": row.mime || "application/octet-stream",
+        "content-length": statSync(f).size,
+        "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(name)}`,
+        "cache-control": "private, max-age=31536000, immutable",
+      });
+      createReadStream(f).pipe(res);
+      return true;
+    }
+    if (what === "diff" && m === "GET") {
+      // Against the current file, or another version (?with=<id>).
+      const other = url.searchParams.get("with");
+      const ov = other ? versions.get(t, row.id, other) : null;
+      if (other && !ov) return send(res, 404, { error: "That version is no longer kept." }), true;
+      const newer = other ? versions.path(t, row.id, other) : drivePath(t, row.id);
+      const sizes = { before: v.size, after: other ? ov.size : row.size };
+      if (!isText(row)) return send(res, 200, { kind: "binary", ...sizes }), true;
+      if (sizes.before > 2 * 1048576 || sizes.after > 2 * 1048576) return send(res, 200, { kind: "binary", tooBig: true, ...sizes }), true;
+      const [a, b] = await Promise.all([versions.readText(versions.path(t, row.id, vid)), versions.readText(newer)]);
+      return send(res, 200, { kind: "text", ...sizes, ...lineDiff(a, b) }), true;
+    }
+    if (what === "restore" && m === "POST") {
+      // What it has now becomes a version too: a restore loses nothing.
+      const tmp = await versions.copyOut(t, row.id, vid);
+      const size = statSync(tmp).size;
+      versions.replace(t, row, tmp, whoOf(t, req), { size, restored_from: vid });
+      return send(res, 200, t.store.upsert("files", { id: row.id, size })), true;
+    }
+    return send(res, 405, { error: "method not allowed" }), true;
   }
   const th = /^\/api\/files\/([0-9a-f-]{36})\/thumb$/.exec(path);
   if (th && m === "GET") {

@@ -162,6 +162,9 @@ mkdirSync(CUSTOM_DIR, { recursive: true });
 
 // --- account ---------------------------------------------------------------------
 
+// This computer's name, sent with changes so the Drive's version log can say where they came from.
+const deviceName = () => encodeURIComponent(hostname());
+
 // The server's terse errors, in words for the window's toast and sign-in page.
 function remoteError(status, out, signedIn) {
   if (status === 401 && out.error === "unauthorized") return signedIn ? "Your sign-in has expired. Sign in again." : "The server turned that down. Try again in a moment.";
@@ -175,7 +178,7 @@ function remoteError(status, out, signedIn) {
 async function remote(path, { method = "GET", body, bearer = config().token, raw } = {}) {
   // Signed out: only sign-in itself goes to the server.
   if (!bearer && !path.startsWith("/auth/")) throw Object.assign(new Error("Sign in to Hourglass first."), { status: 401 });
-  const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
+  const headers = bearer ? { authorization: `Bearer ${bearer}`, "x-hourglass-device": deviceName() } : {};
   if (body !== undefined && !raw) headers["content-type"] = "application/json";
   let r;
   // A dropped connection (the server restarted, a kept-alive socket went stale)
@@ -737,7 +740,7 @@ async function watchDrive() {
         try {
           const r = await fetch(`${server}/api/files/${id}/raw`, {
             method: "PUT",
-            headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(st.size) },
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(st.size), "x-hourglass-device": deviceName() },
             body: createReadStream(have.path),
             duplex: "half",
             signal: AbortSignal.timeout(3600000),
@@ -810,6 +813,21 @@ async function serveThumb(req, res, url) {
 async function serveFile(req, res, url) {
   const m = /^\/files\/([0-9a-f-]{36})$/.exec(url.pathname);
   if (!m || url.searchParams.get("k") !== FILE_KEY) return json(res, 403, { error: "forbidden" });
+  // An old version (&version=<id>): straight from the server, not kept here.
+  const vid = url.searchParams.get("version");
+  if (vid) {
+    if (!/^[0-9a-f-]{36}$/.test(vid)) return json(res, 400, { error: "bad version" });
+    const { server, token } = config();
+    if (!server) return json(res, 401, { error: "signed out" });
+    try {
+      const r = await fetch(`${server}/api/files/${m[1]}/versions/${vid}/raw`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(600000) });
+      if (!r.ok) return json(res, r.status, { error: "That version is no longer kept." });
+      res.writeHead(200, { "content-type": r.headers.get("content-type") || "application/octet-stream", "cache-control": "private, max-age=3600" });
+      return await pipeline(Readable.fromWeb(r.body), res);
+    } catch (e) {
+      return json(res, 502, { error: e.message });
+    }
+  }
   try {
     const { row, path } = await localFile(m[1]);
     const size = statSync(path).size;
@@ -903,7 +921,7 @@ async function driveRoutes(req, res, url, path) {
     try {
       r = await fetch(`${server}/api/files/upload?${q}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(size) },
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(size), "x-hourglass-device": deviceName() },
         body: src.pipe(counting(up)),
         duplex: "half",
         signal: AbortSignal.any([AbortSignal.timeout(3600000), up.ctrl.signal]),
@@ -942,6 +960,33 @@ async function driveRoutes(req, res, url, path) {
     if (WIN) spawn("explorer.exe", ["/select,", f], { detached: true, stdio: "ignore" }).unref();
     else spawn("xdg-open", [dirname(f)], { detached: true, stdio: "ignore" }).unref();
     return json(res, 200, { path: f }), true;
+  }
+  // Versions of a Drive file (kept on the server): the list, what changed, putting one back.
+  const ver = /^\/api\/files\/([0-9a-f-]{36})\/versions(?:\/([0-9a-f-]{36})\/(diff|restore|save))?$/.exec(path);
+  if (ver) {
+    const [, id, vid, what] = ver;
+    const q = url.searchParams.get("with") ? `?with=${encodeURIComponent(url.searchParams.get("with"))}` : "";
+    if (!vid && m === "GET") return json(res, 200, await remote(`/api/files/${id}/versions`)), true;
+    if (what === "diff" && m === "GET") return json(res, 200, await remote(`/api/files/${id}/versions/${vid}/diff${q}`)), true;
+    if (what === "restore" && m === "POST") {
+      const row = await remote(`/api/files/${id}/versions/${vid}/restore`, { method: "POST", body: {} });
+      // The new contents reach this computer's copy by itself (watchDrive sees the newer row).
+      store.write("files", row, { mode: "remote" });
+      return json(res, 200, row), true;
+    }
+    if (what === "save" && m === "POST") {
+      // "Download…" of an old version: a copy where the user chose.
+      const b = await readBody(req);
+      const to = decodeURIComponent(String(b.path || "").replace(/^file:\/\/\/?/, WIN ? "" : "/"));
+      if (!to || !existsSync(dirname(to))) return json(res, 400, { error: "Choose a folder that exists." }), true;
+      const { server, token } = config();
+      if (!server) return json(res, 401, { error: "Sign in to download files." }), true;
+      const r = await fetch(`${server}/api/files/${id}/versions/${vid}/raw`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3600000) });
+      if (!r.ok) return json(res, 502, { error: `Could not download it (${r.status}).` }), true;
+      await pipeline(Readable.fromWeb(r.body), createWriteStream(to + ".part"));
+      renameSync(to + ".part", to);
+      return json(res, 200, { path: to }), true;
+    }
   }
   // "Download…": a copy saved where the user chose ({ path }), straight from
   // the server (or this computer's open copy, when it is current). Not kept
