@@ -125,6 +125,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         // the old build skipped would stay missing.
         if (store.meta("schema") != SCHEMA) { store.setMeta("cursor", 0); store.setMeta("schema", SCHEMA) }
         store.onLocalChange = {
+            dev.marobotic.hourglass.ui.Motion.touchLocal()
             Scheduler.reschedule(ctx, this)
             pending?.cancel()
             pending = scope.launch { delay(1500); syncOnce() }

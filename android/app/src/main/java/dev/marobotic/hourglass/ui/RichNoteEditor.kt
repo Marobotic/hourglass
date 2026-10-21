@@ -1,5 +1,6 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -165,11 +166,13 @@ fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFo
                 val r = layout.getBoundingBox(at)
                 val side = with(density) { 16.dp.toPx() }
                 val pad = with(density) { 8.dp.toPx() }
+                var where by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
                 Box(
                     Modifier
                         .offset { IntOffset((r.left - pad).roundToInt(), (r.top + (r.height - side) / 2 - pad).roundToInt()) }
                         .size(with(density) { (side + pad * 2).toDp() })
-                        .clickable { rt.toggleBox(at); onEdited() },
+                        .onGloballyPositioned { where = it }
+                        .clickable { if (!done) Motion.burstAt(where); rt.toggleBox(at); onEdited() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(

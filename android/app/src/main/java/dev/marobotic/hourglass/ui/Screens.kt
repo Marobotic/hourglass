@@ -1,5 +1,6 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.animation.core.RepeatMode
@@ -77,7 +78,7 @@ fun kindLabel(k: String) = k.replaceFirstChar { it.uppercase() }
 
 @Composable
 fun NoteRow(n: JSONObject, course: JSONObject? = null, onClick: () -> Unit) {
-    HCard(Modifier.fillMaxWidth(), onClick = onClick) {
+    HCard(Modifier.fillMaxWidth(), onClick = onClick, live = "note:${n.optString("id")}" to n.optLong("updated_at").toString()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(if (n.optInt("pinned") == 1) Icons.Outlined.PushPin else Icons.Outlined.StickyNote2, null,
                 tint = if (n.optInt("pinned") == 1) HColors.gold else HColors.muted, modifier = Modifier.size(15.dp))
@@ -279,13 +280,15 @@ fun TimelineRow(o: Occ, clock: Long, onClick: () -> Unit) {
 fun TimerCard(nav: Nav, t: JSONObject, clock: Long, big: Boolean = false) {
     val running = t.optString("state") == "running"
     val remain = nav.repo.timerLeft(t, clock)
-    HCard(Modifier.fillMaxWidth(), stripe = if (big) (if (running) HColors.accent else HColors.faint) else null) {
+    var where by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    HCard(Modifier.fillMaxWidth(), stripe = if (big) (if (running) HColors.accent else HColors.faint) else null, live = "timer:${t.optString("id")}" to t.optLong("updated_at").toString()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 T(Dates.countdown(remain), if (big) 34 else 22, if (running) HColors.fg else HColors.muted, bold = true)
                 T(t.optString("label") + if (!running) "  ·  paused" else "", 12, HColors.muted, maxLines = 1)
             }
-            IconButton({ if (running) nav.repo.pauseTimer(t) else nav.repo.resumeTimer(t) }) {
+            // Starting it again: a little burst.
+            IconButton({ if (running) nav.repo.pauseTimer(t) else { nav.repo.resumeTimer(t); Motion.burstAt(where) } }, Modifier.onGloballyPositioned { where = it }) {
                 Icon(if (running) Icons.Outlined.Pause else Icons.Outlined.PlayArrow, null, tint = HColors.fg)
             }
             IconButton({ nav.repo.stopTimer(t.id) }) { Icon(Icons.Outlined.Close, null, tint = HColors.muted) }
@@ -339,10 +342,12 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
             if (alarms.isEmpty()) item { T("No alarms yet. Tap + to add one, at a time or before a course.", 13, HColors.muted) }
             items(alarms, key = { it.first.id }) { (a, next) ->
                 val on = a.optInt("enabled") == 1
-                HCard(Modifier.fillMaxWidth().alpha(if (on) 1f else 0.55f)) {
+                HCard(Modifier.fillMaxWidth().alpha(if (on) 1f else 0.55f), live = "alarm:${a.id}" to a.optLong("updated_at").toString()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         T(a.str("time")?.let { Dates.t(it) } ?: next?.let { Dates.clock(it, repo.zone) } ?: "—", 26, bold = true, modifier = Modifier.weight(1f))
-                        Toggle(on) { repo.setAlarmEnabled(a.id, it) }
+                        var where by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+                        // Switching one on: a little burst.
+                        Box(Modifier.onGloballyPositioned { where = it }) { Toggle(on) { repo.setAlarmEnabled(a.id, it); if (it) Motion.burstAt(where) } }
                         IconButton({ repo.removeAlarm(a.id) }) { Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted) }
                     }
                     T(a.optString("label"), 14, maxLines = 2)

@@ -1,5 +1,6 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.animation.togetherWith
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import dev.marobotic.hourglass.data.Updates
@@ -181,7 +182,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
             null -> Column(Modifier.fillMaxSize()) {
                 // Header
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 6.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    PixelLogo(3.dp)
+                    PixelLogo(3.dp, alive = true)
                     Spacer(Modifier.width(12.dp))
                     T("Hourglass", 18, bold = true)
                     Grow()
@@ -217,8 +218,16 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                         }, 13)
                     }
                 }
-                Box(Modifier.weight(1f)) {
-                    when (nav.tab) {
+                // The tab you go to rises in.
+                androidx.compose.animation.AnimatedContent(
+                    nav.tab, Modifier.weight(1f), label = "tab",
+                    transitionSpec = {
+                        (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)) + androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(340)) { it / 40 }) togetherWith
+                            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(90))
+                    },
+                ) { tab ->
+                Box(Modifier.fillMaxSize()) {
+                    when (tab) {
                         0 -> NowScreen(nav, version, clock)
                         1 -> Column(Modifier.fillMaxSize()) {
                             SubTabs(listOf("Week", "Attendance"), nav.scheduleSub) { nav.scheduleSub = it }
@@ -241,6 +250,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                         }
                     }
                 }
+                }
                 // Square tab bar (Material's has a pill indicator).
                 Row(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
                     // Five: more did not fit a phone. Related pages share a tab
@@ -261,6 +271,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                 }
             }
         }
+        BurstLayer()
         // Above the tab bar (or the bottom of a note): the upload panel.
         UploadPanel(repo, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (top == null) 64.dp else 0.dp))
         SheetHost(nav, version)

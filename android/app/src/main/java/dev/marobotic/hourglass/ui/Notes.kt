@@ -99,6 +99,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
             val tint = c?.let { hex(it.optString("color")) }
             Column(
                 Modifier.fillMaxWidth()
+                    .lively("note:${n.optString("id")}", n.optLong("updated_at").toString())
                     .background(if (tint != null) androidx.compose.ui.graphics.lerp(HColors.bg, tint, 0.14f) else HColors.surface)
                     .border(1.dp, tint?.copy(alpha = 0.45f) ?: HColors.border)
                     .clickable { nav.openNote(n) }.padding(12.dp),

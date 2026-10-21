@@ -1,5 +1,8 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.BorderStroke
@@ -112,10 +115,10 @@ fun T(text: String, size: Int = 14, color: Color = HColors.fg, bold: Boolean = f
         maxLines = maxLines, letterSpacing = spacing.sp, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, textAlign = align)
 
 @Composable
-fun HCard(modifier: Modifier = Modifier, stripe: Color? = null, onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+fun HCard(modifier: Modifier = Modifier, stripe: Color? = null, onClick: (() -> Unit)? = null, live: Pair<String, String>? = null, content: @Composable ColumnScope.() -> Unit) {
     val shape = RectangleShape
     Row(
-        modifier.clip(shape).background(HColors.surface).border(1.dp, HColors.border, shape)
+        modifier.let { if (live != null) it.lively(live.first, live.second) else it }.clip(shape).background(HColors.surface).border(1.dp, HColors.border, shape)
             .let { if (onClick != null) it.clickable(onClick = onClick) else it }
             .height(IntrinsicSize.Min),
     ) {
@@ -165,13 +168,21 @@ fun RowScope.Grow() = Spacer(Modifier.weight(1f))
 private val LOGO = listOf("#########", ".#.....#.", ".#ooooo#.", "..#ooo#..", "...#o#...", "...#o#...", "..#.o.#..", ".#.ooo.#.", ".#ooooo#.", "#########")
 
 @Composable
-fun PixelLogo(cell: Dp = 3.dp, modifier: Modifier = Modifier) {
-    Canvas(modifier.size(cell * 9, cell * 10)) {
+fun PixelLogo(cell: Dp = 3.dp, modifier: Modifier = Modifier, alive: Boolean = false) {
+    // alive: a grain of sand keeps falling through the neck, and a tap turns the glass over.
+    var turns by remember { mutableIntStateOf(0) }
+    val turn by androidx.compose.animation.core.animateFloatAsState(turns * 180f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 300f), label = "logo")
+    val fall = if (alive) androidx.compose.animation.core.rememberInfiniteTransition(label = "sand").animateFloat(
+        0f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.LinearEasing)), label = "grain",
+    ) else null
+    Canvas(modifier.size(cell * 9, cell * 10).graphicsLayer { rotationZ = turn }.let { if (alive) it.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { turns++ } else it }) {
         val c = size.width / 9
         for ((r, row) in LOGO.withIndex()) for ((k, ch) in row.withIndex()) {
             if (ch == '.') continue
             drawRect(if (ch == 'o') HColors.gold else HColors.accent, Offset(k * c, r * c), Size(c + 0.5f, c + 0.5f))
         }
+        // The falling grain: from the neck to the pile, then again.
+        fall?.let { f -> drawRect(HColors.gold, Offset(4 * c, (4.5f + f.value * 3f).toInt() * c), Size(c + 0.5f, c + 0.5f)) }
     }
 }
 

@@ -77,7 +77,7 @@ fun RemindersScreen(nav: Nav, version: Int, clock: Long) {
 @Composable
 private fun ReminderRow(nav: Nav, r: JSONObject, s: ReminderState, clock: Long) {
     val repo = nav.repo
-    HCard(Modifier.fillMaxWidth().alpha(if (s.done) 0.55f else 1f), stripe = if (s.overdue) HColors.accent else null, onClick = { nav.sheets.reminder = Pair(false, r) }) {
+    HCard(Modifier.fillMaxWidth().alpha(if (s.done) 0.55f else 1f), stripe = if (s.overdue) HColors.accent else null, onClick = { nav.sheets.reminder = Pair(false, r) }, live = "reminder:${r.optString("id")}" to r.optLong("updated_at").toString()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton({ repo.reminderDone(r.id, !s.done) }) {
                 Icon(if (s.done) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked, if (s.done) "Not done" else "Done", tint = if (s.done) HColors.teal else HColors.muted, modifier = Modifier.size(26.dp))

@@ -1,5 +1,6 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -103,12 +104,14 @@ fun NoteView(body: String, opener: FileOpener, modifier: Modifier = Modifier, on
 // One to-do: a square box (filled and ticked when done), then the item.
 @Composable
 private fun TaskRow(indent: Int, done: Boolean, text: String, onToggle: (() -> Unit)?) {
+    var where by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
     Row(Modifier.padding(start = (indent * 6).dp), verticalAlignment = Alignment.Top) {
         Box(
             Modifier.padding(top = 2.dp).size(20.dp)
+                .onGloballyPositioned { where = it }
                 .background(if (done) HColors.accent else androidx.compose.ui.graphics.Color.Transparent)
                 .border(1.dp, if (done) HColors.accent else HColors.muted)
-                .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier),
+                .then(if (onToggle != null) Modifier.clickable { if (!done) Motion.burstAt(where); onToggle() } else Modifier),
             contentAlignment = Alignment.Center,
         ) { if (done) Icon(Icons.Outlined.Check, "Done", tint = HColors.bg, modifier = Modifier.size(15.dp)) }
         Spacer(Modifier.width(10.dp))
