@@ -710,6 +710,11 @@ ApplicationWindow {
         }
     }
 
+    UploadPanel {
+        anchors { right: parent.right; bottom: parent.bottom; margins: 20 }
+        z: 150
+    }
+
     // Toast
     Rectangle {
         id: toast

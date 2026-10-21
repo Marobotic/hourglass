@@ -88,20 +88,19 @@ Item {
         }, true);
     }
 
-    // into: a folder id to upload there instead of here.
+    // into: a folder id to upload there instead of here. The upload panel
+    // (bottom right) shows each file going up; a file lands here once it's there.
     function upload(urls, into) {
         if (!urls.length) return;
         let left = urls.length;
         page.problem = "";
-        page.busy = "Uploading " + left + (left === 1 ? " file…" : " files…");
         const folder = into !== undefined ? into : page.folder || null;
         const course = into !== undefined ? null : page.course || null;
         for (const u of urls) {
             Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, course: course }, (f, err) => {
-                if (err) page.problem = err;
                 left--;
-                page.busy = left ? "Uploading " + left + (left === 1 ? " file…" : " files…") : "";
-                if (!left) { page.load(); page.loadUsage(); }
+                page.load();
+                if (!left) page.loadUsage();
             }, true);
         }
     }

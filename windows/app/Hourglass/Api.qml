@@ -9,6 +9,7 @@ QtObject {
     property string base: "http://127.0.0.1:8931"
     property string token: ""
     property int revision: 0 // bumped after every successful mutation
+    property int uploading: 0 // uploads asked for and not answered yet (the upload panel)
 
     signal error(string message)
     signal changed()
@@ -30,8 +31,11 @@ QtObject {
 
     function request(method, path, body, cb, readOnly) {
         const xhr = new XMLHttpRequest();
+        const upload = path === "/api/files/upload";
+        if (upload) api.uploading++;
         xhr.onreadystatechange = function () {
             if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            if (upload) api.uploading--;
             let data = null;
             try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (e) {}
             if (xhr.status >= 200 && xhr.status < 300) {
@@ -41,7 +45,8 @@ QtObject {
                 const msg = data && data.error ? data.error : (xhr.status ? "HTTP " + xhr.status : "Hourglass service is not running");
                 // A read that couldn't reach the server is mostly a page refreshing
                 // itself: the sidebar already says "Offline, saved here", so no toast.
-                if (method !== "GET" || (xhr.status && xhr.status < 502)) api.error(msg);
+                // A cancelled upload (499) shows as cancelled in the upload panel.
+                if ((method !== "GET" && xhr.status !== 499) || (method === "GET" && xhr.status && xhr.status < 502)) api.error(msg);
                 if (cb && cb.length > 1) cb(null, msg);
             }
         };

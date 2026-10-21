@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -819,8 +819,53 @@ async function serveFile(req, res, url) {
   }
 }
 
+// Uploads going out and just done, for the window's upload panel (like Google
+// Drive's): name, size, bytes sent, speed. Finished ones stay until cleared or
+// for ten minutes.
+const uploads = new Map(); // id -> { id, name, size, sent, speed, state, error, at, ctrl, samples }
+const uploadView = (u) => ({ id: u.id, name: u.name, size: u.size, sent: u.sent, speed: u.speed, state: u.state, error: u.error || null });
+function startUpload(name, size) {
+  for (const [k, u] of uploads) if (u.state !== "sending" && Date.now() - u.at > 600000) uploads.delete(k);
+  const u = { id: randomBytes(6).toString("hex"), name, size, sent: 0, speed: 0, state: "sending", error: null, at: Date.now(), ctrl: new AbortController(), samples: [[Date.now(), 0]] };
+  uploads.set(u.id, u);
+  return u;
+}
+// Counts the bytes as they leave; the speed is over the last three seconds
+// (none in the first one, while buffers fill at memory speed).
+function counting(u) {
+  return new Transform({
+    transform(c, _, done) {
+      if (u.state !== "sending") return done();
+      u.sent += c.length;
+      const t = Date.now();
+      u.samples.push([t, u.sent]);
+      while (u.samples.length > 2 && t - u.samples[0][0] > 3000) u.samples.shift();
+      const [t0, s0] = u.samples[0];
+      if (t > t0 && t - u.at > 1000) u.speed = Math.round(((u.sent - s0) * 1000) / (t - t0));
+      done(null, c);
+    },
+  });
+}
+function endUpload(u, error) {
+  u.state = error ? (u.ctrl.signal.aborted ? "cancelled" : "failed") : "done";
+  u.error = error || null;
+  u.speed = 0;
+  u.at = Date.now();
+}
+
 async function driveRoutes(req, res, url, path) {
   const m = req.method;
+  if (path === "/api/uploads" && m === "GET") return json(res, 200, [...uploads.values()].map(uploadView)), true;
+  // Clear the finished ones from the panel.
+  if (path === "/api/uploads" && m === "DELETE") {
+    for (const [k, u] of uploads) if (u.state !== "sending") uploads.delete(k);
+    return json(res, 200, { ok: true }), true;
+  }
+  const cancel = /^\/api\/uploads\/([0-9a-f]{12})\/cancel$/.exec(path);
+  if (cancel && m === "POST") {
+    uploads.get(cancel[1])?.ctrl.abort();
+    return json(res, 200, { ok: true }), true;
+  }
   if (path === "/api/drive/info" && m === "GET") return json(res, 200, { file_base: `http://127.0.0.1:${PORT}/files/`, thumb_base: `http://127.0.0.1:${PORT}/thumbs/`, key: FILE_KEY }), true;
   if (path === "/api/drive/usage" && m === "GET") return json(res, 200, await remote("/api/drive/usage")), true;
   // Upload a file from this computer: { path, folder, course, note }. Streams to the server.
@@ -842,15 +887,30 @@ async function driveRoutes(req, res, url, path) {
     if (b.folder) q.set("folder", b.folder);
     if (b.course) q.set("course", b.course);
     if (b.note) q.set("note", b.note);
-    const r = await fetch(`${server}/api/files/upload?${q}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(statSync(file).size) },
-      body: createReadStream(file),
-      duplex: "half",
-      signal: AbortSignal.timeout(3600000),
-    });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) return json(res, r.status, { error: out.error || `upload failed (${r.status})` }), true;
+    const size = statSync(file).size;
+    const up = startUpload(name, size);
+    let r, out;
+    const src = createReadStream(file);
+    try {
+      r = await fetch(`${server}/api/files/upload?${q}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(size) },
+        body: src.pipe(counting(up)),
+        duplex: "half",
+        signal: AbortSignal.any([AbortSignal.timeout(3600000), up.ctrl.signal]),
+      });
+      out = await r.json().catch(() => ({}));
+    } catch (e) {
+      src.destroy();
+      const why = up.ctrl.signal.aborted ? "Cancelled" : "The upload stopped: the connection to the server dropped.";
+      endUpload(up, why);
+      return json(res, up.ctrl.signal.aborted ? 499 : 503, { error: up.ctrl.signal.aborted ? `${name}: upload cancelled` : why }), true;
+    }
+    if (!r.ok) {
+      endUpload(up, out.error || `upload failed (${r.status})`);
+      return json(res, r.status, { error: out.error || `upload failed (${r.status})` }), true;
+    }
+    endUpload(up);
     // This computer keeps a copy, so it opens at once and edits sync back.
     const f = copyPath(out);
     mkdirSync(dirname(f), { recursive: true });
