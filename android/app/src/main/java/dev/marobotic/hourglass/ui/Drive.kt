@@ -222,23 +222,41 @@ fun DriveScreen(nav: Nav, version: Int) {
         bump++
         return true
     }
+    // Files dragged in from another app (Photos, Files, a browser in split
+    // screen...): uploaded into a folder (null = the top) or a course.
+    val activity = remember(ctx) { generateSequence(ctx) { (it as? android.content.ContextWrapper)?.baseContext }.filterIsInstance<android.app.Activity>().firstOrNull() }
+    val dropPermissions = remember { mutableListOf<android.view.DragAndDropPermissions>() } // read access, kept while uploads read
+    fun dropFiles(e: android.view.DragEvent, folder: String?, course: String?): Boolean {
+        val clip = e.clipData ?: return false
+        val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+        if (uris.isEmpty()) return false
+        activity?.requestDragAndDropPermissions(e)?.let { dropPermissions.add(it) }
+        for (u in uris) repo.upload(u, folder, course) { _, _ -> }
+        return true
+    }
+    // A drop target: our own drags ("file:<id>" / "folder:<id>") go to onDrop;
+    // files from another app are uploaded into intoFolder / intoCourse.
     @Composable
-    fun dropTarget(onDrop: (String) -> Boolean): Pair<Modifier, Boolean> {
+    fun dropTarget(intoFolder: String? = null, intoCourse: String? = null, filesOnly: Boolean = false, onDrop: (String) -> Boolean): Pair<Modifier, Boolean> {
         var over by remember { mutableStateOf(false) }
-        val target = remember {
+        val target = remember(intoFolder, intoCourse) {
             object : DragAndDropTarget {
                 override fun onEntered(event: DragAndDropEvent) { over = true }
                 override fun onExited(event: DragAndDropEvent) { over = false }
                 override fun onEnded(event: DragAndDropEvent) { over = false }
                 override fun onDrop(event: DragAndDropEvent): Boolean {
                     over = false
-                    val clip = event.toAndroidDragEvent().clipData ?: return false
-                    if (clip.description?.label != DRAG_LABEL || clip.itemCount == 0) return false
-                    return onDrop(clip.getItemAt(0).text?.toString() ?: return false)
+                    val e = event.toAndroidDragEvent()
+                    val clip = e.clipData ?: return false
+                    if (clip.description?.label == DRAG_LABEL) return clip.itemCount > 0 && onDrop(clip.getItemAt(0).text?.toString() ?: return false)
+                    return dropFiles(e, intoFolder, intoCourse)
                 }
             }
         }
-        return Modifier.dragAndDropTarget(shouldStartDragAndDrop = { e -> e.mimeTypes().contains(ClipDescription.MIMETYPE_TEXT_PLAIN) }, target = target) to over
+        return Modifier.dragAndDropTarget(
+            shouldStartDragAndDrop = { e -> e.mimeTypes().isNotEmpty() && !(filesOnly && e.toAndroidDragEvent().clipDescription?.label == DRAG_LABEL) },
+            target = target,
+        ) to over
     }
 
     // "Download…": the system's save picker (Downloads, Drive, any folder), then the copy.
@@ -264,11 +282,14 @@ fun DriveScreen(nav: Nav, version: Int) {
         }
     }
 
+    // Anywhere on the page: files from another app upload into the folder shown.
+    val (pageDrop, pageOver) = dropTarget(folderId, courseId, filesOnly = true) { false }
+    Box(Modifier.fillMaxSize().then(pageDrop)) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (folderId != null || courseId != null) {
                 // Drop on the back arrow: one folder up.
-                val (mod, over) = dropTarget { drop(it, view.path.dropLast(1).lastOrNull()?.id) }
+                val (mod, over) = dropTarget(view.path.dropLast(1).lastOrNull()?.id) { drop(it, view.path.dropLast(1).lastOrNull()?.id) }
                 IconButton({ up() }, mod.background(if (over) HColors.accent.copy(alpha = 0.3f) else Color.Transparent)) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Up", tint = HColors.fg) }
             } else Spacer(Modifier.width(12.dp))
             T(view.course?.optString("name") ?: view.folder?.optString("name") ?: "Drive", 22, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
@@ -331,11 +352,11 @@ fun DriveScreen(nav: Nav, version: Int) {
         ) {
             if (empty) item(span = { GridItemSpan(maxLineSpan) }) { T(if (courseId != null) "Nothing in this course's folder yet. Upload files here, or attach them to its notes." else "Empty. Upload files or make a folder.", 13, HColors.faint, modifier = Modifier.padding(8.dp)) }
             items(view.courses, key = { "c" + it.first.id }, span = { GridItemSpan(maxLineSpan) }) { (c, n) ->
-                val (mod, over) = dropTarget { what -> what.startsWith("file:") && drop(what, null, c.id) }
+                val (mod, over) = dropTarget(intoCourse = c.id) { what -> what.startsWith("file:") && drop(what, null, c.id) }
                 DriveRow("details", Icons.Outlined.School, c.optString("name"), "$n file" + if (n == 1) "" else "s", hex(c.optString("color")), modifier = mod, highlight = over) { courseId = c.id }
             }
             items(folders, key = { "d" + it.first.id }) { (d, n) ->
-                val (mod, over) = dropTarget { drop(it, d.id) }
+                val (mod, over) = dropTarget(d.id) { drop(it, d.id) }
                 DriveRow(mode, Icons.Outlined.Folder, d.optString("name"), "$n item" + if (n == 1) "" else "s", HColors.gold, modifier = mod, highlight = over,
                     shared = shares.containsKey(d.id), dragAs = "folder:${d.id}", menu = listOf(
                         (if (shares.containsKey(d.id)) "Shared · link…" else "Share link…") to { sharing = "folders" to d },
@@ -362,6 +383,10 @@ fun DriveScreen(nav: Nav, version: Int) {
                 }) { opener.open(f, files) }
             }
         }
+    }
+    if (pageOver) Box(Modifier.fillMaxSize().background(HColors.accent.copy(alpha = 0.12f)).border(2.dp, HColors.accent), contentAlignment = Alignment.Center) {
+        T("Drop to upload here", 18, bold = true)
+    }
     }
     naming?.let { (title, ok) -> NameDialog(title, { naming = null }) { ok(it); naming = null } }
     moving?.let { (table, row) ->

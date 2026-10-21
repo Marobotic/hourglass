@@ -148,6 +148,7 @@ struct DriveView: View {
     @State private var sending: SendItem?
     @State private var sharing: ShareTarget?
     @State private var shares: [String: [String: Any]] = [:]
+    @State private var dropping = false // files from another app over the page
     // How the files look, kept on this phone: icons (a grid), details (a list),
     // gallery (big pictures). Sorting is the same in every view.
     @AppStorage("drive_view") private var mode = "details"
@@ -162,6 +163,30 @@ struct DriveView: View {
             for s in list { if let k = (s["file_id"] as? String) ?? (s["folder_id"] as? String) { m[k] = s } }
             shares = m
         }
+    }
+
+    // Files dragged in from another app (Photos, Files, Safari...): uploaded
+    // into the folder or course shown. Our own drags (text) are not files.
+    private func dropFiles(_ providers: [NSItemProvider]) -> Bool {
+        let files = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) || !$0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }
+        guard !files.isEmpty else { return false }
+        let folder = folderId, course = courseId, store = store
+        for p in files {
+            let type = p.registeredTypeIdentifiers.first { UTType($0)?.conforms(to: .data) == true } ?? UTType.data.identifier
+            let suggested = p.suggestedName
+            _ = p.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+                guard let url else { return }
+                // The system deletes it when this returns: a copy is what goes up.
+                let ext = url.pathExtension
+                var name = suggested ?? url.lastPathComponent
+                if !ext.isEmpty && !name.lowercased().hasSuffix("." + ext.lowercased()) { name += "." + ext }
+                let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent(name)
+                try? FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+                guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { return }
+                Task { @MainActor in _ = try? await store.upload(copy, folder: folder, course: course) }
+            }
+        }
+        return true
     }
 
     // A dragged "file:<id>" / "folder:<id>" into a folder (nil = the top) or a course.
@@ -265,7 +290,18 @@ struct DriveView: View {
             .padding(.horizontal, 12)
             if mode == "details" { detailsList(view) } else { grid(view) }
         }
-        .background(H.bg))
+        .background(H.bg)
+        .onDrop(of: [.item], delegate: FilesFromOutside(over: $dropping, drop: dropFiles))
+        .overlay {
+            if dropping {
+                ZStack {
+                    H.accent.opacity(0.12)
+                    T("Drop to upload here", 18, bold: true)
+                }
+                .overlay(Rectangle().stroke(H.accent, lineWidth: 2))
+                .allowsHitTesting(false)
+            }
+        })
     }
 
     private func sorted<T>(_ rows: [T], _ name: (T) -> String, date: (T) -> Int64, size: (T) -> Int64, type: (T) -> String) -> [T] {
@@ -624,5 +660,20 @@ struct DriveThumb: View {
             }
         }
         .task(id: "\(file.id).\(file.updated_at).\(big)") { if show { image = await store.thumb(file, big: big) } }
+    }
+}
+
+// A drop on the Drive page: files from another app (not our own drags, which
+// carry text) light the page up and are uploaded.
+private struct FilesFromOutside: DropDelegate {
+    @Binding var over: Bool
+    let drop: ([NSItemProvider]) -> Bool
+    private func outside(_ info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL]) || !info.hasItemsConforming(to: [.plainText]) }
+    func validateDrop(info: DropInfo) -> Bool { outside(info) }
+    func dropEntered(info: DropInfo) { over = outside(info) }
+    func dropExited(info: DropInfo) { over = false }
+    func performDrop(info: DropInfo) -> Bool {
+        over = false
+        return drop(info.itemProviders(for: [.item]))
     }
 }
