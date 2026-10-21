@@ -5,13 +5,16 @@ import UIKit
 // reads (no Markdown on screen). Every character carries its style (the
 // .hgStyle attribute, which typing carries over by itself); the font,
 // underline and so on are drawn from it. List lines keep their marker as text
-// ("• ", "☐ ", "1. "); a tap on ☐ ticks it. Pictures are attachments in
+// ("• ", "☐ ", "1. "); a to-do's ☐/☑ is hidden under a themed box (a tap ticks
+// it; a done item is dimmed and struck through, drawn only, so the note's own
+// strike stays its own). Pictures are attachments in
 // place. load() puts a note's Markdown in, markdown() reads it back out
 // (NoteText.swift is the format).
 
 extension NSAttributedString.Key {
     static let hgStyle = NSAttributedString.Key("hgStyle") // RunStyle of the character
     static let hgFile = NSAttributedString.Key("hgFile")   // a picture's Drive file id
+    static let hgLook = NSAttributedString.Key("hgLook")   // drawn as a to-do: "box" (hidden ☐/☑) or "done"
 }
 
 // One character's style, as an attribute value (compared by value, so runs merge).
@@ -183,6 +186,7 @@ final class RichNoteController: ObservableObject {
         tv.attributedText = RichConvert.attributed(NoteFormat.renumber(NoteFormat.parse(md)), width: width, image: imageFor)
         tv.typingAttributes = RichConvert.attributes(NoteRun(text: ""))
         readHere()
+        decorate()
     }
     func attach(_ tv: UITextView) {
         textView = tv
@@ -206,6 +210,97 @@ final class RichNoteController: ObservableObject {
                 s.edited(.editedAttributes, range: r, changeInLength: 0)
             }
         }
+    }
+
+    // --- to-do boxes ----------------------------------------------------------------
+
+    private var boxLayers: [CALayer] = []
+
+    /// To-dos drawn as to-dos: each ☐/☑ hidden (with room after it) under a themed
+    /// box, a done item's text dimmed and struck through. Run after every change.
+    func decorate() {
+        guard let tv = textView, tv.markedTextRange == nil else { return }
+        let s = tv.textStorage
+        let ns = s.string as NSString
+        var looks: [(NSRange, String)] = []
+        var boxes: [(Int, Bool)] = []
+        var start = 0
+        while start <= ns.length {
+            let nl = ns.range(of: "\n", range: NSRange(location: start, length: ns.length - start)).location
+            let end = nl == NSNotFound ? ns.length : nl
+            let k = NoteFormat.kindOf(ns.substring(with: NSRange(location: start, length: end - start)))
+            if k.kind == "todo" {
+                let g = start + k.indent * 2
+                looks.append((NSRange(location: g, length: 1), "box"))
+                boxes.append((g, k.checked))
+                if k.checked && end > g + 1 { looks.append((NSRange(location: g + 1, length: end - g - 1), "done")) }
+            }
+            if nl == NSNotFound { break }
+            start = end + 1
+        }
+        let sel = tv.selectedRange
+        let typing = tv.typingAttributes
+        s.beginEditing()
+        // What was drawn as a to-do before goes back to its own style first.
+        var old: [NSRange] = []
+        s.enumerateAttribute(.hgLook, in: NSRange(location: 0, length: s.length)) { v, r, _ in if v != nil { old.append(r) } }
+        for r in old {
+            s.enumerateAttribute(.hgStyle, in: r) { v, rr, _ in s.setAttributes(RichConvert.attributes((v as? RunStyle)?.run ?? NoteRun(text: "")), range: rr) }
+        }
+        for (r, look) in looks {
+            if look == "box" { s.addAttributes([.foregroundColor: UIColor.clear, .kern: 6, .hgLook: look], range: r) }
+            else { s.addAttributes([.foregroundColor: UIColor(H.muted), .strikethroughStyle: NSUnderlineStyle.single.rawValue, .hgLook: look], range: r) }
+        }
+        s.endEditing()
+        tv.selectedRange = sel
+        tv.typingAttributes = typing
+        placeBoxes(boxes)
+    }
+
+    private func placeBoxes(_ boxes: [(Int, Bool)]) {
+        guard let tv = textView else { return }
+        while boxLayers.count > boxes.count { boxLayers.removeLast().removeFromSuperlayer() }
+        while boxLayers.count < boxes.count {
+            let l = CALayer()
+            l.borderColor = UIColor(H.muted).cgColor
+            let tick = CAShapeLayer()
+            tick.strokeColor = UIColor.white.cgColor
+            tick.fillColor = UIColor.clear.cgColor
+            tick.lineWidth = 2
+            tick.lineCap = .round
+            tick.lineJoin = .round
+            let path = UIBezierPath()
+            path.move(to: CGPoint(x: 4, y: 8.5)); path.addLine(to: CGPoint(x: 7, y: 11.5)); path.addLine(to: CGPoint(x: 12.5, y: 5))
+            tick.path = path.cgPath
+            l.addSublayer(tick)
+            tv.layer.addSublayer(l)
+            boxLayers.append(l)
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for ((at, done), l) in zip(boxes, boxLayers) {
+            guard let a = tv.position(from: tv.beginningOfDocument, offset: at), let b = tv.position(from: a, offset: 1), let r = tv.textRange(from: a, to: b) else { l.isHidden = true; continue }
+            let rect = tv.firstRect(for: r)
+            l.isHidden = rect.isNull || rect.isInfinite
+            l.frame = CGRect(x: rect.minX, y: rect.midY - 8, width: 16, height: 16)
+            l.backgroundColor = done ? UIColor(H.accent).cgColor : UIColor(H.bg).cgColor
+            l.borderWidth = done ? 0 : 1
+            l.sublayers?.first?.isHidden = !done
+        }
+        CATransaction.commit()
+    }
+
+    /// The cursor never sits between a to-do's hidden box and its space: what was typed there would not show.
+    func keepOutOfBox() {
+        guard let tv = textView, tv.selectedRange.length == 0 else { return }
+        let ns = tv.attributedText.string as NSString
+        let c = tv.selectedRange.location
+        guard c > 0, c < ns.length, ns.substring(with: NSRange(location: c, length: 1)) == " " else { return }
+        let before = ns.substring(with: NSRange(location: c - 1, length: 1))
+        guard before == NoteFormat.box || before == NoteFormat.checkedBox else { return }
+        let lr = ns.lineRange(for: NSRange(location: c, length: 0))
+        let k = NoteFormat.kindOf(ns.substring(with: lr))
+        if k.kind == "todo" && lr.location + k.indent * 2 == c - 1 { tv.selectedRange = NSRange(location: c + 1, length: 0) }
     }
 
     func readHere() {
@@ -335,6 +430,7 @@ final class RichNoteController: ObservableObject {
         for (r, t) in edits.reversed() { replace(r, with: t) }
         tv.textStorage.endEditing()
         if let last = linesTouched().last { tv.selectedRange = NSRange(location: last.location + last.length, length: 0) }
+        decorate()
         onEdited()
     }
 
@@ -371,6 +467,7 @@ final class RichNoteController: ObservableObject {
         tv.selectedRange = NSRange(location: range.location + text.length, length: 0)
         tv.typingAttributes = RichConvert.attributes(keep)
         if next.first?.isNumber == true { renumber() }
+        decorate()
         onEdited()
         return true
     }
@@ -396,7 +493,7 @@ final class RichNoteController: ObservableObject {
         tv.selectedRange = NSRange(location: max(0, sel.location + shift), length: 0)
     }
 
-    /// A tap: ☐ ticks, a picture or a Drive file opens. True when it did something.
+    /// A tap: a to-do's box ticks, a picture or a Drive file opens. True when it did something.
     func tapped(at index: Int, point: CGPoint) -> Bool {
         guard let tv = textView else { return false }
         let ns = tv.attributedText.string as NSString
@@ -411,6 +508,7 @@ final class RichNoteController: ObservableObject {
                 if let start = tv.position(from: tv.beginningOfDocument, offset: i), let end = tv.position(from: start, offset: 1),
                    let r = tv.textRange(from: start, to: end), !tv.firstRect(for: r).insetBy(dx: -10, dy: -8).contains(point) { continue }
                 replace(NSRange(location: i, length: 1), with: c == NoteFormat.box ? NoteFormat.checkedBox : NoteFormat.box)
+                decorate()
                 onEdited()
                 return true
             }
@@ -466,7 +564,8 @@ struct RichNoteEditor: UIViewRepresentable {
         return tv
     }
 
-    func updateUIView(_ tv: UITextView, context: Context) {}
+    // A new width wraps the text again: the to-do boxes follow.
+    func updateUIView(_ tv: UITextView, context: Context) { Task { @MainActor in controller.decorate() } }
 
     @MainActor
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
@@ -477,8 +576,8 @@ struct RichNoteEditor: UIViewRepresentable {
             if text == "\n" { return !c.enter(at: range) }
             return true
         }
-        func textViewDidChange(_ tv: UITextView) { c.onEdited() }
-        func textViewDidChangeSelection(_ tv: UITextView) { c.readHere() }
+        func textViewDidChange(_ tv: UITextView) { c.decorate(); c.onEdited() }
+        func textViewDidChangeSelection(_ tv: UITextView) { c.keepOutOfBox(); c.readHere() }
 
         @objc func tap(_ g: UITapGestureRecognizer) {
             guard let tv = g.view as? UITextView else { return }

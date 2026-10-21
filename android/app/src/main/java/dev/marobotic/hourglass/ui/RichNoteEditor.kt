@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Icon
@@ -30,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -108,6 +110,20 @@ private class RichVisual(private val styles: List<Run>) : VisualTransformation {
             if (!st.sameStyle(RichText.PLAIN)) b.addStyle(spanOf(st), start, end)
             start = end
         }
+        // A to-do's ☐/☑ is hidden under the themed box RichTextField draws, with
+        // room after it; a done item's text is dimmed and struck through (only
+        // drawn so: the note's own strike stays its own).
+        var ls = 0
+        while (ls <= n) {
+            val le = text.text.indexOf('\n', ls).let { if (it < 0) n else it }
+            val k = NoteFormat.kindOf(text.text.substring(ls, le))
+            if (k.kind == "todo") {
+                val g = ls + k.indent * 2
+                b.addStyle(SpanStyle(color = Color.Transparent, letterSpacing = 6.sp), g, g + 1)
+                if (k.checked && g + 1 < le) b.addStyle(SpanStyle(color = HColors.muted, textDecoration = TextDecoration.LineThrough), g + 1, le)
+            }
+            ls = le + 1
+        }
         return TransformedText(b.toAnnotatedString(), OffsetMapping.Identity)
     }
 
@@ -124,7 +140,7 @@ private class RichVisual(private val styles: List<Run>) : VisualTransformation {
     override fun hashCode() = System.identityHashCode(styles)
 }
 
-/** One stretch of text: typed like any text field, drawn with its styles; a tap on ☐ ticks it. */
+/** One stretch of text: typed like any text field, drawn with its styles; a tap on a to-do's box ticks it. */
 @Composable
 fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFocused: () -> Unit, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
@@ -139,19 +155,30 @@ fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFo
             onTextLayout = { rt.layout = it },
             decorationBox = { inner -> if (rt.text.isEmpty() && placeholder != null) androidx.compose.material3.Text(placeholder, color = HColors.faint, fontSize = 15.sp); inner() },
         )
-        // Tap targets over the to-do boxes.
+        // The to-dos' boxes, over their hidden ☐/☑ (the themed box: an outline,
+        // filled with the accent and a check once done), each its own tap target.
         val layout = rt.layout
         if (layout != null && layout.layoutInput.text.text == rt.text) {
             for (at in rt.boxes()) {
                 if (at >= rt.text.length) continue
+                val done = rt.text[at].toString() == NoteFormat.CHECKED
                 val r = layout.getBoundingBox(at)
-                val pad = with(density) { 6.dp.toPx() }
+                val side = with(density) { 16.dp.toPx() }
+                val pad = with(density) { 8.dp.toPx() }
                 Box(
                     Modifier
-                        .offset { IntOffset((r.left - pad).roundToInt(), (r.top - pad / 2).roundToInt()) }
-                        .size(with(density) { (r.width + pad * 2).toDp() }, with(density) { (r.height + pad).toDp() })
-                        .clickable { rt.toggleBox(at); onEdited() }
-                )
+                        .offset { IntOffset((r.left - pad).roundToInt(), (r.top + (r.height - side) / 2 - pad).roundToInt()) }
+                        .size(with(density) { (side + pad * 2).toDp() })
+                        .clickable { rt.toggleBox(at); onEdited() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier.size(16.dp).background(if (done) HColors.accent else HColors.bg).border(if (done) 0.dp else 1.dp, HColors.muted),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (done) Icon(Icons.Outlined.Check, null, tint = Color.White, modifier = Modifier.size(12.dp))
+                    }
+                }
             }
         }
     }

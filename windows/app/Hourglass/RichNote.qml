@@ -5,7 +5,8 @@ import "richtext.mjs" as RT
 
 // A note as you write it, like a word processor: no Markdown on screen, no
 // separate preview. Select text, then bold, a font, a size; lists keep their
-// marker in front ("• ", "☐ ", "1. "); a ☐ ticks with a click. Pictures show
+// marker in front ("• ", "☐ ", "1. "); a to-do's ☐ is hidden under a themed box
+// that ticks with a click (a done item dims and is struck through). Pictures show
 // in place. The note is still stored as Markdown (noteformat.mjs): `markdown()`
 // reads it back out of the editor, `load()` puts one in.
 ScrollView {
@@ -38,6 +39,7 @@ ScrollView {
         loading = false;
         pending = null;
         readHere();
+        placeBoxes();
     }
     function markdown() {
         return RT.fromHtml(ed.getFormattedText(0, ed.length), names, { baseFont: NF.FONTS[0], baseSize: NF.DEFAULT_SIZE });
@@ -132,7 +134,7 @@ ScrollView {
         for (let k = edits.length - 1; k >= 0; k--) {
             const e = edits[k];
             if (e.drop) ed.remove(e.at, e.at + e.drop);
-            if (e.insert) ed.insert(e.at, RT.escapeText(e.insert));
+            if (e.insert) ed.insert(e.at, RT.prefixHtml(e.insert));
         }
         ed.forceActiveFocus();
         rn.edited();
@@ -195,7 +197,7 @@ ScrollView {
             return;
         }
         // Let the editor make the new line, then put the marker in front of it.
-        Qt.callLater(() => { ed.insert(ed.cursorPosition, RT.escapeText(next)); rn.edited(); });
+        Qt.callLater(() => { ed.insert(ed.cursorPosition, RT.prefixHtml(next)); rn.edited(); });
     }
     // Tab and Shift+Tab move a list line in and out.
     function indent(by) {
@@ -210,24 +212,57 @@ ScrollView {
         return true;
     }
 
-    // A click on ☐ ticks it; on a picture or a Drive file opens it; Ctrl+click opens a web link.
+    // --- to-do boxes -------------------------------------------------------------------
+
+    // Where each to-do's hidden ☐/☑ sits: [{ at, x, y, h, w, checked }].
+    property var boxes: []
+    function placeBoxes() {
+        const t = ed.getText(0, ed.length);
+        const out = [];
+        let start = 0;
+        for (let i = 0; i <= t.length; i++) {
+            if (i < t.length && t[i] !== sep && t[i] !== soft) continue;
+            const k = NF.kindOf(t.slice(start, i));
+            if (k.kind === "todo") {
+                const g = start + k.indent * 2;
+                const r = ed.positionToRectangle(g), r2 = ed.positionToRectangle(g + 1);
+                out.push({ at: g, x: r.x, y: r.y, h: r.height, w: Math.max(12, r2.x - r.x), checked: !!k.checked });
+            }
+            start = i + 1;
+        }
+        boxes = out;
+    }
+    // Text edits and wrapping move the boxes: placed again once things settle.
+    property bool placing: false
+    function placeSoon() {
+        if (placing) return;
+        placing = true;
+        Qt.callLater(() => { placing = false; placeBoxes(); });
+    }
+
+    // Tick or untick the to-do whose box is at g: the line is written again in
+    // its new look (done: dimmed and struck through), keeping its own formatting.
+    function tick(g) {
+        const l = lineAround(g);
+        const k = NF.kindOf(l.text);
+        if (k.kind !== "todo") return;
+        if (!k.checked) {
+            const r = ed.positionToRectangle(g);
+            Motion.burstAt(ed, r.x + 6, r.y + r.height / 2);
+        }
+        const keep = ed.cursorPosition;
+        // From the box on: the indent in front stays as it is.
+        const html = RT.todoHtml(0, !k.checked, runs(l.start + k.prefix, l.end));
+        ed.remove(g, l.end);
+        ed.insert(g, html);
+        ed.cursorPosition = Math.min(keep, ed.length);
+        rn.edited();
+        placeSoon();
+    }
+
+    // On a picture or a Drive file a click opens it; Ctrl+click opens a web link.
     function clicked(x, y, modifiers) {
         const pos = ed.positionAt(x, y);
-        const l = lineAround(pos);
-        const k = NF.kindOf(l.text);
-        if (k.kind === "todo") {
-            const g = l.start + k.indent * 2;
-            const r = ed.positionToRectangle(g);
-            const r2 = ed.positionToRectangle(g + 1);
-            if (x >= r.x - 4 && x <= Math.max(r2.x, r.x + 14) + 2 && Math.abs(y - (r.y + r.height / 2)) <= r.height) {
-                if (!k.checked) Motion.burstAt(ed, r.x + 6, r.y + r.height / 2);
-                ed.remove(g, g + 1);
-                ed.insert(g, k.checked ? NF.BOX : NF.CHECKED);
-                ed.cursorPosition = l.end;
-                rn.edited();
-                return;
-            }
-        }
         const link = ed.linkAt(x, y);
         if (link) {
             if (link.indexOf("hgfile:") === 0) rn.openFile(link.slice(7));
@@ -267,9 +302,17 @@ ScrollView {
                 ed.cursorPosition = b;
             }
             rn.edited();
+            rn.placeSoon();
         }
+        onWidthChanged: rn.placeSoon()
         onCursorPositionChanged: {
             if (rn.pending && ed.length === rn.pendingLen && ed.cursorPosition !== rn.pendingAt) rn.pending = null;
+            // Never between a to-do's hidden box and its space: what is typed there would be invisible.
+            const c = ed.cursorPosition;
+            if (ed.selectionStart === ed.selectionEnd && c > 0 && ed.getText(c, c + 1) === " ") {
+                const before = ed.getText(c - 1, c);
+                if ((before === NF.BOX || before === NF.CHECKED) && NF.kindOf(rn.lineAround(c).text).kind === "todo") ed.cursorPosition = c + 1;
+            }
             rn.readHere();
         }
         onSelectedTextChanged: rn.readHere()
@@ -283,6 +326,31 @@ ScrollView {
             acceptedButtons: Qt.LeftButton
             gesturePolicy: TapHandler.DragThreshold
             onTapped: (eventPoint, button) => rn.clicked(eventPoint.position.x, eventPoint.position.y, tap.point.modifiers)
+        }
+        // The to-dos' boxes, drawn over their hidden ☐/☑: the old themed box.
+        Repeater {
+            model: rn.boxes
+            Rectangle {
+                id: box
+                required property var modelData
+                readonly property int side: Math.max(12, Math.min(16, modelData.h - 4))
+                x: modelData.x + 1
+                y: modelData.y + (modelData.h - side) / 2
+                width: side; height: side
+                color: modelData.checked ? Theme.accent : boxMouse.containsMouse ? Theme.surface2 : Theme.bg
+                border.width: modelData.checked ? 0 : 1
+                border.color: boxMouse.containsMouse ? Theme.accent : Theme.muted
+                Behavior on color { ColorAnimation { duration: 120 } }
+                Icon { anchors.centerIn: parent; visible: box.modelData.checked; name: "check"; size: box.side - 5; color: Theme.accentInk }
+                MouseArea {
+                    id: boxMouse
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: rn.tick(box.modelData.at)
+                }
+            }
         }
         Text {
             visible: ed.length === 0 && !ed.activeFocus

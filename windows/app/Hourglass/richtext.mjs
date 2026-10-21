@@ -3,6 +3,9 @@
 // back as Markdown again.
 //
 // In the editor, list lines carry their marker as text ("• ", "☐ ", "1. "),
+// a to-do's box an invisible ☐/☑ the editor draws a themed box over, a done
+// to-do's text dimmed and struck through in DONE_INK (a colour only used for
+// that, so reading it back never mistakes it for the note's own strike),
 // a heading is a line all in bold at a heading size, a picture is an <img>
 // on its own line, a Drive file a "📎 name" link on its own line. Code
 // (`text`) is shown in the app's own mono font, which is how it is told apart
@@ -11,23 +14,28 @@ import { FONTS, DEFAULT_SIZE, HEADING_SIZES, parse, serialize, kindOf, prefixOf,
 
 export const CODE_FONT = "JetBrainsMono Nerd Font";
 const P = "margin-top:0px; margin-bottom:0px; line-height:125%; white-space:pre-wrap;";
+// A done to-do's text; DONE_INK_S where the note itself strikes it through too.
+export const DONE_INK = "#7d7d7e";
+const DONE_INK_S = "#7d7d7f";
+const INK = "#f5f5f5"; // Theme.fg: an item's text after its box, never the done look it may sit next to
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-function spanStyle(r) {
+function spanStyle(r, done) {
   const css = [];
+  if (done) css.push(`color:${r.s ? DONE_INK_S : DONE_INK}`);
   if (r.code) css.push(`font-family:'${CODE_FONT}'`);
   else if (r.font && r.font !== FONTS[0]) css.push(`font-family:'${r.font}'`);
   if (r.size && r.size !== DEFAULT_SIZE) css.push(`font-size:${r.size}px`);
   if (r.b) css.push("font-weight:700");
   if (r.i) css.push("font-style:italic");
-  const deco = [r.u && "underline", r.s && "line-through"].filter(Boolean);
+  const deco = [r.u && "underline", (r.s || done) && "line-through"].filter(Boolean);
   if (deco.length) css.push(`text-decoration:${deco.join(" ")}`);
   return css.join("; ");
 }
 
-function runHtml(r) {
-  const style = spanStyle(r);
+function runHtml(r, done) {
+  const style = spanStyle(r, done);
   let h = style ? `<span style="${style}">${esc(r.text)}</span>` : esc(r.text);
   if (r.href) h = `<a href="${esc(r.href)}">${h}</a>`;
   return h;
@@ -54,10 +62,27 @@ export function toHtml(md, ctx = {}) {
       return `<p style="${P}"><a href="${esc(l.file.id ? `hgfile:${l.file.id}` : l.file.url)}">📎 ${esc(l.file.name)}</a></p>`;
     }
     const runs = l.h ? l.runs.map((r) => Object.assign({}, r, { b: true, size: HEADING_SIZES[l.h] })) : l.runs;
-    const body = esc(prefixOf(l)) + runs.map(runHtml).join("");
+    const body = l.kind === "todo" ? todoHtml(l.indent, l.checked, runs) : esc(prefixOf(l)) + runs.map((r) => runHtml(r)).join("");
     return body ? `<p style="${P}">${body}</p>` : `<p style="-qt-paragraph-type:empty; ${P}"><br /></p>`;
   }).join("\n");
   return { html, names };
+}
+
+/** A to-do line's insides: indent, the hidden box, then its text (done or not). */
+export function todoHtml(indent, checked, runs) {
+  const done = !!checked;
+  const space = done ? `<span style="color:${DONE_INK}; text-decoration: line-through"> </span>` : `<span style="color:${INK}; text-decoration: none"> </span>`;
+  return pad(indent) + `<span style="color:transparent; letter-spacing: 5px">${checked ? "☑" : "☐"}</span>` + space + runs.map((r) => runHtml(r, done)).join("");
+}
+
+// Indent spaces, kept when inserted on their own (HTML would fold them away).
+const pad = (indent) => (indent ? `<span style="white-space:pre-wrap">${"  ".repeat(indent)}</span>` : "");
+
+/** A list marker to insert before what is typed next ("• ", "☐ ", "1. "). */
+export function prefixHtml(prefix) {
+  const k = kindOf(prefix);
+  if (k.kind === "todo") return todoHtml(k.indent, k.checked, []);
+  return pad(k.indent) + `<span style="color:${INK}; text-decoration: none; white-space:pre-wrap">${esc(prefix.replace(/^ +/, ""))}</span>`;
 }
 
 // --- reading Qt's HTML ---------------------------------------------------------------
@@ -91,6 +116,7 @@ function applyCss(st, css) {
     } else if (k === "font-weight") st.b = v === "bold" || parseInt(v, 10) >= 600;
     else if (k === "font-style") st.i = v === "italic" || v === "oblique";
     else if (k === "text-decoration") { st.u = /underline/.test(v); st.s = /line-through/.test(v); }
+    else if (k === "color") st.ink = v.toLowerCase();
   }
 }
 
@@ -120,7 +146,9 @@ export function readHtml(html, { baseFont = FONTS[0], baseSize = DEFAULT_SIZE } 
     if (!t) return;
     ensure();
     const st = cur();
-    line.runs.push({ text: t, start: pos, b: st.b, i: st.i, u: st.u, s: st.s, font: st.font, size: st.size, href: st.href });
+    // A done to-do's strike is how it looks, not part of the note.
+    const s = st.ink === DONE_INK ? false : st.ink === DONE_INK_S ? true : st.s;
+    line.runs.push({ text: t, start: pos, b: st.b, i: st.i, u: st.u, s, font: st.font, size: st.size, href: st.href });
     pos += t.length;
   };
   let emptyPara = false;
