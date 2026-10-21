@@ -725,13 +725,12 @@ Item {
                                 width: parent.width; height: parent.height - 35
                                 color: Theme.bg
                                 clip: true
-                                // A picture is loaded from this computer's copy (sharper than the
-                                // server's small preview); a video shows its preview frame.
+                                // The server's big (480 px) preview: nothing is downloaded.
                                 Image {
                                     id: galleryImg
                                     anchors.fill: parent
                                     visible: item.media && look.view === "gallery"
-                                    source: !visible ? "" : page.isImage(item.f) && (item.f.size || 0) < 25 * 1048576 ? page.src(item.f) : page.thumb(item.f)
+                                    source: visible ? page.thumb(item.f) + "&size=big" : ""
                                     sourceSize: Qt.size(480, 480)
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true

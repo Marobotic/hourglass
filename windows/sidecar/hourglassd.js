@@ -765,9 +765,10 @@ async function watchDrive() {
 }
 setInterval(() => watchDrive().catch((e) => log("drive watch:", e.message)), 3000);
 
-// GET /thumbs/<id>?k=<FILE_KEY>: a small JPEG for the file list, made on the
-// server, so listing a folder never downloads the files in it. Kept in
-// data/thumbs under the row's updated_at; a newer one replaces it.
+// GET /thumbs/<id>?k=<FILE_KEY>[&size=big]: a small JPEG for the file list
+// (big: 480 px, for the gallery), made on the server, so listing a folder never
+// downloads the files in it. Kept in data/thumbs under the row's updated_at; a
+// newer one replaces it.
 const THUMB_DIR = join(DATA_DIR, "thumbs");
 const thumbing = new Map();
 async function serveThumb(req, res, url) {
@@ -775,19 +776,27 @@ async function serveThumb(req, res, url) {
   if (!m || url.searchParams.get("k") !== FILE_KEY) return json(res, 403, { error: "forbidden" });
   const row = store.get("files", m[1]);
   if (!row || row.deleted) return json(res, 404, { error: "not found" });
-  const f = join(THUMB_DIR, `${row.id}.${String(row.updated_at).replace(/[^0-9a-zA-Z]/g, "")}.jpg`);
+  const big = url.searchParams.get("size") === "big";
+  const f = join(THUMB_DIR, `${row.id}.${String(row.updated_at).replace(/[^0-9a-zA-Z]/g, "")}${big ? ".big" : ""}.jpg`);
   try {
     if (!existsSync(f)) {
       if (!thumbing.has(f)) thumbing.set(f, (async () => {
         const { server, token } = config();
         if (!server) throw Object.assign(new Error("signed out"), { status: 401 });
-        const r = await fetch(`${server}/api/files/${row.id}/thumb`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60000) });
+        const r = await fetch(`${server}/api/files/${row.id}/thumb${big ? "?size=big" : ""}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60000) });
         if (!r.ok) throw Object.assign(new Error("no preview"), { status: 404 });
+        // A server from before big previews sends the small one: shown, not kept.
+        if (big && r.headers.get("x-thumb-size") !== "480") return Buffer.from(await r.arrayBuffer());
         mkdirSync(THUMB_DIR, { recursive: true });
-        for (const n of readdirSync(THUMB_DIR)) if (n.startsWith(row.id + ".")) rmSync(join(THUMB_DIR, n), { force: true });
+        // Older ones of this file (of the same size) go.
+        for (const n of readdirSync(THUMB_DIR)) if (n.startsWith(row.id + ".") && n.endsWith(".big.jpg") === big) rmSync(join(THUMB_DIR, n), { force: true });
         writeFileSync(f, Buffer.from(await r.arrayBuffer()));
       })().finally(() => thumbing.delete(f)));
-      await thumbing.get(f);
+      const once = await thumbing.get(f);
+      if (Buffer.isBuffer(once)) {
+        res.writeHead(200, { "content-type": "image/jpeg", "content-length": once.length, "cache-control": "no-store" });
+        return res.end(once);
+      }
     }
     res.writeHead(200, { "content-type": "image/jpeg", "content-length": statSync(f).size, "cache-control": "private, max-age=60" });
     createReadStream(f).pipe(res);

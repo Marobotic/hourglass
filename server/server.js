@@ -273,15 +273,17 @@ function sweepDrive(t) {
     const key = `${t.dir}/${f.id}`;
     if (!f.deleted || swept.has(key)) continue;
     swept.add(key);
-    Promise.all([rm(drivePath(t, f.id), { force: true }), rm(thumbPath(t, f.id), { force: true })]).catch(() => swept.delete(key));
+    Promise.all([rm(drivePath(t, f.id), { force: true }), rm(thumbPath(t, f.id), { force: true }), rm(thumbPath(t, f.id, true), { force: true })]).catch(() => swept.delete(key));
   }
 }
 
 // A small square JPEG of a picture, or of a video's first second, for the
 // apps' file lists: they show this instead of downloading the file itself.
-// Made by ffmpeg on first ask and kept until the file changes.
+// Made by ffmpeg on first ask and kept until the file changes. ?size=big is
+// a 480 px one for the gallery views' big tiles.
 const THUMB = 144;
-const thumbPath = (t, id) => join(t.dir, "thumbs", `${id}.jpg`);
+const THUMB_BIG = 480;
+const thumbPath = (t, id, big) => join(t.dir, "thumbs", big ? `${id}-${THUMB_BIG}.jpg` : `${id}.jpg`);
 const thumbing = new Map(); // path -> promise, one ffmpeg per file at a time
 const canThumb = (f) => (/^image\//.test(f.mime) && !/svg/.test(f.mime)) || /^video\//.test(f.mime);
 
@@ -296,10 +298,10 @@ function oneAtATime(job) {
   return run;
 }
 
-function ffmpegFrame(src, out, seek) {
+function ffmpegFrame(src, out, seek, side = THUMB) {
   return oneAtATime(() => new Promise((resolve, reject) => {
     const args = ["-hide_banner", "-nostdin", "-v", "error", "-threads", "1", ...(seek ? ["-ss", "1"] : []), "-i", src, "-frames:v", "1", "-threads", "1",
-      "-vf", `scale=${THUMB}:${THUMB}:force_original_aspect_ratio=increase,crop=${THUMB}:${THUMB}`, "-q:v", "5", "-y", out];
+      "-vf", `scale=${side}:${side}:force_original_aspect_ratio=increase,crop=${side}:${side}`, "-q:v", "5", "-y", out];
     const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
     let err = "";
     const kill = setTimeout(() => p.kill("SIGKILL"), 30000);
@@ -312,9 +314,9 @@ function ffmpegFrame(src, out, seek) {
   }));
 }
 
-async function thumbnail(t, row) {
+async function thumbnail(t, row, big) {
   const src = drivePath(t, row.id);
-  const out = thumbPath(t, row.id);
+  const out = thumbPath(t, row.id, big);
   if (existsSync(out) && statSync(out).mtimeMs >= statSync(src).mtimeMs) return out;
   if (!thumbing.has(out)) {
     thumbing.set(out, (async () => {
@@ -323,7 +325,8 @@ async function thumbnail(t, row) {
       const video = /^video\//.test(row.mime);
       try {
         // A video shorter than a second has nothing at 1 s: take its first frame.
-        await ffmpegFrame(src, tmp, video).catch((e) => (video ? ffmpegFrame(src, tmp, false) : Promise.reject(e)));
+        const side = big ? THUMB_BIG : THUMB;
+        await ffmpegFrame(src, tmp, video, side).catch((e) => (video ? ffmpegFrame(src, tmp, false, side) : Promise.reject(e)));
         renameSync(tmp, out);
       } finally {
         rmSync(tmp, { force: true });
@@ -436,8 +439,9 @@ async function driveRoutes(t, req, res, url, path) {
     if (!row || row.deleted || !existsSync(drivePath(t, row.id)) || !canThumb(row)) return send(res, 404, { error: "no preview" }), true;
     if (/^image\//.test(row.mime) && (row.size || 0) > THUMB_MAX_IMAGE) return send(res, 404, { error: "no preview" }), true;
     let f;
-    try { f = await thumbnail(t, row); } catch { return send(res, 404, { error: "no preview" }), true; }
-    res.writeHead(200, { "content-type": "image/jpeg", "content-length": statSync(f).size, "cache-control": "private, max-age=300" });
+    try { f = await thumbnail(t, row, url.searchParams.get("size") === "big"); } catch { return send(res, 404, { error: "no preview" }), true; }
+    // Which size this is: an app keeps a big one only when it really is big.
+    res.writeHead(200, { "content-type": "image/jpeg", "content-length": statSync(f).size, "cache-control": "private, max-age=300", "x-thumb-size": String(url.searchParams.get("size") === "big" ? THUMB_BIG : THUMB) });
     createReadStream(f).pipe(res);
     return true;
   }
