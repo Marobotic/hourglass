@@ -16,6 +16,20 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import dev.marobotic.hourglass.core.Dates
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -180,6 +194,9 @@ fun DriveScreen(nav: Nav, version: Int) {
     var sharing by remember { mutableStateOf<Pair<String, JSONObject>?>(null) }
     var shares by remember { mutableStateOf<Map<String, JSONObject>>(emptyMap()) }
     val opener = rememberFileOpener(repo)
+    var mode by remember { mutableStateOf(repo.store.meta("drive_view") ?: "details") }
+    var sortBy by remember { mutableStateOf(repo.store.meta("drive_sort")?.substringBefore(":")?.takeIf { it in SORTS } ?: "name") }
+    var sortDesc by remember { mutableStateOf(repo.store.meta("drive_sort")?.endsWith(":desc") == true) }
     fun loadShares() = repo.shares { list, _ -> if (list != null) shares = list.associateBy { it.optString("file_id").ifBlank { it.optString("folder_id") } } }
     // The server's disk barely moves: read it every minute (and the links with it).
     LaunchedEffect(Unit) { while (true) { loadShares(); repo.driveUsage { usage = it }; delay(60000) } }
@@ -269,16 +286,53 @@ fun DriveScreen(nav: Nav, version: Int) {
             }
         }
         (status ?: opener.busy)?.let { T(it, 12, HColors.gold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp)) }
-        val empty = view.courses.isEmpty() && view.folders.isEmpty() && view.files.isEmpty()
-        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-            if (empty) item { T(if (courseId != null) "Nothing in this course's folder yet. Upload files here, or attach them to its notes." else "Empty. Upload files or make a folder.", 13, HColors.faint, modifier = Modifier.padding(8.dp)) }
-            items(view.courses, key = { "c" + it.first.id }) { (c, n) ->
-                val (mod, over) = dropTarget { what -> what.startsWith("file:") && drop(what, null, c.id) }
-                DriveRow(Icons.Outlined.School, c.optString("name"), "$n file" + if (n == 1) "" else "s", hex(c.optString("color")), modifier = mod, highlight = over) { courseId = c.id }
+        // How the files look, kept on this phone: icons (a grid), details (a
+        // list), gallery (big pictures). Sorting is the same in every view.
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            for ((key, icon) in listOf("icons" to Icons.Outlined.GridView, "details" to Icons.AutoMirrored.Outlined.ViewList, "gallery" to Icons.Outlined.PhotoLibrary)) {
+                val on = mode == key
+                IconButton({ mode = key; repo.store.setMeta("drive_view", key) }, Modifier.size(40.dp).background(if (on) HColors.surface2 else Color.Transparent)) {
+                    Icon(icon, key.replaceFirstChar { it.uppercase() }, tint = if (on) HColors.fg else HColors.muted, modifier = Modifier.size(20.dp))
+                }
             }
-            items(view.folders, key = { "d" + it.first.id }) { (d, n) ->
+            Spacer(Modifier.weight(1f))
+            var sortOpen by remember { mutableStateOf(false) }
+            Box {
+                Row(Modifier.clickable { sortOpen = true }.padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    T("${SORTS.getValue(sortBy)} ${if (sortDesc) "↓" else "↑"}", 13, HColors.muted)
+                }
+                DropdownMenu(sortOpen, { sortOpen = false }, containerColor = HColors.surface) {
+                    for ((key, label) in SORTS) DropdownMenuItem(
+                        text = { T(label + if (key == sortBy) (if (sortDesc) "  ↓" else "  ↑") else "", 14, if (key == sortBy) HColors.fg else HColors.muted) },
+                        onClick = {
+                            sortOpen = false
+                            // Again on the same one: the other way. Dates and sizes start newest / biggest.
+                            if (key == sortBy) sortDesc = !sortDesc else { sortBy = key; sortDesc = key == "date" || key == "size" }
+                            repo.store.setMeta("drive_sort", "$sortBy:${if (sortDesc) "desc" else "asc"}")
+                        },
+                    )
+                }
+            }
+        }
+        val folders = remember(view, sortBy, sortDesc) { sortDrive(view.folders.map { it.first }, sortBy, sortDesc, folders = true).map { f -> f to (view.folders.first { it.first.id == f.id }.second) } }
+        val files = remember(view, sortBy, sortDesc) { sortDrive(view.files, sortBy, sortDesc, folders = false) }
+        val empty = view.courses.isEmpty() && view.folders.isEmpty() && view.files.isEmpty()
+        val grid = mode != "details"
+        LazyVerticalGrid(
+            when (mode) { "icons" -> GridCells.Adaptive(100.dp); "gallery" -> GridCells.Fixed(2); else -> GridCells.Fixed(1) },
+            Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (grid) 8.dp else 0.dp),
+            verticalArrangement = Arrangement.spacedBy(if (grid) 8.dp else 0.dp),
+        ) {
+            if (empty) item(span = { GridItemSpan(maxLineSpan) }) { T(if (courseId != null) "Nothing in this course's folder yet. Upload files here, or attach them to its notes." else "Empty. Upload files or make a folder.", 13, HColors.faint, modifier = Modifier.padding(8.dp)) }
+            items(view.courses, key = { "c" + it.first.id }, span = { GridItemSpan(maxLineSpan) }) { (c, n) ->
+                val (mod, over) = dropTarget { what -> what.startsWith("file:") && drop(what, null, c.id) }
+                DriveRow("details", Icons.Outlined.School, c.optString("name"), "$n file" + if (n == 1) "" else "s", hex(c.optString("color")), modifier = mod, highlight = over) { courseId = c.id }
+            }
+            items(folders, key = { "d" + it.first.id }) { (d, n) ->
                 val (mod, over) = dropTarget { drop(it, d.id) }
-                DriveRow(Icons.Outlined.Folder, d.optString("name"), "$n item" + if (n == 1) "" else "s", HColors.gold, modifier = mod, highlight = over,
+                DriveRow(mode, Icons.Outlined.Folder, d.optString("name"), "$n item" + if (n == 1) "" else "s", HColors.gold, modifier = mod, highlight = over,
                     shared = shares.containsKey(d.id), dragAs = "folder:${d.id}", menu = listOf(
                         (if (shares.containsKey(d.id)) "Shared · link…" else "Share link…") to { sharing = "folders" to d },
                         "Move to…" to { moving = "folders" to d },
@@ -286,10 +340,14 @@ fun DriveScreen(nav: Nav, version: Int) {
                         "Delete" to { nav.sheets.confirm = Triple("Delete folder?", "\"${d.optString("name")}\" and everything in it will be removed from every device.") { repo.removeFolder(d.id) } },
                     )) { folderId = d.id }
             }
-            items(view.files, key = { "f" + it.id }) { f ->
+            // In a grid the files start on a line of their own, under the folders.
+            if (grid && folders.isNotEmpty() && files.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(2.dp)) }
+            items(files, key = { "f" + it.id }) { f ->
                 val mime = f.optString("mime")
                 val icon = if (mime.startsWith("image/")) Icons.Outlined.Image else if (mime.startsWith("video/")) Icons.Outlined.Movie else Icons.Outlined.Description
-                DriveRow(icon, f.optString("name"), fmtBytes(f.optLong("size")), HColors.muted, shared = shares.containsKey(f.id), dragAs = "file:${f.id}", menu = buildList {
+                val picture: (@Composable (Modifier) -> Unit)? = if (hasPreview(f)) { m -> DriveThumb(repo, f, mode == "gallery", icon, m) } else null
+                DriveRow(mode, icon, f.optString("name"), fmtBytes(f.optLong("size")) + (f.optLong("updated_at").takeIf { it > 0 }?.let { "  ·  " + Dates.short(java.time.Instant.ofEpochMilli(it).atZone(repo.zone).toLocalDate()) } ?: ""), HColors.muted, picture = picture,
+                    shared = shares.containsKey(f.id), dragAs = "file:${f.id}", menu = buildList {
                     add("Open" to { opener.open(f) })
                     add("Send file…" to { send(f) })
                     add((if (shares.containsKey(f.id)) "Shared · link…" else "Share link…") to { sharing = "files" to f })
@@ -314,11 +372,55 @@ fun DriveScreen(nav: Nav, version: Int) {
     FileOpenerHost(opener)
 }
 
+private val SORTS = linkedMapOf("name" to "Name", "date" to "Modified", "type" to "Type", "size" to "Size")
+
+private fun typeOf(f: JSONObject, folder: Boolean): String {
+    if (folder) return "Folder"
+    val mime = f.optString("mime")
+    if (mime.startsWith("image/")) return "Picture"
+    if (mime.startsWith("video/")) return "Video"
+    return Regex("""\.([a-z0-9]{1,6})$""", RegexOption.IGNORE_CASE).find(f.optString("name"))?.groupValues?.get(1)?.uppercase() ?: "File"
+}
+
+// Folders and files in the chosen order; ties go by name.
+private fun sortDrive(rows: List<JSONObject>, by: String, desc: Boolean, folders: Boolean): List<JSONObject> {
+    val name = compareBy<JSONObject> { it.optString("name").lowercase() }
+    val key: Comparator<JSONObject> = when (by) {
+        "date" -> compareBy { it.optLong("updated_at") }
+        "size" -> compareBy { it.optLong(if (folders) "items" else "size") }
+        "type" -> compareBy { typeOf(it, folders) }
+        else -> name
+    }
+    return rows.sortedWith((if (desc) key.reversed() else key).thenComparing(name))
+}
+
+private fun hasPreview(f: JSONObject): Boolean {
+    val mime = f.optString("mime")
+    return (mime.startsWith("image/") && !mime.contains("svg")) || mime.startsWith("video/")
+}
+
+// A Drive file's preview from the server (big: the gallery's 480 px one);
+// its icon until it arrives, or when it has none.
+@Composable
+fun DriveThumb(repo: Repo, f: JSONObject, big: Boolean, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier) {
+    val bmp by produceState<ImageBitmap?>(null, f.id, f.optLong("updated_at"), big) { value = withContext(Dispatchers.IO) { repo.thumb(f, big) } }
+    Box(modifier.background(HColors.bg), contentAlignment = Alignment.Center) {
+        val b = bmp
+        if (b != null) Image(b, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Icon(icon, null, tint = HColors.faint, modifier = Modifier.fillMaxSize(0.4f))
+        if (b != null && f.optString("mime").startsWith("video/")) Icon(Icons.Outlined.PlayCircle, null, tint = Color.White, modifier = Modifier.fillMaxSize(0.3f))
+    }
+}
+
+// One course, folder or file in the Drive, in any view: details (a row),
+// icons (a tile with a big icon or the picture), gallery (the picture fills
+// the tile; folders are slim tiles). Tap opens; hold starts a drag.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DriveRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, detail: String, tint: Color,
+    mode: String, icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, detail: String, tint: Color,
     modifier: Modifier = Modifier, highlight: Boolean = false, shared: Boolean = false, dragAs: String? = null,
+    picture: (@Composable (Modifier) -> Unit)? = null,
     menu: List<Pair<String, () -> Unit>> = emptyList(), onClick: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -329,22 +431,50 @@ private fun DriveRow(
             onLongPress = { startTransfer(DragAndDropTransferData(ClipData.newPlainText(DRAG_LABEL, dragAs))) },
         )
     } else Modifier.clickable(onClick = onClick)
-    Row(
-        modifier.fillMaxWidth().background(if (highlight) HColors.accent.copy(alpha = 0.25f) else Color.Transparent).then(press).padding(horizontal = 6.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            T(name, 15, maxLines = 1)
-            T(detail, 12, HColors.muted)
-        }
-        if (shared) Icon(Icons.Outlined.Link, "Shared by link", tint = HColors.teal, modifier = Modifier.size(18.dp))
-        if (menu.isNotEmpty()) Box {
-            IconButton({ open = true }) { Icon(Icons.Outlined.MoreVert, "More", tint = HColors.muted) }
+    val back = if (highlight) HColors.accent.copy(alpha = 0.25f) else if (mode == "details") Color.Transparent else HColors.surface
+    @Composable
+    fun More(m: Modifier = Modifier) {
+        if (menu.isNotEmpty()) Box(m) {
+            IconButton({ open = true }, Modifier.size(if (mode == "details") 48.dp else 36.dp)) { Icon(Icons.Outlined.MoreVert, "More", tint = HColors.muted) }
             DropdownMenu(open, { open = false }, containerColor = HColors.surface) {
                 for ((label, act) in menu) DropdownMenuItem(text = { T(label, 14, if (label == "Delete") HColors.accent else HColors.fg) }, onClick = { open = false; act() })
             }
+        }
+    }
+    val pictureTile = mode == "gallery" && dragAs?.startsWith("file:") == true
+    when {
+        mode == "icons" -> Box(modifier.fillMaxWidth().height(124.dp).background(back).border(1.dp, HColors.border).then(press)) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (picture != null) picture(Modifier.size(60.dp)) else Icon(icon, null, tint = tint, modifier = Modifier.size(52.dp))
+                Spacer(Modifier.height(8.dp))
+                T(name, 12, maxLines = 2, align = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+            if (shared) Icon(Icons.Outlined.Link, "Shared by link", tint = HColors.teal, modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(14.dp))
+            More(Modifier.align(Alignment.TopEnd))
+        }
+        pictureTile -> Column(modifier.fillMaxWidth().background(back).border(1.dp, HColors.border).then(press)) {
+            if (picture != null) picture(Modifier.fillMaxWidth().aspectRatio(4f / 3f))
+            else Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f).background(HColors.bg), contentAlignment = Alignment.Center) { Icon(icon, null, tint = HColors.faint, modifier = Modifier.size(44.dp)) }
+            Row(Modifier.fillMaxWidth().padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (shared) { Icon(Icons.Outlined.Link, "Shared by link", tint = HColors.teal, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)) }
+                T(name, 12, maxLines = 1, modifier = Modifier.weight(1f))
+                More()
+            }
+        }
+        // Details, and a folder in the gallery (a slim tile).
+        else -> Row(
+            modifier.fillMaxWidth().background(back).then(if (mode == "gallery") Modifier.border(1.dp, HColors.border) else Modifier).then(press)
+                .padding(horizontal = 6.dp, vertical = if (mode == "gallery") 2.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (picture != null) picture(Modifier.size(36.dp)) else Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(if (picture != null) 10.dp else 14.dp))
+            Column(Modifier.weight(1f)) {
+                T(name, if (mode == "gallery") 13 else 15, maxLines = 1)
+                if (mode != "gallery") T(detail, 12, HColors.muted, maxLines = 1)
+            }
+            if (shared) Icon(Icons.Outlined.Link, "Shared by link", tint = HColors.teal, modifier = Modifier.size(18.dp))
+            More()
         }
     }
 }

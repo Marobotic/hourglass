@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import androidx.compose.ui.graphics.asImageBitmap
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.LocalDate
@@ -592,6 +593,33 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         }
         // A cancelled upload is no problem to report: the panel says it.
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), if (gone) null else r.exceptionOrNull()?.message) }
+    }
+
+    // A Drive file's preview from the server (big: 480 px, for the gallery),
+    // kept in the cache under the row's updated_at so an edit makes a new one.
+    private val thumbs = android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(120)
+    fun thumb(f: JSONObject, big: Boolean): androidx.compose.ui.graphics.ImageBitmap? {
+        val key = "${f.id}.${f.optLong("updated_at")}${if (big) ".big" else ""}"
+        thumbs.get(key)?.let { return it }
+        val dir = File(ctx.cacheDir, "thumbs").apply { mkdirs() }
+        val file = File(dir, "$key.jpg")
+        val bytes = if (file.exists()) file.readBytes() else runCatching {
+            val c = URL("${BuildConfig.SERVER}/api/files/${f.id}/thumb${if (big) "?size=big" else ""}").openConnection() as HttpURLConnection
+            c.setRequestProperty("Authorization", "Bearer ${token ?: return null}")
+            c.connectTimeout = 8000
+            c.readTimeout = 60_000
+            if (c.responseCode != 200) return null
+            val got = c.inputStream.use { it.readBytes() }
+            // A server from before big previews sends the small one: shown, not kept.
+            if (!big || c.getHeaderField("x-thumb-size") == "480") {
+                dir.listFiles()?.filter { it.name.startsWith(f.id + ".") && it.name.endsWith(".big.jpg") == big }?.forEach { it.delete() }
+                file.writeBytes(got)
+            }
+            got
+        }.getOrNull() ?: return null
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() ?: return null
+        thumbs.put(key, bmp)
+        return bmp
     }
 
     // This phone's copy of a Drive file, under its real name so other apps

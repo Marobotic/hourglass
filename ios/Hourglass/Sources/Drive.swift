@@ -134,6 +134,12 @@ struct DriveView: View {
     @State private var sending: SendItem?
     @State private var sharing: ShareTarget?
     @State private var shares: [String: [String: Any]] = [:]
+    // How the files look, kept on this phone: icons (a grid), details (a list),
+    // gallery (big pictures). Sorting is the same in every view.
+    @AppStorage("drive_view") private var mode = "details"
+    @AppStorage("drive_sort") private var sortBy = "name"
+    @AppStorage("drive_desc") private var sortDesc = false
+    private static let sorts = [("name", "Name"), ("date", "Modified"), ("type", "Type"), ("size", "Size")]
 
     private func loadShares() {
         Task {
@@ -192,7 +198,7 @@ struct DriveView: View {
 
     var body: some View {
         let view = store.drive(folderId, course: courseId)
-        VStack(alignment: .leading, spacing: 6) {
+        attach(VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 if folderId != nil || courseId != nil {
                     // Drop on the back arrow: one folder up.
@@ -223,6 +229,164 @@ struct DriveView: View {
                 .padding(.horizontal, 18)
             }
             if let s = status ?? opener.busy { T(s, 12, H.gold).padding(.horizontal, 18) }
+            HStack(spacing: 2) {
+                ForEach([("icons", "square.grid.3x3"), ("details", "list.bullet"), ("gallery", "photo.on.rectangle")], id: \.0) { key, icon in
+                    Button { mode = key } label: {
+                        Image(systemName: icon).font(.system(size: 15)).foregroundStyle(mode == key ? H.fg : H.muted).frame(width: 38, height: 34)
+                            .background(mode == key ? H.surface2 : .clear)
+                    }
+                }
+                Spacer()
+                Menu {
+                    ForEach(DriveView.sorts, id: \.0) { key, label in
+                        Button(label + (key == sortBy ? (sortDesc ? "  ↓" : "  ↑") : "")) {
+                            // Again on the same one: the other way. Dates and sizes start newest / biggest.
+                            if key == sortBy { sortDesc.toggle() } else { sortBy = key; sortDesc = key == "date" || key == "size" }
+                        }
+                    }
+                } label: {
+                    T("\(DriveView.sorts.first { $0.0 == sortBy }?.1 ?? "Name") \(sortDesc ? "↓" : "↑")", 13, H.muted).padding(.horizontal, 8).frame(height: 34)
+                }
+            }
+            .padding(.horizontal, 12)
+            if mode == "details" { detailsList(view) } else { grid(view) }
+        }
+        .background(H.bg))
+    }
+
+    private func sorted<T>(_ rows: [T], _ name: (T) -> String, date: (T) -> Int64, size: (T) -> Int64, type: (T) -> String) -> [T] {
+        rows.sorted { a, b in
+            let order: ComparisonResult
+            switch sortBy {
+            case "date": order = date(a) == date(b) ? .orderedSame : date(a) < date(b) ? .orderedAscending : .orderedDescending
+            case "size": order = size(a) == size(b) ? .orderedSame : size(a) < size(b) ? .orderedAscending : .orderedDescending
+            case "type": order = type(a).localizedCaseInsensitiveCompare(type(b))
+            default: order = name(a).localizedCaseInsensitiveCompare(name(b))
+            }
+            if order == .orderedSame { return name(a).localizedCaseInsensitiveCompare(name(b)) == .orderedAscending }
+            return sortDesc ? order == .orderedDescending : order == .orderedAscending
+        }
+    }
+    private func typeOf(_ f: DriveFile) -> String {
+        if f.mime.hasPrefix("image/") { return "Picture" }
+        if f.mime.hasPrefix("video/") { return "Video" }
+        let ext = (f.name as NSString).pathExtension
+        return ext.isEmpty ? "File" : ext.uppercased()
+    }
+    private func folders(_ view: Store.DriveView) -> [(Folder, Int)] {
+        sorted(view.folders, { $0.0.name }, date: { $0.0.updated_at }, size: { Int64($0.1) }, type: { _ in "Folder" })
+    }
+    private func files(_ view: Store.DriveView) -> [DriveFile] {
+        sorted(view.files, { $0.name }, date: { $0.updated_at }, size: { $0.size }, type: typeOf)
+    }
+    private func hasPreview(_ f: DriveFile) -> Bool { (f.mime.hasPrefix("image/") && !f.mime.contains("svg")) || f.mime.hasPrefix("video/") }
+    private func icon(_ f: DriveFile) -> String { f.mime.hasPrefix("image/") ? "photo" : f.mime.hasPrefix("video/") ? "film" : "doc" }
+
+    @ViewBuilder private func folderMenu(_ d: Folder) -> some View {
+        Button(shares[d.id] != nil ? "Shared · link…" : "Share link…") { sharing = ShareTarget(table: "folders", id: d.id, name: d.name) }
+        moveMenu("folder", d.id, here: d.parent_id)
+        Button("Rename") { ask("Rename folder", d.name) { s in if !s.isEmpty { var d = d; d.name = s; store.save(d) } } }
+        Button("Delete", role: .destructive) { deleting = ("\"\(d.name)\" and everything in it will be removed from every device.", { store.removeFolder(d.id) }) }
+    }
+    @ViewBuilder private func fileMenu(_ f: DriveFile) -> some View {
+        Button("Open") { opener.open(f, store) }
+        Button("Send file…") { send(f) }
+        Button(shares[f.id] != nil ? "Shared · link…" : "Share link…") { sharing = ShareTarget(table: "files", id: f.id, name: f.name) }
+        moveMenu("file", f.id, here: f.course_id == nil ? f.folder_id : "course")
+        Button("Download…") { download(f) }
+        Button("Rename") { ask("Rename file", f.name) { s in if !s.isEmpty { var f = f; f.name = s; store.save(f) } } }
+        Menu("Put in a course") {
+            ForEach(store.courses) { c in Button(c.name) { store.setFileCourse(f.id, c.id) } }
+        }
+        if f.course_id != nil || f.folder_id != nil { Button("Move to the top") { store.setFileFolder(f.id, nil) } }
+        Button("Delete", role: .destructive) { deleting = ("\"\(f.name)\" will be removed from every device.", { store.removeFile(f.id) }) }
+    }
+
+    // Icons and gallery: a grid of tiles; courses stay rows on top.
+    private func grid(_ view: Store.DriveView) -> some View {
+        let gallery = mode == "gallery"
+        let cols = gallery ? [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)] : [GridItem(.adaptive(minimum: 100), spacing: 8)]
+        let fs = files(view), ds = folders(view)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if view.courses.isEmpty && view.folders.isEmpty && view.files.isEmpty {
+                    T(courseId != nil ? "Nothing in this course's folder yet. Upload files here, or attach them to its notes." : "Empty. Upload files or make a folder.", 13, H.faint)
+                }
+                ForEach(view.courses, id: \.0.id) { c, n in
+                    row("graduationcap", c.name, "\(n) file\(n == 1 ? "" : "s")", Color(hex: c.color)) { courseId = c.id }
+                        .dropDestination(for: String.self) { keys, _ in drop(keys.filter { $0.hasPrefix("file:") }, into: nil, course: c.id) }
+                }
+                LazyVGrid(columns: cols, spacing: 8) {
+                    ForEach(ds, id: \.0.id) { d, n in
+                        Button { folderId = d.id } label: {
+                            if gallery {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "folder").foregroundStyle(H.gold)
+                                    T(d.name, 13, lines: 1)
+                                    Spacer(minLength: 0)
+                                    if shares[d.id] != nil { Image(systemName: "link").font(.system(size: 12)).foregroundStyle(H.teal) }
+                                }
+                                .padding(.horizontal, 12).frame(height: 48).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                            } else {
+                                tile(icon: "folder", tint: H.gold, name: d.name, shared: shares[d.id] != nil, picture: nil)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .draggable(dragKey("folder", d.id))
+                        .dropDestination(for: String.self) { keys, _ in drop(keys, into: d.id) }
+                        .contextMenu { folderMenu(d) }
+                    }
+                }
+                LazyVGrid(columns: cols, spacing: 8) {
+                    ForEach(fs) { f in
+                        Button { opener.open(f, store) } label: {
+                            if gallery {
+                                VStack(spacing: 0) {
+                                    Color.clear.aspectRatio(4.0 / 3.0, contentMode: .fit)
+                                        .overlay { DriveThumb(file: f, big: true, icon: icon(f), show: hasPreview(f)) }
+                                        .clipped()
+                                    HStack(spacing: 6) {
+                                        if shares[f.id] != nil { Image(systemName: "link").font(.system(size: 11)).foregroundStyle(H.teal) }
+                                        T(f.name, 12, lines: 1)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(.horizontal, 10).frame(height: 34)
+                                }
+                                .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                            } else {
+                                tile(icon: icon(f), tint: H.muted, name: f.name, shared: shares[f.id] != nil, picture: hasPreview(f) ? f : nil)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .draggable(dragKey("file", f.id))
+                        .contextMenu { fileMenu(f) }
+                    }
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .padding(.bottom, 60)
+        }
+    }
+
+    // An icon-view tile: a big icon or the picture, the name under it.
+    private func tile(icon: String, tint: Color, name: String, shared: Bool, picture: DriveFile?) -> some View {
+        VStack(spacing: 8) {
+            Group {
+                if let f = picture { DriveThumb(file: f, big: false, icon: icon, show: true) }
+                else { Image(systemName: icon).font(.system(size: 38)).foregroundStyle(tint) }
+            }
+            .frame(width: 60, height: 60).clipped()
+            Text(name).font(H.mono(11)).foregroundStyle(H.fg).lineLimit(2).multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 124, alignment: .top)
+        .background(H.surface)
+        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .overlay(alignment: .topLeading) { if shared { Image(systemName: "link").font(.system(size: 11)).foregroundStyle(H.teal).padding(6) } }
+    }
+
+    // Details: the list, each file with its small preview, size and date.
+    private func detailsList(_ view: Store.DriveView) -> some View {
             List {
                 if view.courses.isEmpty && view.folders.isEmpty && view.files.isEmpty {
                     T(courseId != nil ? "Nothing in this course's folder yet. Upload files here, or attach them to its notes." : "Empty. Upload files or make a folder.", 13, H.faint)
@@ -232,39 +396,27 @@ struct DriveView: View {
                     row("graduationcap", c.name, "\(n) file\(n == 1 ? "" : "s")", Color(hex: c.color)) { courseId = c.id }
                         .dropDestination(for: String.self) { keys, _ in drop(keys.filter { $0.hasPrefix("file:") }, into: nil, course: c.id) }
                 }
-                ForEach(view.folders, id: \.0.id) { d, n in
+                ForEach(folders(view), id: \.0.id) { d, n in
                     row("folder", d.name, "\(n) item\(n == 1 ? "" : "s")", H.gold, shared: shares[d.id] != nil) { folderId = d.id }
                         .draggable(dragKey("folder", d.id))
                         .dropDestination(for: String.self) { keys, _ in drop(keys, into: d.id) }
-                        .contextMenu {
-                            Button(shares[d.id] != nil ? "Shared · link…" : "Share link…") { sharing = ShareTarget(table: "folders", id: d.id, name: d.name) }
-                            moveMenu("folder", d.id, here: d.parent_id)
-                            Button("Rename") { ask("Rename folder", d.name) { s in if !s.isEmpty { var d = d; d.name = s; store.save(d) } } }
-                            Button("Delete", role: .destructive) { deleting = ("\"\(d.name)\" and everything in it will be removed from every device.", { store.removeFolder(d.id) }) }
-                        }
+                        .contextMenu { folderMenu(d) }
                 }
-                ForEach(view.files) { f in
-                    row(f.mime.hasPrefix("image/") ? "photo" : f.mime.hasPrefix("video/") ? "film" : "doc", f.name, fmtBytes(f.size), H.muted, shared: shares[f.id] != nil) { opener.open(f, store) }
+                ForEach(files(view)) { f in
+                    row(icon(f), f.name, fmtBytes(f.size) + (f.updated_at > 0 ? "  ·  " + Dates.short(Dates.dayOf(f.updated_at)) : ""), H.muted, shared: shares[f.id] != nil, picture: hasPreview(f) ? f : nil) { opener.open(f, store) }
                         .draggable(dragKey("file", f.id))
-                        .contextMenu {
-                            Button("Open") { opener.open(f, store) }
-                            Button("Send file…") { send(f) }
-                            Button(shares[f.id] != nil ? "Shared · link…" : "Share link…") { sharing = ShareTarget(table: "files", id: f.id, name: f.name) }
-                            moveMenu("file", f.id, here: f.course_id == nil ? f.folder_id : "course")
-                            Button("Download…") { download(f) }
-                            Button("Rename") { ask("Rename file", f.name) { s in if !s.isEmpty { var f = f; f.name = s; store.save(f) } } }
-                            Menu("Put in a course") {
-                                ForEach(store.courses) { c in Button(c.name) { store.setFileCourse(f.id, c.id) } }
-                            }
-                            if f.course_id != nil || f.folder_id != nil { Button("Move to the top") { store.setFileFolder(f.id, nil) } }
-                            Button("Delete", role: .destructive) { deleting = ("\"\(f.name)\" will be removed from every device.", { store.removeFile(f.id) }) }
-                        }
+                        .contextMenu { fileMenu(f) }
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-        }
-        .background(H.bg)
+    }
+}
+
+// The Drive's sheets, alerts and pickers, around whichever view it shows.
+extension DriveView {
+    fileprivate func attach(_ content: some View) -> some View {
+        content
         // The server's disk barely moves: read it every minute (and the links with it).
         .task { while !Task.isCancelled { loadShares(); usage = await store.driveUsage(); try? await Task.sleep(nanoseconds: 60_000_000_000) } }
         .sheet(item: $sending) { item in ActivityView(items: [item.url]) }
@@ -336,10 +488,11 @@ struct DriveView: View {
         }
     }
 
-    private func row(_ icon: String, _ name: String, _ detail: String, _ tint: Color, shared: Bool = false, _ tap: @escaping () -> Void) -> some View {
+    private func row(_ icon: String, _ name: String, _ detail: String, _ tint: Color, shared: Bool = false, picture: DriveFile? = nil, _ tap: @escaping () -> Void) -> some View {
         Button(action: tap) {
             HStack(spacing: 14) {
-                Image(systemName: icon).font(.system(size: 20)).foregroundStyle(tint).frame(width: 26)
+                if let f = picture { DriveThumb(file: f, big: false, icon: icon, show: true).frame(width: 34, height: 34).clipped() }
+                else { Image(systemName: icon).font(.system(size: 20)).foregroundStyle(tint).frame(width: 26) }
                 VStack(alignment: .leading, spacing: 2) { T(name, 15, lines: 1); T(detail, 12, H.muted) }
                 Spacer(minLength: 0)
                 if shared { Image(systemName: "link").foregroundStyle(H.teal) }
@@ -433,5 +586,28 @@ struct ShareSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+// A Drive file's preview from the server (big: the gallery's 480 px one); its
+// icon until it arrives, or when it has none. A video's says it plays.
+struct DriveThumb: View {
+    @EnvironmentObject var store: Store
+    let file: DriveFile
+    let big: Bool
+    let icon: String
+    let show: Bool
+    @State private var image: UIImage?
+    var body: some View {
+        ZStack {
+            H.bg
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+                if file.mime.hasPrefix("video/") { Image(systemName: "play.circle.fill").font(.system(size: big ? 30 : 16)).foregroundStyle(.white.opacity(0.9)) }
+            } else {
+                Image(systemName: icon).font(.system(size: big ? 34 : 16)).foregroundStyle(H.faint)
+            }
+        }
+        .task(id: "\(file.id).\(file.updated_at).\(big)") { if show { image = await store.thumb(file, big: big) } }
     }
 }

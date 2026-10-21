@@ -364,6 +364,36 @@ final class Store: ObservableObject {
     /// Close the panel: the finished ones go.
     func clearUploads() { uploads.removeAll { $0.state != "sending" } }
 
+    // A Drive file's preview from the server (big: 480 px, for the gallery),
+    // kept in Caches under the row's updated_at so an edit makes a new one.
+    private var thumbCache = NSCache<NSString, UIImage>()
+    func thumb(_ f: DriveFile, big: Bool) async -> UIImage? {
+        let key = "\(f.id).\(f.updated_at)\(big ? ".big" : "")"
+        if let img = thumbCache.object(forKey: key as NSString) { return img }
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("thumbs")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent(key + ".jpg")
+        var data = try? Data(contentsOf: file)
+        if data == nil, let base = URL(string: server) {
+            var comps = URLComponents(url: base.appendingPathComponent("api/files/\(f.id)/thumb"), resolvingAgainstBaseURL: false)!
+            if big { comps.queryItems = [URLQueryItem(name: "size", value: "big")] }
+            var req = request(comps.url!)
+            req.timeoutInterval = 60
+            guard let (d, r) = try? await URLSession.shared.data(for: req), let http = r as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            data = d
+            // A server from before big previews sends the small one: shown, not kept.
+            if !big || http.value(forHTTPHeaderField: "x-thumb-size") == "480" {
+                for old in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where old.hasPrefix(f.id + ".") && old.hasSuffix(".big.jpg") == big {
+                    try? FileManager.default.removeItem(at: dir.appendingPathComponent(old))
+                }
+                try? d.write(to: file)
+            }
+        }
+        guard let data, let img = UIImage(data: data) else { return nil }
+        thumbCache.setObject(img, forKey: key as NSString)
+        return img
+    }
+
     // Older text of a note, newest first.
     func versions(_ noteId: String) -> [NoteVersion] {
         db.note_versions.filter { $0.deleted == 0 && $0.note_id == noteId }.sorted { ($0.saved_at ?? 0) > ($1.saved_at ?? 0) }
