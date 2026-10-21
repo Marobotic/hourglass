@@ -32,6 +32,42 @@ Item {
     property var shares: ({}) // file or folder id -> its link
     property var allFolders: [] // every folder, for "Move to…"
 
+    // How the files look, kept on this computer: "icons" (a grid, like
+    // Windows), "details" (a list with columns), "gallery" (big pictures).
+    // Sorting is the same in every view; folders always come first.
+    Settings {
+        id: look
+        location: "file:///" + StandardPaths.writableLocation(StandardPaths.GenericDataLocation).toString().replace(/^file:\/+/, "") + "/Hourglass/window.ini"
+        category: "drive"
+        property string view: "details"
+        property string sortBy: "name" // name | date | type | size
+        property bool sortDesc: false
+    }
+    function typeOf(f, folder) {
+        if (folder) return "Folder";
+        if (isImage(f)) return "Picture";
+        if (isVideo(f)) return "Video";
+        const ext = (/\.([a-z0-9]{1,6})$/i.exec(f.name) || [])[1];
+        return ext ? ext.toUpperCase() + " file" : "File";
+    }
+    function sortOn(key) {
+        if (look.sortBy === key) look.sortDesc = !look.sortDesc;
+        else { look.sortBy = key; look.sortDesc = key === "date" || key === "size"; }
+    }
+    readonly property var items: {
+        const key = look.sortBy, dir = look.sortDesc ? -1 : 1;
+        const val = (f, folder) => key === "size" ? (folder ? f.items || 0 : f.size || 0) : key === "date" ? f.updated_at || 0 : key === "type" ? typeOf(f, folder) : f.name.toLowerCase();
+        const by = folder => (a, b) => {
+            const x = val(a, folder), y = val(b, folder);
+            return (x < y ? -1 : x > y ? 1 : 0) * dir || a.name.localeCompare(b.name);
+        };
+        const folders = drive.folders.slice().sort(by(true)).map(f => ({ table: "folders", row: f }));
+        const files = drive.files.slice().sort(by(false)).map(f => ({ table: "files", row: f }));
+        // In a grid the files start on a line of their own, under the folders.
+        const gap = look.view !== "details" && folders.length && files.length ? [{ table: "break", row: { id: "", name: "", items: 0 } }] : [];
+        return folders.concat(gap, files);
+    }
+
     function load() {
         const args = course ? { course_id: course } : folder ? { folder_id: folder } : {};
         Api.action("list_drive", args, d => { if (d) page.drive = d; else { page.folder = ""; page.course = ""; } });
@@ -267,6 +303,17 @@ Item {
         }
     }
 
+    // A Details column heading: a click sorts by it (again: the other way).
+    component Heading: Text {
+        id: hd
+        property string key: ""
+        property string label: ""
+        text: label + (look.sortBy === key ? (look.sortDesc ? "  ↓" : "  ↑") : "")
+        color: look.sortBy === key ? Theme.fg : Theme.muted
+        font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.sortOn(hd.key) }
+    }
+
     // A folder (or the top, folderId "") that takes dragged files and folders,
     // and files dropped from the computer (uploaded into it).
     component DropTarget: DropArea {
@@ -382,6 +429,15 @@ Item {
                     Layout.fillWidth: true
                     spacing: 8
                     Text { Layout.fillWidth: true; text: "Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
+                    // How the files look.
+                    Row {
+                        spacing: 2
+                        Repeater {
+                            model: [{ key: "icons", icon: "grid", tip: "Icons" }, { key: "details", icon: "list", tip: "Details" }, { key: "gallery", icon: "gallery", tip: "Gallery" }]
+                            Btn { required property var modelData; compact: true; icon: modelData.icon; tip: modelData.tip; active: look.view === modelData.key; onClicked: look.view = modelData.key }
+                        }
+                    }
+                    Item { width: 6 }
                     Btn { visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
                     Btn { kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
                 }
@@ -503,19 +559,61 @@ Item {
                     color: Theme.faint; font.family: Theme.mono; font.pixelSize: 14
                 }
 
-                // Folders, then files
-                Repeater {
-                    model: page.drive.folders.map(f => ({ table: "folders", row: f })).concat(page.drive.files.map(f => ({ table: "files", row: f })))
+                // Details: column headings; a click sorts by that column (again: the other way).
+                RowLayout {
+                    visible: look.view === "details" && page.items.length > 0
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: -12
+                    spacing: 12
+                    Item { width: 40 }
+                    Heading { Layout.fillWidth: true; key: "name"; label: "NAME" }
+                    Heading { Layout.preferredWidth: 190; key: "date"; label: "MODIFIED" }
+                    Heading { Layout.preferredWidth: 110; key: "type"; label: "TYPE" }
+                    Heading { Layout.preferredWidth: 80; key: "size"; label: "SIZE"; horizontalAlignment: Text.AlignRight }
+                    Item { width: 34 }
+                }
+                // Icons and gallery: sort with a menu-less row of choices.
+                Row {
+                    visible: look.view !== "details" && page.items.length > 1
+                    spacing: 14
+                    Text { text: "SORT"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1 }
+                    Repeater {
+                        model: [["name", "Name"], ["date", "Modified"], ["type", "Type"], ["size", "Size"]]
+                        Text {
+                            required property var modelData
+                            text: modelData[1] + (look.sortBy === modelData[0] ? (look.sortDesc ? " ↓" : " ↑") : "")
+                            color: look.sortBy === modelData[0] ? Theme.fg : Theme.muted
+                            font.family: Theme.mono; font.pixelSize: 12
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.sortOn(parent.modelData[0]) }
+                        }
+                    }
+                }
+
+                // Folders, then files, in the chosen view.
+                Flow {
+                    id: grid
+                    Layout.fillWidth: true
+                    spacing: look.view === "details" ? 0 : 12
+                    // Gallery: as many columns of about 220 px as fit.
+                    readonly property int cols: Math.max(2, Math.floor((width + spacing) / 232))
+                    readonly property real cell: (width - (cols - 1) * spacing) / cols
+                    Repeater {
+                    model: page.items
                     Rectangle {
                         id: item
                         required property var modelData
                         readonly property bool isFolder: modelData.table === "folders"
                         readonly property var f: modelData.row
-                        Layout.fillWidth: true
-                        height: 52
-                        color: im.containsMouse ? Theme.surface2 : Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
+                        readonly property bool isBreak: modelData.table === "break"
+                        readonly property bool media: !isFolder && !isBreak && (page.isImage(f) || page.isVideo(f))
+                        clip: isBreak
+                        width: isBreak || look.view === "details" ? grid.width : look.view === "icons" ? 132 : grid.cell
+                        // In the gallery a folder is a slim tile; files get the pictures.
+                        height: isBreak ? 1 : look.view === "details" ? 48 : look.view === "icons" ? 132 : isFolder ? 52 : Math.round(grid.cell * 0.75) + 36
+                        color: isBreak ? "transparent" : im.containsMouse ? Theme.surface2 : look.view === "details" ? "transparent" : Theme.surface
+                        border.width: isBreak || look.view === "details" ? 0 : 1
+                        border.color: im.containsMouse && look.view !== "details" ? Theme.faint : Theme.border
+                        Rectangle { visible: look.view === "details"; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
                         MouseArea {
                             id: im
                             anchors.fill: parent
@@ -537,16 +635,21 @@ Item {
                             }
                             onDoubleClicked: if (!item.isFolder) page.openFile(item.f)
                         }
+                        readonly property string when: item.f.updated_at ? Util.shortDate(Util.dayOf(item.f.updated_at)) + " " + Util.clock(item.f.updated_at) : ""
+                        readonly property string shareTip: "Anyone with the link can " + (page.shares[item.f.id] && page.shares[item.f.id].access === "download" ? "view and download" : "view")
+
+                        // Details: a row with columns.
                         RowLayout {
-                            anchors { fill: parent; leftMargin: 10; rightMargin: 8 }
+                            visible: look.view === "details" && !item.isBreak
+                            anchors { fill: parent; leftMargin: 6; rightMargin: 4 }
                             spacing: 12
                             // A small picture for images, else an icon.
                             Item {
-                                width: 36; height: 36
+                                width: 34; height: 34
                                 Image {
                                     id: thumbImg
                                     anchors.fill: parent
-                                    visible: !item.isFolder && (page.isImage(item.f) || page.isVideo(item.f))
+                                    visible: item.media && look.view === "details"
                                     source: visible ? page.thumb(item.f) : ""
                                     sourceSize: Qt.size(72, 72)
                                     fillMode: Image.PreserveAspectCrop
@@ -559,18 +662,104 @@ Item {
                                     color: item.isFolder ? Theme.accent : Theme.muted
                                 }
                             }
-                            Text { Layout.fillWidth: true; text: item.f.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 15 }
-                            Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 13; color: Theme.teal; ToolTip.visible: shareHover.hovered; ToolTip.text: "Anyone with the link can " + (page.shares[item.f.id] && page.shares[item.f.id].access === "download" ? "view and download" : "view"); HoverHandler { id: shareHover } }
+                            Text { Layout.fillWidth: true; text: item.f.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 14 }
+                            Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 13; color: Theme.teal; ToolTip.visible: shareHover.hovered; ToolTip.text: item.shareTip; HoverHandler { id: shareHover } }
+                            Text { Layout.preferredWidth: 190; text: item.when; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
+                            Text { Layout.preferredWidth: 110; text: page.typeOf(item.f, item.isFolder); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
                             Text {
-                                text: item.isFolder ? item.f.items + (item.f.items === 1 ? " item" : " items")
-                                    : page.size(item.f.size) + "  ·  " + Util.shortDate(Util.dayOf(item.f.updated_at)) + " " + Util.clock(item.f.updated_at)
+                                Layout.preferredWidth: 80
+                                horizontalAlignment: Text.AlignRight
+                                text: item.isFolder ? item.f.items + (item.f.items === 1 ? " item" : " items") : page.size(item.f.size)
                                 color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
                             }
                             Btn { id: more; compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: page.openMenu(item.modelData, more, 0, more.height) }
                         }
+
+                        // Icons: a big icon (or the picture) with the name under it, like Windows.
+                        Item {
+                            visible: look.view === "icons" && !item.isBreak
+                            anchors.fill: parent
+                            Item {
+                                id: iconBox
+                                width: 72; height: 72
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                y: 12
+                                Image {
+                                    id: iconImg
+                                    anchors.fill: parent
+                                    visible: item.media && look.view === "icons"
+                                    source: visible ? page.thumb(item.f) : ""
+                                    sourceSize: Qt.size(144, 144)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+                                Icon {
+                                    anchors.centerIn: parent
+                                    visible: !iconImg.visible || iconImg.status !== Image.Ready
+                                    name: item.isFolder ? "folder" : page.kindIcon(item.f); size: 44
+                                    color: item.isFolder ? Theme.accent : Theme.muted
+                                }
+                                // A video's picture says it plays.
+                                Icon { anchors.centerIn: parent; visible: !item.isFolder && page.isVideo(item.f) && iconImg.status === Image.Ready; name: "play"; size: 18; color: "white"; style: Text.Outline; styleColor: "#80000000" }
+                            }
+                            Text {
+                                anchors { left: parent.left; right: parent.right; top: iconBox.bottom; topMargin: 8; leftMargin: 8; rightMargin: 8 }
+                                text: item.f.name
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WrapAnywhere
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                                color: Theme.fg; font.family: Theme.mono; font.pixelSize: 12
+                            }
+                            Icon { visible: !!page.shares[item.f.id]; anchors { top: parent.top; left: parent.left; margins: 8 } name: "link"; size: 12; color: Theme.teal }
+                        }
+
+                        // Gallery: the picture fills the tile, the name below it.
+                        Item {
+                            visible: look.view === "gallery" && !item.isBreak
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            Rectangle {
+                                id: galleryArt
+                                visible: !item.isFolder
+                                width: parent.width; height: parent.height - 35
+                                color: Theme.bg
+                                clip: true
+                                // A picture is loaded from this computer's copy (sharper than the
+                                // server's small preview); a video shows its preview frame.
+                                Image {
+                                    id: galleryImg
+                                    anchors.fill: parent
+                                    visible: item.media && look.view === "gallery"
+                                    source: !visible ? "" : page.isImage(item.f) && (item.f.size || 0) < 25 * 1048576 ? page.src(item.f) : page.thumb(item.f)
+                                    sourceSize: Qt.size(480, 480)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    opacity: status === Image.Ready ? 1 : 0
+                                    Behavior on opacity { NumberAnimation { duration: 180 } }
+                                }
+                                Icon {
+                                    anchors.centerIn: parent
+                                    visible: !galleryImg.visible || galleryImg.status !== Image.Ready
+                                    name: item.isFolder ? "folder" : page.kindIcon(item.f); size: 48
+                                    color: item.isFolder ? Theme.accent : Theme.faint
+                                }
+                                Icon { anchors.centerIn: parent; visible: !item.isFolder && page.isVideo(item.f) && galleryImg.status === Image.Ready; name: "play"; size: 28; color: "white"; style: Text.Outline; styleColor: "#80000000" }
+                            }
+                            RowLayout {
+                                anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 10; rightMargin: 4 }
+                                height: item.isFolder ? parent.height : 34
+                                spacing: 8
+                                Icon { visible: item.isFolder; name: "folder"; size: 16; color: Theme.accent }
+                                Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 12; color: Theme.teal }
+                                Text { Layout.fillWidth: true; text: item.f.name; elide: Text.ElideMiddle; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13 }
+                                Btn { id: moreG; compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: page.openMenu(item.modelData, moreG, 0, moreG.height) }
+                            }
+                        }
                         // A folder takes what is dragged onto it, and files dropped from the computer.
                         DropTarget { anchors.fill: parent; folderId: item.f.id; visible: item.isFolder; exclude: item.f.id }
                     }
+                }
                 }
                 Text {
                     visible: page.drive.files.length > 0
