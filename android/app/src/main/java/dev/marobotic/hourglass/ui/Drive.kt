@@ -196,6 +196,7 @@ fun DriveScreen(nav: Nav, version: Int) {
     var naming by remember { mutableStateOf<Pair<String, (String) -> Unit>?>(null) }
     var moving by remember { mutableStateOf<Pair<String, JSONObject>?>(null) } // "files" | "folders" to the row
     var sharing by remember { mutableStateOf<Pair<String, JSONObject>?>(null) }
+    var versionsOf by remember { mutableStateOf<JSONObject?>(null) }
     var shares by remember { mutableStateOf<Map<String, JSONObject>>(emptyMap()) }
     val opener = rememberFileOpener(repo)
     var mode by remember { mutableStateOf(repo.store.meta("drive_view") ?: "details") }
@@ -377,6 +378,7 @@ fun DriveScreen(nav: Nav, version: Int) {
                     add("Send file…" to { send(f) })
                     add((if (shares.containsKey(f.id)) "Shared · link…" else "Share link…") to { sharing = "files" to f })
                     add("Download…" to { saving = f; saver.launch(f.optString("name").ifBlank { "file" }) })
+                    add("Versions…" to { versionsOf = f })
                     add("Move to…" to { moving = "files" to f })
                     add("Rename" to { naming = "Rename file" to { s: String -> if (s.isNotBlank()) repo.renameDrive("files", f.id, s) } })
                     add("Delete" to { nav.sheets.confirm = Triple("Delete file?", "\"${f.optString("name")}\" will be removed from every device.") { repo.removeFile(f.id) } })
@@ -398,6 +400,7 @@ fun DriveScreen(nav: Nav, version: Int) {
     sharing?.let { (table, row) ->
         ShareDialog(repo, table, row, shares[row.id], { sharing = null; loadShares() }) { send(row) }
     }
+    versionsOf?.let { f -> VersionsDialog(repo, f) { versionsOf = null; bump++ } }
     FileOpenerHost(opener)
 }
 

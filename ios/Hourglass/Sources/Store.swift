@@ -274,6 +274,49 @@ final class Store: ObservableObject {
     }
 
     // Fetch a file's bytes once (kept until it changes size).
+    // --- Drive versions (kept on the server) ---------------------------------------
+
+    func versions(_ f: DriveFile) async throws -> FileVersions {
+        guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
+        let r = try await URLSession.shared.data(for: request(base.appendingPathComponent("api/files/\(f.id)/versions")))
+        try check(r)
+        return try JSONDecoder().decode(FileVersions.self, from: r.0)
+    }
+    func versionDiff(_ f: DriveFile, _ vid: String) async throws -> VersionDiff {
+        guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
+        let r = try await URLSession.shared.data(for: request(base.appendingPathComponent("api/files/\(f.id)/versions/\(vid)/diff")))
+        try check(r)
+        return try JSONDecoder().decode(VersionDiff.self, from: r.0)
+    }
+    /// Put a version back: what is there now is kept as a version too.
+    func restoreVersion(_ f: DriveFile, _ vid: String) async throws {
+        guard let base = URL(string: server) else { return }
+        var req = request(base.appendingPathComponent("api/files/\(f.id)/versions/\(vid)/restore"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 300
+        let (d, r) = try await URLSession.shared.data(for: req)
+        try check((d, r))
+        var row = try JSONDecoder().decode(DriveFile.self, from: d)
+        row.dirty = 0
+        if let i = db.files.firstIndex(where: { $0.id == row.id }) { db.files[i] = row }
+        await syncSoon()
+    }
+    /// An old version's bytes, as a file named like the original (for Quick Look and Share).
+    func versionFile(_ f: DriveFile, _ vid: String) async throws -> URL {
+        let dest = FileManager.default.temporaryDirectory.appendingPathComponent("versions/\(vid)/\(f.name)")
+        if FileManager.default.fileExists(atPath: dest.path) { return dest }
+        guard let base = URL(string: server) else { throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "No server"]) }
+        var req = request(base.appendingPathComponent("api/files/\(f.id)/versions/\(vid)/raw"))
+        req.timeoutInterval = 300
+        let (tmp, res) = try await URLSession.shared.download(for: req)
+        if let h = res as? HTTPURLResponse, !(200..<300).contains(h.statusCode) {
+            throw NSError(domain: "hourglass", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: h.statusCode == 404 ? "That version is no longer kept." : "HTTP \(h.statusCode)"])
+        }
+        try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: tmp, to: dest)
+        return dest
+    }
+
     /// A Drive video, playing while it streams from the server.
     func stream(_ f: DriveFile) -> URL? { URL(string: server)?.appendingPathComponent("api/files/\(f.id)/raw") }
     var authHeaders: [String: String] { ["Authorization": "Bearer \(token)"] }
@@ -938,6 +981,8 @@ final class Store: ObservableObject {
     private func request(_ url: URL) -> URLRequest {
         var r = URLRequest(url: url, timeoutInterval: 15)
         r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Which phone a change came from (the Drive's version log shows it).
+        r.setValue(UIDevice.current.name.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "iPhone", forHTTPHeaderField: "x-hourglass-device")
         return r
     }
 

@@ -149,6 +149,7 @@ struct DriveView: View {
     @State private var sharing: ShareTarget?
     @State private var shares: [String: [String: Any]] = [:]
     @State private var dropping = false // files from another app over the page
+    @State private var versionsOf: DriveFile?
     // How the files look, kept on this phone: icons (a grid), details (a list),
     // gallery (big pictures). Sorting is the same in every view.
     @AppStorage("drive_view") private var mode = "details"
@@ -344,6 +345,7 @@ struct DriveView: View {
         Button(shares[f.id] != nil ? "Shared · link…" : "Share link…") { sharing = ShareTarget(table: "files", id: f.id, name: f.name) }
         moveMenu("file", f.id, here: f.course_id == nil ? f.folder_id : "course")
         Button("Download…") { download(f) }
+        Button("Versions…") { versionsOf = f }
         Button("Rename") { ask("Rename file", f.name) { s in if !s.isEmpty { var f = f; f.name = s; store.save(f) } } }
         Menu("Put in a course") {
             ForEach(store.courses) { c in Button(c.name) { store.setFileCourse(f.id, c.id) } }
@@ -479,6 +481,7 @@ extension DriveView {
         }
         .quickLookPreview($opener.url)
         .fullScreenCover(item: $opener.viewing) { set in MediaViewer(set: set, opener: opener).environmentObject(store) }
+        .sheet(item: $versionsOf) { f in VersionsSheet(file: f).environmentObject(store) }
         .fileMover(isPresented: Binding(get: { saving != nil }, set: { if !$0 { saving = nil } }), file: saving) { r in
             switch r {
             case .success(let to): status = "Saved \(to.lastPathComponent)"

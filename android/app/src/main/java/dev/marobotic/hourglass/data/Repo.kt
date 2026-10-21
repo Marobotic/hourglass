@@ -41,6 +41,8 @@ data class SyncState(val state: String = "local", val error: String? = null, val
 // autoConfigure: point a fresh install at the build-time server. Tests pass false
 // so demo data never reaches the real account.
 const val SCHEMA = "7"
+// Which phone a change came from (the Drive's version log shows it).
+private val DEVICE_HEADER: String = java.net.URLEncoder.encode(android.os.Build.MODEL ?: "phone", "UTF-8").replace("+", "%20")
 private val SYNCED_PREFS = setOf("time_format", "week_start", "sound")
 val BUILTIN_RINGTONES = listOf("classic", "klaxon", "siren", "digital", "rising", "bell") // bump when a table or column is added
 
@@ -468,6 +470,51 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     // Drive links ("anyone with the link can view"), kept on the server. Each
     // one: { token, url, access: view | download, file_id | folder_id, expires_at, active }.
+    // --- Drive versions (kept on the server) ---------------------------------------
+
+    fun versions(id: String, done: (JSONObject?, String?) -> Unit) = scope.launch {
+        val r = runCatching { JSONObject(http("GET", "${BuildConfig.SERVER}/api/files/$id/versions", token ?: error("Sign in first"), null)) }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+    fun versionDiff(id: String, vid: String, done: (JSONObject?, String?) -> Unit) = scope.launch {
+        val r = runCatching { JSONObject(http("GET", "${BuildConfig.SERVER}/api/files/$id/versions/$vid/diff", token ?: error("Sign in first"), null)) }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+    // Put a version back: what is there now is kept as a version too.
+    fun restoreVersion(id: String, vid: String, done: (String?) -> Unit) = scope.launch {
+        val err = runCatching {
+            val row = JSONObject(http("POST", "${BuildConfig.SERVER}/api/files/$id/versions/$vid/restore", token ?: error("Sign in first"), "{}"))
+            store.applyRemote("files", row)
+        }.exceptionOrNull()?.message
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(err) }
+    }
+    // An old version's bytes, kept in the cache (they never change).
+    fun versionFile(id: String, vid: String, done: (File?, String?) -> Unit) = scope.launch {
+        val r = runCatching {
+            val f = File(ctx.cacheDir, "versions/$id/$vid")
+            if (!f.exists()) {
+                val c = URL("${BuildConfig.SERVER}/api/files/$id/versions/$vid/raw").openConnection() as HttpURLConnection
+                c.setRequestProperty("Authorization", "Bearer ${token ?: error("Sign in first")}")
+                c.connectTimeout = 8000
+                c.readTimeout = 120_000
+                if (c.responseCode != 200) error(if (c.responseCode == 404) "That version is no longer kept." else "HTTP ${c.responseCode}")
+                f.parentFile?.mkdirs()
+                val tmp = File(f.parentFile, "$vid.part")
+                c.inputStream.use { i -> tmp.outputStream().use { i.copyTo(it, 64 * 1024) } }
+                tmp.renameTo(f)
+            }
+            f
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
+    }
+    fun saveVersionTo(id: String, vid: String, dest: android.net.Uri, done: (String?) -> Unit) = versionFile(id, vid) { f, err ->
+        if (f == null) { done(err); return@versionFile }
+        scope.launch {
+            val e = runCatching { (ctx.contentResolver.openOutputStream(dest, "wt") ?: error("Could not write there")).use { o -> f.inputStream().use { it.copyTo(o, 64 * 1024) } } }.exceptionOrNull()?.message
+            kotlinx.coroutines.withContext(Dispatchers.Main) { done(e) }
+        }
+    }
+
     fun shares(done: (List<JSONObject>?, String?) -> Unit) = scope.launch {
         val r = runCatching {
             val a = org.json.JSONArray(http("GET", "${BuildConfig.SERVER}/api/shares", token ?: error("Sign in first"), null))
@@ -550,6 +597,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             c.connectTimeout = 8000
             c.readTimeout = 600_000
             c.setRequestProperty("Authorization", "Bearer $t")
+            c.setRequestProperty("x-hourglass-device", DEVICE_HEADER)
             c.setRequestProperty("Content-Type", mime)
             if (size > 0) c.setFixedLengthStreamingMode(size) else c.setChunkedStreamingMode(64 * 1024)
             // Copied by hand to count what has gone, and how fast (over the last three seconds).
@@ -807,6 +855,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         c.connectTimeout = 8000
         c.readTimeout = if (raw != null) 120000 else 15000
         if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
+        c.setRequestProperty("x-hourglass-device", DEVICE_HEADER)
         if (body != null || raw != null) {
             c.doOutput = true
             c.setRequestProperty("Content-Type", if (raw != null) "application/octet-stream" else "application/json")
