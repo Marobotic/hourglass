@@ -129,22 +129,28 @@ struct BurstLayer: View {
     var body: some View {
         TimelineView(.animation(paused: motion.bursts.isEmpty)) { tl in
             Canvas { ctx, _ in
-                for b in motion.bursts {
-                    let t = tl.date.timeIntervalSince(b.start)
-                    guard t >= 0, t < 0.9 else { continue }
-                    var r = b.seed
-                    func rnd() -> Double { r = r &* 6364136223846793005 &+ 1442695040888963407; return Double(r >> 11) / Double(1 << 53) }
-                    for i in 0..<16 {
-                        let angle = Double(i) / 16 * 2 * .pi + rnd() * 0.4
-                        let speed = 120 + rnd() * 160
-                        let x = b.at.x + CGFloat(cos(angle) * speed * t)
-                        let y = b.at.y + CGFloat(sin(angle) * speed * t - 160 * t + 520 * t * t)
-                        ctx.fill(Path(CGRect(x: x, y: y, width: 3, height: 3)), with: .color((i % 3 == 0 ? H.accent : H.gold).opacity(max(0, 1 - t / 0.9))))
-                    }
-                }
+                for b in motion.bursts { Self.draw(b, at: tl.date, in: &ctx) }
             }
         }
         .allowsHitTesting(false)
         .ignoresSafeArea()
+    }
+
+    // One burst's 16 pixels at `now`; split out (with explicit types) so the compiler can type-check it.
+    private static func draw(_ b: Motion.Burst, at now: Date, in ctx: inout GraphicsContext) {
+        let t: Double = now.timeIntervalSince(b.start)
+        guard t >= 0, t < 0.9 else { return }
+        var r: UInt64 = b.seed
+        func rnd() -> Double { r = r &* 6364136223846793005 &+ 1442695040888963407; return Double(r >> 11) / Double(UInt64(1) << 53) }
+        let fade: Double = max(0, 1 - t / 0.9)
+        for i in 0..<16 {
+            let angle: Double = Double(i) / 16 * 2 * Double.pi + rnd() * 0.4
+            let speed: Double = 120 + rnd() * 160
+            let dx: Double = cos(angle) * speed * t
+            let dy: Double = sin(angle) * speed * t - 160 * t + 520 * t * t
+            let rect = CGRect(x: b.at.x + CGFloat(dx), y: b.at.y + CGFloat(dy), width: 3, height: 3)
+            let color: Color = i % 3 == 0 ? H.accent : H.gold
+            ctx.fill(Path(rect), with: .color(color.opacity(fade)))
+        }
     }
 }
