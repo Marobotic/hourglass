@@ -1,5 +1,6 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -175,8 +176,12 @@ fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFo
                         .clickable { if (!done) Motion.burstAt(where); rt.toggleBox(at); onEdited() },
                     contentAlignment = Alignment.Center,
                 ) {
+                    val boxShape = RoundedCornerShape(3.dp)
                     Box(
-                        Modifier.size(16.dp).background(if (done) HColors.accent else HColors.bg).border(if (done) 0.dp else 1.dp, HColors.muted),
+                        Modifier
+                            .size(16.dp)
+                            .background(if (done) HColors.orange else HColors.bg, boxShape)
+                            .border(1.5.dp, if (done) HColors.orange else HColors.muted, boxShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (done) Icon(Icons.Outlined.Check, null, tint = Color.White, modifier = Modifier.size(12.dp))

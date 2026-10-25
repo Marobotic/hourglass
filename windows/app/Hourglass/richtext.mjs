@@ -68,15 +68,15 @@ export function toHtml(md, ctx = {}) {
   return { html, names };
 }
 
+// Indent spaces, kept when inserted on their own (HTML would fold them away).
+const pad = (indent) => (indent ? `<span style="white-space:pre-wrap">${"  ".repeat(indent)}</span>` : "");
+
 /** A to-do line's insides: indent, the hidden box, then its text (done or not). */
 export function todoHtml(indent, checked, runs) {
   const done = !!checked;
   const space = done ? `<span style="color:${DONE_INK}; text-decoration: line-through"> </span>` : `<span style="color:${INK}; text-decoration: none"> </span>`;
   return pad(indent) + `<span style="color:transparent; letter-spacing: 5px">${checked ? "☑" : "☐"}</span>` + space + runs.map((r) => runHtml(r, done)).join("");
 }
-
-// Indent spaces, kept when inserted on their own (HTML would fold them away).
-const pad = (indent) => (indent ? `<span style="white-space:pre-wrap">${"  ".repeat(indent)}</span>` : "");
 
 /** A list marker to insert before what is typed next ("• ", "☐ ", "1. "). */
 export function prefixHtml(prefix) {

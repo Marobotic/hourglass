@@ -262,6 +262,7 @@ final class RichNoteController: ObservableObject {
         while boxLayers.count > boxes.count { boxLayers.removeLast().removeFromSuperlayer() }
         while boxLayers.count < boxes.count {
             let l = CALayer()
+            l.cornerRadius = 3
             l.borderColor = UIColor(H.muted).cgColor
             let tick = CAShapeLayer()
             tick.strokeColor = UIColor.white.cgColor
@@ -283,8 +284,9 @@ final class RichNoteController: ObservableObject {
             let rect = tv.firstRect(for: r)
             l.isHidden = rect.isNull || rect.isInfinite
             l.frame = CGRect(x: rect.minX, y: rect.midY - 8, width: 16, height: 16)
-            l.backgroundColor = done ? UIColor(H.accent).cgColor : UIColor(H.bg).cgColor
-            l.borderWidth = done ? 0 : 1
+            l.backgroundColor = done ? UIColor(H.orange).cgColor : UIColor(H.bg).cgColor
+            l.borderColor = done ? UIColor(H.orange).cgColor : UIColor(H.muted).cgColor
+            l.borderWidth = 1.5
             l.sublayers?.first?.isHidden = !done
         }
         CATransaction.commit()

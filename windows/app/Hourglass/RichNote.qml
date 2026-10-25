@@ -226,11 +226,23 @@ ScrollView {
             if (k.kind === "todo") {
                 const g = start + k.indent * 2;
                 const r = ed.positionToRectangle(g), r2 = ed.positionToRectangle(g + 1);
-                out.push({ at: g, x: r.x, y: r.y, h: r.height, w: Math.max(12, r2.x - r.x), checked: !!k.checked });
+                out.push({ at: g, x: r.x, y: r.y, h: r.height, w: Math.max(16, r2.x - r.x), checked: !!k.checked });
             }
             start = i + 1;
         }
         boxes = out;
+    }
+    property int hoveredBoxAt: -1
+    function isOverBox(x, y) {
+        if (!boxes || !boxes.length) return false;
+        const side = 16;
+        for (let i = 0; i < boxes.length; i++) {
+            const b = boxes[i];
+            const bx = b.x + 1;
+            const by = b.y + (b.h - side) / 2;
+            if (x >= bx - 4 && x <= bx + side + 4 && y >= by - 4 && y <= by + side + 4) return true;
+        }
+        return false;
     }
     // Text edits and wrapping move the boxes: placed again once things settle.
     property bool placing: false
@@ -320,34 +332,54 @@ ScrollView {
         Keys.onEnterPressed: event => rn.onEnter(event)
         Keys.onTabPressed: event => { event.accepted = rn.indent(1); }
         Keys.onBacktabPressed: event => { event.accepted = rn.indent(-1); }
-        HoverHandler { cursorShape: ed.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor }
+        HoverHandler {
+            id: edHover
+            cursorShape: (ed.hoveredLink || rn.hoveredBoxAt !== -1 || rn.isOverBox(edHover.point.position.x, edHover.point.position.y)) ? Qt.PointingHandCursor : Qt.IBeamCursor
+        }
         TapHandler {
             id: tap
             acceptedButtons: Qt.LeftButton
             gesturePolicy: TapHandler.DragThreshold
-            onTapped: (eventPoint, button) => rn.clicked(eventPoint.position.x, eventPoint.position.y, tap.point.modifiers)
+            onTapped: (eventPoint, button) => {
+                if (rn.isOverBox(eventPoint.position.x, eventPoint.position.y)) return;
+                rn.clicked(eventPoint.position.x, eventPoint.position.y, tap.point.modifiers);
+            }
         }
-        // The to-dos' boxes, drawn over their hidden ☐/☑: the old themed box.
+        // The to-dos' boxes, drawn over their hidden ☐/☑: themed orange box matching Tasks.
         Repeater {
             model: rn.boxes
             Rectangle {
                 id: box
                 required property var modelData
-                readonly property int side: Math.max(12, Math.min(16, modelData.h - 4))
+                readonly property int side: 16
                 x: modelData.x + 1
                 y: modelData.y + (modelData.h - side) / 2
                 width: side; height: side
-                color: modelData.checked ? Theme.accent : boxMouse.containsMouse ? Theme.surface2 : Theme.bg
-                border.width: modelData.checked ? 0 : 1
-                border.color: boxMouse.containsMouse ? Theme.accent : Theme.muted
+                radius: 3
+                color: modelData.checked
+                       ? (boxMouse.containsMouse ? Qt.lighter(Theme.orange, 1.08) : Theme.orange)
+                       : (boxMouse.containsMouse ? Theme.alpha(Theme.orange, 0.12) : "transparent")
+                border.width: 1.5
+                border.color: modelData.checked
+                              ? (boxMouse.containsMouse ? Qt.lighter(Theme.orange, 1.08) : Theme.orange)
+                              : (boxMouse.containsMouse ? Theme.orange : Theme.muted)
                 Behavior on color { ColorAnimation { duration: 120 } }
-                Icon { anchors.centerIn: parent; visible: box.modelData.checked; name: "check"; size: box.side - 5; color: Theme.accentInk }
+                Behavior on border.color { ColorAnimation { duration: 120 } }
+                Icon {
+                    anchors.centerIn: parent
+                    visible: box.modelData.checked
+                    name: "check"
+                    size: 11
+                    color: "#ffffff"
+                }
                 MouseArea {
                     id: boxMouse
                     anchors.fill: parent
                     anchors.margins: -4
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    onEntered: rn.hoveredBoxAt = box.modelData.at
+                    onExited: if (rn.hoveredBoxAt === box.modelData.at) rn.hoveredBoxAt = -1
                     onClicked: rn.tick(box.modelData.at)
                 }
             }
