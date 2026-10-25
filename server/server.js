@@ -606,6 +606,10 @@ createServer(async (req, res) => {
       return await proxyAuth(req, res, path);
     }
     const t = tenant(email);
+    const clientTz = req.headers["x-timezone"] || req.headers["x-client-timezone"];
+    if (clientTz) {
+      try { t.service.ensureHomeClock(clientTz); } catch {}
+    }
     if (path === "/api/account") return send(res, 200, { email: t.email || null });
     if (await assistant.routes(t, req, res, path)) return;
     const base = process.env.HOURGLASS_URL || `http://${req.headers.host}`;

@@ -845,6 +845,9 @@ function zoneOf(t, name) {
 }
 
 function clockCommand(t, raw) {
+  if (typeof t.ensureHomeClock === "function") {
+    try { t.ensureHomeClock(); } catch {}
+  }
   const s = clean(raw).toLowerCase();
   let m;
   const h12 = t.settings().time_format !== "24h";

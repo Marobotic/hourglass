@@ -86,6 +86,7 @@ final class Store: ObservableObject {
         if let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode(DB.self, from: data) { db = d }
         // The share extension reads the server and session from the app group.
         SharedBox.save(server: server, session: Keychain.get("session"))
+        ensureHomeClock()
         applyZone()
     }
 
@@ -474,6 +475,19 @@ final class Store: ObservableObject {
     // Every change this phone makes is stamped here: those don't glow.
     private func stamp(_ old: Int64) -> Int64 { Motion.shared.touchLocal(); return max(nowMs(), old + 1) }
 
+    func ensureHomeClock() {
+        let active = db.clocks.filter { $0.deleted == 0 }
+        if active.isEmpty {
+            let z = TimeZone.current.identifier
+            let label = z.components(separatedBy: "/").last?.replacingOccurrences(of: "_", with: " ") ?? z
+            save(Clock(zone: z, label: label, position: 0, home: 1))
+        } else if !active.contains(where: { $0.home == 1 }) {
+            var first = active[0]
+            first.home = 1
+            save(first)
+        }
+    }
+
     func applyZone() {
         Dates.zone = db.clocks.first { $0.deleted == 0 && $0.home == 1 }.flatMap { TimeZone(identifier: $0.zone) } ?? .current
         Ringtones.current = ringtone
@@ -721,7 +735,8 @@ final class Store: ObservableObject {
     var clocks: [Clock] { db.clocks.filter { $0.deleted == 0 }.sorted { ($0.position, $0.updated_at) < ($1.position, $1.updated_at) } }
     func addClock(_ zone: String) {
         guard !clocks.contains(where: { $0.zone == zone }) else { return }
-        save(Clock(zone: zone, label: zone.components(separatedBy: "/").last!.replacingOccurrences(of: "_", with: " "), position: (clocks.map(\.position).max() ?? -1) + 1))
+        let isFirst = clocks.isEmpty
+        save(Clock(zone: zone, label: zone.components(separatedBy: "/").last!.replacingOccurrences(of: "_", with: " "), position: (clocks.map(\.position).max() ?? -1) + 1, home: isFirst ? 1 : 0))
     }
     func removeClock(_ k: Clock) { var k = k; k.deleted = 1; save(k) }
 
@@ -984,6 +999,7 @@ final class Store: ObservableObject {
         r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         // Which phone a change came from (the Drive's version log shows it).
         r.setValue(UIDevice.current.name.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "iPhone", forHTTPHeaderField: "x-hourglass-device")
+        r.setValue(Dates.zone.identifier, forHTTPHeaderField: "x-timezone")
         return r
     }
 

@@ -184,6 +184,21 @@ test("world clock: add by city, home zone, day and difference", async () => {
   store.setMeta("tz", TZ);
 });
 
+test("world clock: auto-detects timezone and sets first world clock as home", () => {
+  const freshStore = new Store(":memory:");
+  const freshService = new Service(freshStore, { clock: () => Date.now() });
+  assert.equal(freshStore.all("clocks").length, 0);
+  const home = freshService.ensureHomeClock("America/Toronto");
+  assert.equal(home.zone, "America/Toronto");
+  assert.equal(home.label, "Toronto");
+  assert.equal(home.home, 1);
+  assert.equal(freshService.tz, "America/Toronto");
+  const list = freshService.listClocks();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].zone, "America/Toronto");
+  assert.equal(list[0].home, true);
+});
+
 test("sync: pushed rows get their rev back, so the next edit is not a conflict", async () => {
   const id = crypto.randomUUID();
   const row = { id, title: "Draft", body: "one", updated_at: Date.now() };

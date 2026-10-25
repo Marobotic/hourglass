@@ -178,7 +178,7 @@ function remoteError(status, out, signedIn) {
 async function remote(path, { method = "GET", body, bearer = config().token, raw } = {}) {
   // Signed out: only sign-in itself goes to the server.
   if (!bearer && !path.startsWith("/auth/")) throw Object.assign(new Error("Sign in to Hourglass first."), { status: 401 });
-  const headers = bearer ? { authorization: `Bearer ${bearer}`, "x-hourglass-device": deviceName() } : {};
+  const headers = bearer ? { authorization: `Bearer ${bearer}`, "x-hourglass-device": deviceName(), "x-timezone": service.tz } : { "x-timezone": service.tz };
   if (body !== undefined && !raw) headers["content-type"] = "application/json";
   let r;
   // A dropped connection (the server restarted, a kept-alive socket went stale)
@@ -301,7 +301,7 @@ async function syncOnce() {
     sync.state = "signed_out";
     return;
   }
-  const headers = { authorization: `Bearer ${remoteToken}`, "content-type": "application/json" };
+  const headers = { authorization: `Bearer ${remoteToken}`, "content-type": "application/json", "x-timezone": service.tz };
   try {
     if (sync.pending) {
       const body = { changes: Object.fromEntries(TABLE_NAMES.map((t) => [t, dirty[t].map((r) => ({ ...r, base_rev: r.rev }))])) };
@@ -1272,6 +1272,7 @@ createServer((req, res) => {
 }).listen(PORT, "127.0.0.1", async () => {
   log(`hourglassd on http://127.0.0.1:${PORT} (data ${DATA_DIR}, tz ${service.tz})`);
   config();
+  service.ensureHomeClock();
   await adoptMusicSession();
   scheduleSync(0);
 });

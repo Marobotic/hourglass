@@ -114,11 +114,14 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     }
 
     init {
-        if (autoConfigure) runCatching {
-            // Older builds kept the token in plain text; seal it and drop the copy.
-            store.meta("token")?.let { store.setMeta("token_sealed", Vault.seal(it)); store.setMeta("token", null) }
-            // Builds no longer ship a token: a fresh install signs in.
-            store.setMeta("server", null)
+        if (autoConfigure) {
+            ensureHomeClock()
+            runCatching {
+                // Older builds kept the token in plain text; seal it and drop the copy.
+                store.meta("token")?.let { store.setMeta("token_sealed", Vault.seal(it)); store.setMeta("token", null) }
+                // Builds no longer ship a token: a fresh install signs in.
+                store.setMeta("server", null)
+            }
         }
         syncEnabled = autoConfigure
         // New tables since the last run: pull everything again once, or rows
@@ -243,9 +246,20 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     // --- world clock (synced) ---
     fun clocks() = store.all("clocks").sortedWith(compareBy({ it.optInt("position") }, { it.optLong("updated_at") }))
+    fun ensureHomeClock() {
+        val list = clocks().filter { it.optInt("deleted") == 0 }
+        if (list.isEmpty()) {
+            val z = ZoneId.systemDefault().id
+            store.upsert("clocks", mapOf("zone" to z, "label" to z.substringAfterLast('/').replace('_', ' '), "position" to 0, "home" to 1))
+        } else if (list.none { it.optInt("home") == 1 }) {
+            store.upsert("clocks", mapOf("home" to 1), list[0].optString("id"))
+        }
+    }
     fun addClock(zone: String) {
-        if (clocks().any { it.optString("zone") == zone }) return
-        store.upsert("clocks", mapOf("zone" to zone, "label" to zone.substringAfterLast('/').replace('_', ' '), "position" to (clocks().maxOfOrNull { it.optInt("position") } ?: -1) + 1))
+        val list = clocks().filter { it.optInt("deleted") == 0 }
+        if (list.any { it.optString("zone") == zone }) return
+        val isFirst = list.isEmpty()
+        store.upsert("clocks", mapOf("zone" to zone, "label" to zone.substringAfterLast('/').replace('_', ' '), "position" to (list.maxOfOrNull { it.optInt("position") } ?: -1) + 1, "home" to if (isFirst) 1 else 0))
     }
     fun removeClock(id: String) = store.remove("clocks", id)
     fun setHomeClock(id: String) {
@@ -857,6 +871,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         c.readTimeout = if (raw != null) 120000 else 15000
         if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
         c.setRequestProperty("x-hourglass-device", DEVICE_HEADER)
+        c.setRequestProperty("x-timezone", zone.id)
         if (body != null || raw != null) {
             c.doOutput = true
             c.setRequestProperty("Content-Type", if (raw != null) "application/octet-stream" else "application/json")

@@ -809,6 +809,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     }
 
     if (path === "/api/assistant/message" && m === "POST") {
+      const clientTz = req.headers["x-timezone"] || req.headers["x-client-timezone"];
+      if (clientTz) {
+        try { t.service.ensureHomeClock(clientTz); } catch {}
+      }
       const body = await readJson(req);
       const files = attachments(t, body.files);
       const text = String(body.text || "").trim() || (files.length ? "(see the attached file" + (files.length > 1 ? "s)" : ")") : "");
