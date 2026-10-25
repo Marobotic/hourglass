@@ -106,10 +106,10 @@ function GetInstalledVersion(): String;
 var
   Lines: TArrayOfString;
   I, P1, P2: Integer;
-  AppJs: String;
+  AppJs, FileVer, RegVer: String;
 begin
-  Result := '';
-  if RegQueryStringValue(HKCU, UninstKey, 'DisplayVersion', Result) and (Result <> '') then Exit;
+  FileVer := '';
+  RegVer := '';
   AppJs := ExpandConstant('{localappdata}\Programs\Hourglass\server\app.js');
   if FileExists(AppJs) and LoadStringsFromFile(AppJs, Lines) then begin
     for I := 0 to GetArrayLength(Lines) - 1 do begin
@@ -118,15 +118,21 @@ begin
         P1 := P1 + Length('VERSION = "');
         P2 := Pos('"', Copy(Lines[I], P1, Length(Lines[I])));
         if P2 > 0 then begin
-          Result := Copy(Lines[I], P1, P2 - 1);
-          Exit;
+          FileVer := Copy(Lines[I], P1, P2 - 1);
+          Break;
         end;
       end;
     end;
   end;
-  if FileExists(ExpandConstant('{localappdata}\Programs\Hourglass\windows\Hourglass.vbs')) or
-     FileExists(ExpandConstant('{localappdata}\Programs\Hourglass\windows\qt\bin\Hourglass.exe')) then
-    Result := 'an older version';
+  if FileVer <> '' then
+    Result := FileVer
+  else if RegQueryStringValue(HKCU, UninstKey, 'DisplayVersion', RegVer) and (RegVer <> '') then
+    Result := RegVer
+  else if FileExists(ExpandConstant('{localappdata}\Programs\Hourglass\windows\Hourglass.vbs')) or
+          FileExists(ExpandConstant('{localappdata}\Programs\Hourglass\windows\qt\bin\Hourglass.exe')) then
+    Result := 'an older version'
+  else
+    Result := '';
 end;
 
 function InitializeSetup(): Boolean;
