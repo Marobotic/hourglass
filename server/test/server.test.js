@@ -7,6 +7,7 @@ import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
 import { zonedToEpoch } from "../../core/index.js";
 import { createHandler } from "../app.js";
+import { createRingRoutes, snoozeId } from "../ring.js";
 
 const TZ = "Europe/London";
 let clockMs = zonedToEpoch("2026-09-29", "08:30", TZ); // Tuesday, mid-lecture
@@ -17,9 +18,38 @@ const token = "t0k";
 let base, server;
 
 before(async () => {
-  server = createServer(createHandler({ store, service, token, icalToken: "ik" }));
+  const ringRoute = createRingRoutes({ store, service });
+  server = createServer(createHandler({ store, service, token, icalToken: "ik", extra: ringRoute }));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${server.address().port}`;
+});
+
+test("ring stop is visible to state and an immediate watch", async () => {
+  const at = 123456789;
+  assert.equal((await call("POST", "/api/ring/stop", { alarm_id: "ring-a", at, action: "snoozed", device: "phone" })).status, 200);
+  const state = await call("GET", `/api/ring/state?alarm_id=ring-a&at=${at}`);
+  assert.deepEqual(state.body.stopped, { action: "snoozed", device: "phone", ts: state.body.stopped.ts });
+  assert.deepEqual(JSON.parse(store.get("prefs", "ring_stop:ring-a").value), { at, ...state.body.stopped });
+  assert.equal((await call("GET", `/api/ring/watch?alarm_id=ring-a&at=${at}`)).body.stopped.device, "phone");
+});
+
+test("a waiting ring watcher wakes promptly on stop", async () => {
+  const at = 123456790;
+  const waiting = fetch(`${base}/api/ring/watch?alarm_id=ring-wait&at=${at}`, { headers: { authorization: `Bearer ${token}` } });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const started = Date.now();
+  await call("POST", "/api/ring/stop", { alarm_id: "ring-wait", at, action: "dismissed", device: "desktop" });
+  assert.equal((await (await waiting).json()).stopped.device, "desktop");
+  assert.ok(Date.now() - started < 100, `watch woke after ${Date.now() - started}ms`);
+});
+
+test("dismiss marks its shared snooze timer done and ring routes require auth", async () => {
+  const at = 123456791;
+  const id = snoozeId("ring-snooze", at);
+  service.startTimer({ id, minutes: 5, label: "Alarm (snoozed)" });
+  await call("POST", "/api/ring/stop", { alarm_id: "ring-snooze", at, action: "dismissed", device: "phone" });
+  assert.equal(store.get("timers", id).state, "done");
+  assert.equal((await fetch(`${base}/api/ring/state?alarm_id=x&at=${at}`)).status, 401);
 });
 after(() => server.close());
 

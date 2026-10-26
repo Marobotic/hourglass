@@ -4,7 +4,7 @@
 import { MONTHS, WEEKDAYS, addDays, formatTime, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
 import { expand } from "../recurrence.js";
 import { markMap, markOf, resolveNow, sessionNotes } from "../now.js";
-import { finishedTimer, nextAlarm, reminderState } from "../alarms.js";
+import { alarmLabel, finishedTimer, nextAlarm, reminderState } from "../alarms.js";
 import { BUILTIN_RINGTONES, MARKS, PALETTE, REMINDER_TONES, markId, parseWeekday } from "../model.js";
 import { numberedTitle } from "./store.js";
 import { plainText } from "../noteformat.js";
@@ -456,7 +456,7 @@ export class Service {
   listAlarms() {
     const data = this.data();
     return data.alarms
-      .map((a) => ({ ...a, next_at: nextAlarm(a, data, this.clock(), this.tz) }))
+      .map((a) => ({ ...a, label: alarmLabel(a, data), next_at: nextAlarm(a, data, this.clock(), this.tz) }))
       .sort((a, b) => (a.next_at ?? Infinity) - (b.next_at ?? Infinity));
   }
 

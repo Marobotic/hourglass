@@ -27,6 +27,7 @@ import { makeClip } from "./sounds.js";
 import { createAssistant } from "./assistant.js";
 import { createShares } from "./share.js";
 import { createVersions, isText, lineDiff, whoOf } from "./versions.js";
+import { createRingRoutes } from "./ring.js";
 
 const dataDir = resolve(process.env.HOURGLASS_DATA || join(import.meta.dirname, "data"));
 const driveDir = process.env.HOURGLASS_DRIVE_DIR ? resolve(process.env.HOURGLASS_DRIVE_DIR) : null;
@@ -109,12 +110,13 @@ function tenant(email) {
   const store = new Store(join(dir, "hourglass.db"));
   const service = new Service(store);
   t = { email: key || owner, dir, store, service, icalKey: secret(dir, "ical_key"), aiKey: readKey(dir) };
+  t.ringRoute = createRingRoutes(t);
   if (t.aiKey) aiKeys.set(t.aiKey, key || owner);
   // The assistant's own key, so its MCP calls work straight after a restart.
   const ak = existsSync(join(dir, "assistant_key")) ? readFileSync(join(dir, "assistant_key"), "utf8").trim() : "";
   if (ak) { t.assistantKey = ak; aiKeys.set(ak, key || owner); }
   t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL,
-    extra: async (req, res, url, path) => (await driveRoutes(t, req, res, url, path)) || (await shares.routes(t, req, res, url, path)) || ringtoneRoutes(t, req, res, url, path) });
+    extra: async (req, res, url, path) => (await t.ringRoute(req, res, url, path)) || (await driveRoutes(t, req, res, url, path)) || (await shares.routes(t, req, res, url, path)) || ringtoneRoutes(t, req, res, url, path) });
   shares.load(t);
   tenants.set(key, t);
   return t;

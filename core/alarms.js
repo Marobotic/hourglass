@@ -3,6 +3,15 @@ import { expand } from "./recurrence.js";
 
 const HORIZON_DAYS = 14;
 
+// Give default-labelled class alarms enough context when they ring or appear in a list.
+export function alarmLabel(alarm, data) {
+  if (alarm.label && alarm.label !== "Alarm") return alarm.label;
+  if (!alarm.lead_event_id && !alarm.lead_course_id) return alarm.label || "Alarm";
+  const event = data.events.find((e) => e.id === alarm.lead_event_id && !e.deleted);
+  const course = data.courses.find((c) => c.id === (alarm.lead_course_id || event?.course_id) && !c.deleted);
+  return `${course?.name || event?.title || "Class"} in ${alarm.lead_minutes ?? 10} min`;
+}
+
 // Next instant (ms) an alarm rings after fromMs, or null.
 export function nextAlarm(alarm, data, fromMs, tz) {
   if (alarm.deleted || !alarm.enabled) return null;
@@ -40,7 +49,7 @@ export function dueBetween(data, fromMs, toMs, tz) {
   const out = [];
   for (const a of data.alarms ?? []) {
     const t = nextAlarm(a, data, fromMs, tz);
-    if (t !== null && t <= toMs) out.push({ kind: "alarm", id: a.id, at: t, label: a.label || "Alarm" });
+    if (t !== null && t <= toMs) out.push({ kind: "alarm", id: a.id, at: t, label: alarmLabel(a, data) });
   }
   for (const t of data.timers ?? []) {
     if (t.deleted || t.state !== "running" || !t.ends_at) continue;

@@ -15,7 +15,7 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
-import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue } from "../../core/index.js";
+import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
 
 const HOME = homedir();
@@ -366,6 +366,8 @@ const SNOOZED = " (snoozed)";
 const WAKE_PREFIX = "Are you up? ";
 const baseLabel = (l) => String(l).replace(WAKE_PREFIX, "").replace(/( \(snoozed\))+$/, "");
 const DEVICE = hostname();
+const ringClient = createRingClient({ server: () => config().server, token: () => config().token, device: () => DEVICE });
+const localRings = new Set();
 
 // What every alarm did on this computer, so a missed alarm shows whether it
 // rang and how it ended: a person (Dismiss held, Snooze), another device,
@@ -410,6 +412,7 @@ function shareStop(item, action) {
   if (item.test || item.id === "wake-check") return;
   store.upsert("prefs", { id: stopKey(item.id), value: JSON.stringify({ at: item.at, action, device: DEVICE, ts: Date.now() }) });
   scheduleSync(0);
+  ringClient.stop(item, action);
 }
 
 // One snooze timer per ring, whichever device snoozes: the id comes from the
@@ -486,6 +489,10 @@ function playLoop(item) {
 
 function ring(item) {
   if (ringing.has(item.id)) return;
+  if (item.kind === "timer") {
+    const timer = service.data().timers.find((t) => t.id === item.id);
+    if (!timer || timer.deleted || timer.state !== "running" || timer.ends_at !== item.at) return;
+  }
   const kind = item.kind === "timer" ? "timer" : "alarm";
   const late = Math.round((now() - item.at) / 1000);
   if (!item.test) ringLog(item.label, "due", `${kind} for ${new Date(item.at).toLocaleTimeString("en-GB", { timeZone: service.tz })}` + (late > 5 ? `, ${late}s late` : ""));
@@ -505,6 +512,12 @@ function ring(item) {
   if (other) return ringLog(item.label, "skipped", `already ${other.action} on ${other.device}`);
   notify(item);
   ringing.set(item.id, { ...item, wake, started: Date.now(), stop: playLoop(item) });
+  ringClient.watch(item, () => ringing.has(item.id), (other) => {
+    const current = ringing.get(item.id);
+    if (!current) return;
+    ring_stop(item.id, other.action === "snoozed" ? "snoozed" : "dismissed", `on ${other.device}`);
+    autoSnoozes.delete(baseLabel(current.label));
+  });
   saveOpen();
   scheduleSync(0);
 }
@@ -540,13 +553,24 @@ function snooze(id, via) {
 // Nobody answered in 10 minutes: snooze by itself, up to 3 times.
 function ringOut(id) {
   const r = ringing.get(id);
-  if (!r) return;
+  // Asking the server takes a moment and the per-second check keeps calling: once per ring.
+  if (!r || r.out) return;
+  r.out = true;
   const base = baseLabel(r.label);
   const n = autoSnoozes.get(base) ?? 0;
   if (r.kind === "alarm" && !r.test && n < AUTO_SNOOZES) {
     autoSnoozes.set(base, n + 1);
-    ring_stop(id, "auto-snoozed", `nobody answered for 10 min, rings again in 5 min (${n + 1} of ${AUTO_SNOOZES})`);
-    snoozeTimer(r);
+    ringClient.state(r).then((stopped) => {
+      if (stopped) { ring_stop(id, stopped.action, `on ${stopped.device}`); autoSnoozes.delete(base); return; }
+      ring_stop(id, "auto-snoozed", `nobody answered for 10 min, rings again in 5 min (${n + 1} of ${AUTO_SNOOZES})`);
+      snoozeTimer(r);
+    }).catch(() => {
+      const local = { id: `local-auto:${r.id}:${r.at}:${Date.now()}`, kind: "alarm", at: now() + 5 * 60000, label: r.label };
+      const timer = setTimeout(() => { localRings.delete(timer); ring(local); }, 5 * 60000);
+      localRings.add(timer);
+      ring_stop(id, "auto-snoozed", "server unavailable, rings again locally in 5 min");
+    });
+    return;
   } else {
     autoSnoozes.delete(base);
     ring_stop(id, "rang out", "nobody answered for 10 min");

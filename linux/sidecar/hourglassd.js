@@ -11,11 +11,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
-import { BUILTIN_RINGTONES, TABLE_NAMES, dueBetween, isSpent, localParts, parseDate } from "../../core/index.js";
+import { BUILTIN_RINGTONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
 
 const HOME = homedir();
@@ -316,6 +316,36 @@ setInterval(() => scheduleSync(0), 30000);
 // --- alarms & timers ------------------------------------------------------------------
 
 const ringing = new Map(); // id -> { kind, id, label, at, sound }
+const DEVICE = hostname();
+const ringClient = createRingClient({ server: () => config().server, token: () => config().token, device: () => DEVICE });
+const RING_MS = 10 * 60000;
+const AUTO_SNOOZES = 3;
+const SNOOZED = " (snoozed)";
+const stopKey = (id) => `ring_stop:${id}`;
+const autoSnoozes = new Map();
+const snoozeId = (item) => {
+  const b = createHash("md5").update(`snooze:${item.id}:${item.at}`).digest();
+  b[6] = (b[6] & 0x0f) | 0x30; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = b.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};
+function stoppedElsewhere(item) {
+  try { const v = JSON.parse(store.get("prefs", stopKey(item.id))?.value ?? "null"); return v && v.at === item.at ? v : null; } catch { return null; }
+}
+function shareStop(item, action) {
+  if (item.test || item.id === "wake-check") return;
+  store.upsert("prefs", { id: stopKey(item.id), value: JSON.stringify({ at: item.at, action, device: DEVICE, ts: Date.now() }) });
+  scheduleSync(0);
+  ringClient.stop(item, action);
+}
+function checkStopped() {
+  for (const r of ringing.values()) {
+    const other = stoppedElsewhere(r);
+    if (other && other.device !== DEVICE) ring_stop(r.id);
+  }
+}
+store.onChange((table) => { if (table === "prefs" && ringing.size) checkStopped(); });
+setInterval(() => { if (ringing.size) scheduleSync(0); }, 5000);
 let lastCheck = Date.now();
 
 function notify(item) {
@@ -346,9 +376,8 @@ function playLoop(item) {
   if (SILENT || (service.settings().sound === false && !item.test)) return () => {};
   let stopped = false;
   let child = null;
-  const until = Date.now() + 60000;
   const once = () => {
-    if (stopped || Date.now() > until) return ring_stop(item.id);
+    if (stopped) return;
     child = playOnce(soundFile(service.settings().ringtone));
     child.on("error", () => {});
     child.on("exit", () => setTimeout(once, 400));
@@ -362,9 +391,19 @@ function playLoop(item) {
 
 function ring(item) {
   if (ringing.has(item.id)) return;
+  if (item.kind === "timer") {
+    const timer = service.data().timers.find((t) => t.id === item.id);
+    if (!timer || timer.deleted || timer.state !== "running" || timer.ends_at !== item.at) return;
+  }
+  const other = stoppedElsewhere(item);
+  if (other) return;
   log("ring", item.kind, item.label);
   notify(item);
-  ringing.set(item.id, { ...item, stop: playLoop(item) });
+  ringing.set(item.id, { ...item, started: Date.now(), stop: playLoop(item) });
+  ringClient.watch(item, () => ringing.has(item.id), (stopped) => {
+    if (ringing.has(item.id)) ring_stop(item.id);
+    autoSnoozes.delete(item.label.replace(/ \(snoozed\)$/, ""));
+  });
   const data = service.data();
   if (item.kind === "timer") service.updateTimer({ timer_id: item.id, action: "done" });
   if (item.kind === "alarm") {
@@ -378,8 +417,46 @@ function ring_stop(id) {
   if (!r) return false;
   r.stop();
   ringing.delete(id);
+  return r;
+}
+
+function dismiss(id, via = "Dismiss") {
+  const r = ring_stop(id);
+  if (!r) return false;
+  autoSnoozes.delete(r.label.replace(/ \(snoozed\)$/, ""));
+  shareStop(r, "dismissed");
   return true;
 }
+
+function snooze(id, via = "Snooze") {
+  const r = ring_stop(id);
+  if (!r) return null;
+  shareStop(r, "snoozed");
+  return service.startTimer({ id: snoozeId(r), minutes: 5, label: r.label.replace(/ \(snoozed\)$/, "") + SNOOZED });
+}
+
+function ringOut(id) {
+  const r = ringing.get(id);
+  if (!r || r.kind !== "alarm") return ring_stop(id);
+  // Asking the server takes a moment and the per-second check keeps calling: once per ring.
+  if (r.out) return;
+  r.out = true;
+  const label = r.label.replace(/ \(snoozed\)$/, "");
+  const n = autoSnoozes.get(label) || 0;
+  if (n >= AUTO_SNOOZES) { autoSnoozes.delete(label); return ring_stop(id); }
+  ringClient.state(r).then((other) => {
+    if (other) { ring_stop(id); autoSnoozes.delete(label); return; }
+    autoSnoozes.set(label, n + 1);
+    ring_stop(id);
+    service.startTimer({ id: snoozeId(r), minutes: 5, label: label + SNOOZED });
+  }).catch(() => {
+    autoSnoozes.set(label, n + 1);
+    ring_stop(id);
+    const local = { id: `local-auto:${r.id}:${r.at}:${Date.now()}`, kind: "alarm", at: Date.now() + 5 * 60000, label };
+    setTimeout(() => ring(local), 5 * 60000);
+  });
+}
+setInterval(() => { for (const [id, r] of ringing) if (Date.now() - (r.started || 0) >= RING_MS) ringOut(id); }, 1000);
 
 // What rings in the next 36 h, recomputed once a minute and after any change;
 // the per-second check only compares timestamps. (Recomputing every second
@@ -815,14 +892,12 @@ async function extra(req, res, url, path) {
   if (path === "/api/ring/stop" && req.method === "POST") {
     const id = url.searchParams.get("id");
     const ids = id ? [id] : [...ringing.keys()];
-    return json(res, 200, { stopped: ids.filter(ring_stop) }), true;
+    return json(res, 200, { stopped: ids.filter((i) => dismiss(i)) }), true;
   }
   if (path === "/api/ring/snooze" && req.method === "POST") {
     const id = url.searchParams.get("id");
-    const r = ringing.get(id);
-    if (!r) return json(res, 404, { error: "not ringing" }), true;
-    ring_stop(id);
-    const t = service.startTimer({ minutes: Number(url.searchParams.get("minutes") || 5), label: `${r.label} (snoozed)` });
+    const t = snooze(id);
+    if (!t) return json(res, 404, { error: "not ringing" }), true;
     return json(res, 200, t), true;
   }
   if (path === "/api/account" && req.method === "GET") return json(res, 200, account()), true;

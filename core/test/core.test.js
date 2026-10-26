@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  occurrenceDates, expand, toRRule, resolveNow, nextAlarm, dueBetween,
+  occurrenceDates, expand, toRRule, resolveNow, nextAlarm, dueBetween, alarmLabel,
   zonedToEpoch, localParts, weekday, addDays, normalize, shortLabel,
 } from "../index.js";
 
@@ -155,6 +155,15 @@ test("alarms: fixed, weekly, one-off, lead-before-event", () => {
   assert.equal(nextAlarm(lead, data, from, TZ), at("2026-09-29", "07:40"));
   const off = normalize("alarms", { time: "07:00", enabled: 0 });
   assert.equal(nextAlarm(off, data, from, TZ), null);
+});
+
+test("default lead alarm labels use course, event, and class fallbacks", () => {
+  const from = at("2026-09-28", "12:00");
+  const classData = { ...data, courses: [{ id: "c1", name: "Algorithms" }], events: [{ id: "e1", title: "Lecture", course_id: "c1" }] };
+  assert.equal(alarmLabel({ id: "a1", label: "Alarm", lead_event_id: "e1", lead_minutes: 20 }, classData), "Algorithms in 20 min");
+  assert.equal(alarmLabel({ id: "a2", label: "", lead_event_id: "e1" }, { ...classData, courses: [] }), "Lecture in 10 min");
+  assert.equal(alarmLabel({ id: "a3", label: "Alarm", lead_course_id: "missing" }, { ...classData, courses: [], events: [] }), "Class in 10 min");
+  assert.equal(alarmLabel({ id: "a4", label: "Exam", lead_course_id: "missing" }, classData), "Exam");
 });
 
 test("dueBetween includes running timers", () => {
