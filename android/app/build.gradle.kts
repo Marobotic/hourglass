@@ -25,8 +25,8 @@ android {
         applicationId = "dev.marobotic.hourglass"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.2.8"
+        versionCode = 11
+        versionName = "0.2.9"
         buildConfigField("String", "SERVER", "\"${local.getProperty("hourglass.server", "https://marobotic.dev/hourglass")}\"")
         // Where the app looks for a newer build (see Updates.kt).
         buildConfigField("String", "UPDATE_FEED", "\"https://marobotic.dev/apps/hourglass/latest.json\"")
