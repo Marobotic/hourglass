@@ -119,8 +119,8 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
         }
         out.sortedWith(compareByDescending<JSONObject> { it.optInt("pinned") }.thenByDescending { it.optLong("updated_at") }).take(6)
     }
+    val (cs, es) = remember(version) { repo.store.all("courses") to repo.events() }
     val alarm = remember(version, clock / 60_000) {
-        val cs = repo.store.all("courses"); val es = repo.events()
         repo.alarms().mapNotNull { a -> dev.marobotic.hourglass.core.Alarms.next(a, cs, es, clock, zone)?.let { a to it } }.minByOrNull { it.second }
     }
     val timer = remember(version) { repo.timers().firstOrNull { it.optString("state") != "idle" } }
@@ -191,7 +191,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Alarm, null, tint = HColors.muted, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
                         T(Dates.clock(at, zone) + if (Dates.local(at, zone).toLocalDate() != today) " " + Dates.WEEKDAYS[Dates.iso(Dates.local(at, zone).toLocalDate()) - 1] else "", 14, bold = true)
-                        Spacer(Modifier.width(8.dp)); T(a.optString("label"), 13, HColors.muted, maxLines = 1)
+                        Spacer(Modifier.width(8.dp)); T(dev.marobotic.hourglass.core.Alarms.displayLabel(a, cs, es), 13, HColors.muted, maxLines = 1)
                     }
                 }
                 timer?.let { t ->
@@ -333,8 +333,8 @@ fun repeatText(e: JSONObject): String {
 @Composable
 fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
+    val (courses, events) = remember(version) { repo.store.all("courses") to repo.events() }
     val alarms = remember(version, clock / 60_000) {
-        val courses = repo.store.all("courses"); val events = repo.events()
         repo.alarms().map { it to dev.marobotic.hourglass.core.Alarms.next(it, courses, events, clock, repo.zone) }.sortedBy { it.second ?: Long.MAX_VALUE }
     }
     Box(Modifier.fillMaxSize()) {
@@ -350,7 +350,7 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
                         Box(Modifier.onGloballyPositioned { where = it }) { Toggle(on) { repo.setAlarmEnabled(a.id, it); if (it) Motion.burstAt(where) } }
                         IconButton({ repo.removeAlarm(a.id) }) { Icon(Icons.Outlined.Delete, "Delete", tint = HColors.muted) }
                     }
-                    T(a.optString("label"), 14, maxLines = 2)
+                    T(dev.marobotic.hourglass.core.Alarms.displayLabel(a, courses, events), 14, maxLines = 2)
                     val days = a.ints("days")
                     val sub = when {
                         a.str("lead_course_id") != null || a.str("lead_event_id") != null -> "Rings ${a.optInt("lead_minutes")} min before the lecture"

@@ -49,7 +49,7 @@ struct NowView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "alarm").foregroundStyle(H.muted)
                             T(Dates.clock(at) + (Dates.dayOf(at) == today ? "" : " " + Dates.weekdays[Dates.iso(Dates.dayOf(at)) - 1]), 14, bold: true)
-                            T(a.label, 13, H.muted, lines: 1)
+                            T(Alarms.displayLabel(a, store.db.courses, store.db.events), 13, H.muted, lines: 1)
                         }
                     }
                     if let t = timer {
@@ -457,7 +457,7 @@ struct TimeView: View {
                                 HStack(spacing: 12) {
                                     T(a.time.map(Dates.t) ?? next.map(Dates.clock) ?? "—", 24, bold: true).frame(width: 128, alignment: .leading)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        T(a.label, 14, lines: 1)
+                                        T(Alarms.displayLabel(a, store.db.courses, store.db.events), 14, lines: 1)
                                         T(alarmSub(a) + (next.map { "  ·  next " + Dates.short(Dates.dayOf($0)) + " " + Dates.clock($0) } ?? ""), 11, H.muted, lines: 2)
                                     }
                                     Spacer()

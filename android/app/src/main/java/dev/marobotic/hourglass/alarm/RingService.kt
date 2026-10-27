@@ -149,28 +149,90 @@ class RingService : Service() {
         startForeground(NOTE_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         ring(label)
         handler.postDelayed({ ringOut() }, RING_MS)
-        if (ringAt != 0L && !test) watchOtherDevices()
+        if (ringAt != 0L && !test) {
+            watchOtherDevices()
+            watchServer()
+        }
         return START_NOT_STICKY
     }
 
     // Nobody answered in 10 minutes: snooze by itself, up to 3 times.
+    // Checks GET /api/ring/state (2s timeout) before creating a shared snooze timer.
     private fun ringOut() {
         val r = ringing ?: return
-        val base = baseLabel(r.first)
-        val n = autoSnoozes(base)
-        if (r.second == "alarm" && !test && n < AUTO_SNOOZES) {
-            autoSnoozes(base, set = n + 1)
-            RingLog.add(this, r.first, "auto-snoozed", "nobody answered for ${RING_MS / 60_000} min, rings again in 5 min (${n + 1} of $AUTO_SNOOZES)")
-            snoozeTimer(r)
-        } else {
-            autoSnoozes(base, reset = true)
-            RingLog.add(this, r.first, "rang out", "nobody answered for ${RING_MS / 60_000} min" + if (r.second == "alarm" && !test) ", after $AUTO_SNOOZES snoozes" else "")
-        }
-        finish()
+        Thread {
+            val repo = App.repo(this)
+            val base = baseLabel(r.first)
+            val n = autoSnoozes(base)
+            if (r.second == "alarm" && !test && n < AUTO_SNOOZES) {
+                val state = if (ringAt != 0L) repo.ringState(r.third, ringAt, timeoutMs = 2000) else dev.marobotic.hourglass.data.Repo.RingStateResult.Active
+                handler.post {
+                    if (ringing != r) return@post
+                    when (state) {
+                        is dev.marobotic.hourglass.data.Repo.RingStateResult.Stopped -> {
+                            // Dismissed anywhere: don't snooze, just stop.
+                            RingLog.add(this, r.first, state.action, "on ${state.device}; auto-snooze cancelled")
+                            autoSnoozes(base, reset = true)
+                            finish()
+                        }
+                        is dev.marobotic.hourglass.data.Repo.RingStateResult.Active -> {
+                            // Not stopped anywhere: create shared snooze timer.
+                            autoSnoozes(base, set = n + 1)
+                            RingLog.add(this, r.first, "auto-snoozed", "nobody answered for ${RING_MS / 60_000} min, rings again in 5 min (${n + 1} of $AUTO_SNOOZES)")
+                            snoozeTimer(r)
+                            finish()
+                        }
+                        is dev.marobotic.hourglass.data.Repo.RingStateResult.Unreachable -> {
+                            // Server can't be reached: snooze locally on this device only.
+                            autoSnoozes(base, set = n + 1)
+                            RingLog.add(this, r.first, "auto-snoozed", "offline, rings again locally in 5 min (${n + 1} of $AUTO_SNOOZES)")
+                            Scheduler.localSnooze(this, r.first, r.third, ringAt)
+                            finish()
+                        }
+                    }
+                }
+            } else {
+                handler.post {
+                    if (ringing != r) return@post
+                    autoSnoozes(base, reset = true)
+                    RingLog.add(this, r.first, "rang out", "nobody answered for ${RING_MS / 60_000} min" + if (r.second == "alarm" && !test) ", after $AUTO_SNOOZES snoozes" else "")
+                    finish()
+                }
+            }
+        }.start()
     }
 
     private fun snoozeTimer(r: Triple<String, String, String>) =
         App.repo(this).startTimer(5 * 60, baseLabel(r.first) + SNOOZED, id = if (ringAt != 0L) RingSync.snoozeId(r.third, ringAt) else null)
+
+    // Long-polls GET /api/ring/watch: stops the instant another device dismisses or snoozes.
+    private fun watchServer() {
+        val r = ringing ?: return
+        val currentAt = ringAt
+        Thread {
+            while (ringing == r) {
+                try {
+                    val repo = App.repo(this@RingService)
+                    val stopped = repo.watchRing(r.third, currentAt)
+                    if (ringing != r) break
+                    if (stopped != null) {
+                        handler.post {
+                            if (ringing != r) return@post
+                            val action = if (stopped.optString("action") == "snoozed") "snoozed" else "dismissed"
+                            val dev = stopped.optString("device").ifBlank { "another device" }
+                            RingLog.add(this@RingService, r.first, action, "on $dev after ${secs()}s")
+                            autoSnoozes(baseLabel(r.first), reset = true)
+                            finish()
+                        }
+                        break
+                    }
+                } catch (e: Exception) {
+                    if (ringing != r) break
+                    try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
+                }
+            }
+        }.start()
+    }
 
     // Every 5 seconds while ringing: sync, and stop if another device did.
     private fun watchOtherDevices() {

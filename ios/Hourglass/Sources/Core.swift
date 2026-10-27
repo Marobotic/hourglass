@@ -521,6 +521,34 @@ enum Reminders {
 }
 
 enum Alarms {
+    // Lead alarms with no custom label show "<course name> in <lead_minutes> min".
+    static func displayLabel(_ a: Alarm, _ courses: [Course], _ events: [Event]) -> String {
+        let label = a.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (label.isEmpty || label == "Alarm") && (a.lead_event_id != nil || a.lead_course_id != nil) {
+            let lead = a.lead_minutes ?? 10
+            let c: Course? = {
+                if let cid = a.lead_course_id {
+                    return courses.first(where: { $0.deleted == 0 && $0.id == cid })
+                } else if let eid = a.lead_event_id {
+                    guard let ev = events.first(where: { $0.deleted == 0 && $0.id == eid }) else { return nil }
+                    if let cid = ev.course_id {
+                        return courses.first(where: { $0.deleted == 0 && $0.id == cid })
+                    }
+                    return nil
+                }
+                return nil
+            }()
+            let courseName = c?.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? c?.name : nil
+            let eventTitle = a.lead_event_id.flatMap { eid in
+                events.first(where: { $0.deleted == 0 && $0.id == eid })?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let validEventTitle = (eventTitle?.isEmpty == false) ? eventTitle : nil
+            let name = courseName ?? validEventTitle ?? "Class"
+            return "\(name) in \(lead) min"
+        }
+        return label.isEmpty ? "Alarm" : a.label
+    }
+
     static func next(_ a: Alarm, _ courses: [Course], _ events: [Event], _ from: Int64) -> Int64? {
         if a.deleted == 1 || a.enabled == 0 { return nil }
         let today = Dates.dayOf(from)

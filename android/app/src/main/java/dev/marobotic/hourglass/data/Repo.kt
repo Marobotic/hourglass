@@ -902,5 +902,79 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         return text
     }
 
+    // --- ring contract endpoints ---
+
+    sealed class RingStateResult {
+        data class Stopped(val action: String, val device: String) : RingStateResult()
+        object Active : RingStateResult()
+        object Unreachable : RingStateResult()
+    }
+
+    // 1. Fire-and-forget stop notification to the server on dismiss or snooze.
+    fun postRingStop(id: String, at: Long, action: String) {
+        val server = BuildConfig.SERVER.takeIf { syncEnabled && it.isNotEmpty() } ?: return
+        val t = token ?: return
+        val body = JSONObject()
+            .put("alarm_id", id)
+            .put("at", at)
+            .put("action", action)
+            .put("device", android.os.Build.MODEL ?: "phone")
+        http("POST", "$server/api/ring/stop", t, body.toString())
+    }
+
+    // 2. Long-polls the server while ringing: waits up to 25s. Returns the stopped object if stopped, or null if timed out.
+    fun watchRing(id: String, at: Long): JSONObject? {
+        val server = BuildConfig.SERVER.takeIf { syncEnabled && it.isNotEmpty() } ?: return null
+        val t = token ?: return null
+        val url = "$server/api/ring/watch?alarm_id=${java.net.URLEncoder.encode(id, "UTF-8")}&at=$at"
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.requestMethod = "GET"
+        c.connectTimeout = 8000
+        c.readTimeout = 32000 // Server holds up to 25s
+        c.setRequestProperty("Authorization", "Bearer $t")
+        c.setRequestProperty("x-hourglass-device", DEVICE_HEADER)
+        c.setRequestProperty("x-timezone", zone.id)
+        val text = try {
+            val code = c.responseCode
+            if (code == 401 && !url.contains("/auth/")) endSession()
+            (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+        } catch (e: java.net.SocketTimeoutException) {
+            return null // 25s server poll timed out with no stop
+        }
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        return obj?.optJSONObject("stopped")
+    }
+
+    // 3. Checks if an occurrence was stopped elsewhere before auto-snoozing (2s timeout).
+    fun ringState(id: String, at: Long, timeoutMs: Int = 2000): RingStateResult {
+        val server = BuildConfig.SERVER.takeIf { syncEnabled && it.isNotEmpty() } ?: return RingStateResult.Unreachable
+        val t = token ?: return RingStateResult.Unreachable
+        val url = "$server/api/ring/state?alarm_id=${java.net.URLEncoder.encode(id, "UTF-8")}&at=$at"
+        return try {
+            val c = URL(url).openConnection() as HttpURLConnection
+            c.requestMethod = "GET"
+            c.connectTimeout = timeoutMs
+            c.readTimeout = timeoutMs
+            c.setRequestProperty("Authorization", "Bearer $t")
+            c.setRequestProperty("x-hourglass-device", DEVICE_HEADER)
+            c.setRequestProperty("x-timezone", zone.id)
+            val code = c.responseCode
+            if (code == 401 && !url.contains("/auth/")) endSession()
+            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+            val obj = JSONObject(text)
+            val stopped = obj.optJSONObject("stopped")
+            if (stopped != null) {
+                RingStateResult.Stopped(
+                    stopped.optString("action", "dismissed"),
+                    stopped.optString("device", "another device")
+                )
+            } else {
+                RingStateResult.Active
+            }
+        } catch (e: Exception) {
+            RingStateResult.Unreachable
+        }
+    }
+
     fun days(a: JSONObject) = a.ints("days")
 }

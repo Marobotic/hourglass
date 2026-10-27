@@ -51,7 +51,7 @@ enum AlarmKitScheduler {
             var from = now
             for _ in 0..<7 {
                 guard let at = Alarms.next(a, store.db.courses, store.db.events, from), at < now + 8 * 86_400_000 else { break }
-                fires.append(RingInfo(id: a.id, kind: "alarm", at: at, label: a.label, wake: wake))
+                fires.append(RingInfo(id: a.id, kind: "alarm", at: at, label: Alarms.displayLabel(a, store.db.courses, store.db.events), wake: wake))
                 from = at
             }
         }
@@ -79,16 +79,47 @@ enum AlarmKitScheduler {
             Task {
                 for old in have where !wantIds.contains(old.id) && old.id != wake {
                     if old.state == .alerting {
-                        // Ringing now: stop it only if another device answered it.
-                        if let r = RingLog.pending[old.id.uuidString], let s = await RingSync.stoppedElsewhere(store, r.id, r.at) {
-                            try? AlarmManager.shared.stop(id: old.id)
-                            await MainActor.run { RingLog.answered(r); RingLog.add(r.label, s.action == "snoozed" ? "snoozed" : "dismissed", "on \(s.device)") }
+                        // Ringing now: stop it if another device answered it, or if it's a snooze timer marked done/deleted.
+                        if let r = RingLog.pending[old.id.uuidString] {
+                            let stopped = await RingSync.stoppedElsewhere(store, r.id, r.at)
+                            let timerGone = r.kind == "timer" && store.db.timers.first(where: { $0.id == r.id && $0.deleted == 0 && $0.state == "running" }) == nil
+                            if stopped != nil || timerGone {
+                                try? AlarmManager.shared.stop(id: old.id)
+                                let action = stopped?.action == "snoozed" ? "snoozed" : "dismissed"
+                                let dev = stopped?.device ?? "another device"
+                                await MainActor.run { RingLog.answered(r); RingLog.add(r.label, action, "on \(dev)") }
+                            }
                         }
                         continue
                     }
                     try? AlarmManager.shared.cancel(id: old.id)
                 }
                 for r in want where !haveIds.contains(r.uuid) { await schedule(r) }
+            }
+        }
+        #endif
+    }
+
+    // Watch while the app is in the foreground ringing: stops immediately if dismissed elsewhere.
+    @MainActor
+    static func watchAlerting(_ store: Store) async {
+        #if canImport(AlarmKit)
+        if #available(iOS 26.0, *) {
+            guard let alerting = ((try? AlarmManager.shared.alarms) ?? []).first(where: { $0.state == .alerting }) else { return }
+            guard let r = RingLog.pending[alerting.id.uuidString] else { return }
+            while !Task.isCancelled {
+                let still = ((try? AlarmManager.shared.alarms) ?? []).contains { $0.id == alerting.id && $0.state == .alerting }
+                if !still { break }
+                do {
+                    if let s = try await store.ringWatch(id: r.id, at: r.at) {
+                        try? AlarmManager.shared.stop(id: alerting.id)
+                        RingLog.answered(r)
+                        RingLog.add(r.label, s.action == "snoozed" ? "snoozed" : "dismissed", "on \(s.device)")
+                        break
+                    }
+                } catch {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
             }
         }
         #endif

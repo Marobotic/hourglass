@@ -13,9 +13,23 @@ struct HourglassApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear { ReminderActions.register(); Notifications.requestPermission(); AlarmKitScheduler.requestPermission(); Notifications.reschedule(store) }
                 .task { while !Task.isCancelled { await store.syncSoon(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
-                // While an alarm rings with the app open, sync every 5 seconds so
-                // a Dismiss on another device stops it here too.
-                .task { while !Task.isCancelled { if AlarmKitScheduler.ringing { await store.syncSoon() }; try? await Task.sleep(nanoseconds: 5_000_000_000) } }
+                // While an alarm rings with the app open, hold GET /api/ring/watch for instant stop,
+                // and sync every 5 seconds as a fallback.
+                .task {
+                    while !Task.isCancelled {
+                        if AlarmKitScheduler.ringing {
+                            async let watch: () = AlarmKitScheduler.watchAlerting(store)
+                            async let syncFallback: () = {
+                                while AlarmKitScheduler.ringing && !Task.isCancelled {
+                                    await store.syncSoon()
+                                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                                }
+                            }()
+                            _ = await (watch, syncFallback)
+                        }
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    }
+                }
         }
         .onChange(of: phase) { _, p in
             if p == .active { Task { await store.syncSoon() } }

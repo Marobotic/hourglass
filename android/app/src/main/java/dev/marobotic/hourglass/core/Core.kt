@@ -297,10 +297,31 @@ object Alarms {
     fun isSpent(alarm: JSONObject, courses: List<JSONObject>, events: List<JSONObject>, from: Long, zone: ZoneId) =
         alarm.ints("days").isEmpty() && alarm.str("lead_event_id") == null && alarm.str("lead_course_id") == null && next(alarm, courses, events, from, zone) == null
 
+    // Lead alarms with no custom label show "<course name> in <lead_minutes> min".
+    fun displayLabel(alarm: JSONObject, courses: List<JSONObject>, events: List<JSONObject>): String {
+        val label = alarm.optString("label")
+        val leadEvent = alarm.str("lead_event_id")
+        val leadCourse = alarm.str("lead_course_id")
+        if ((label.isBlank() || label == "Alarm") && (leadEvent != null || leadCourse != null)) {
+            val lead = alarm.optInt("lead_minutes", 10)
+            val c = if (leadCourse != null) courses.firstOrNull { !it.isDeleted && it.id == leadCourse }
+                    else if (leadEvent != null) {
+                        val ev = events.firstOrNull { !it.isDeleted && it.id == leadEvent }
+                        val cid = ev?.str("course_id")
+                        if (cid != null) courses.firstOrNull { !it.isDeleted && it.id == cid } else null
+                    } else null
+            val name = c?.str("name")?.ifBlank { null }
+                ?: (if (leadEvent != null) events.firstOrNull { !it.isDeleted && it.id == leadEvent }?.str("title")?.ifBlank { null } else null)
+                ?: "Class"
+            return "$name in $lead min"
+        }
+        return label.ifBlank { "Alarm" }
+    }
+
     // The soonest thing that should ring after `from`: an alarm or a running timer.
     fun soonest(courses: List<JSONObject>, events: List<JSONObject>, alarms: List<JSONObject>, timers: List<JSONObject>, from: Long, zone: ZoneId): Due? {
         val out = mutableListOf<Due>()
-        for (a in alarms) next(a, courses, events, from, zone)?.let { out += Due("alarm", a.id, it, a.optString("label").ifBlank { "Alarm" }) }
+        for (a in alarms) next(a, courses, events, from, zone)?.let { out += Due("alarm", a.id, it, displayLabel(a, courses, events)) }
         for (t in timers) if (!t.isDeleted && t.optString("state") == "running" && t.optLong("ends_at") > from)
             out += Due("timer", t.id, t.optLong("ends_at"), t.optString("label").ifBlank { "Timer" })
         return out.minByOrNull { it.at }

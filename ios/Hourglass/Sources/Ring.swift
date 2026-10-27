@@ -102,6 +102,7 @@ enum RingSync {
         guard r.id != "wake-check" else { return }
         let s = Stop(at: r.at, action: action, device: device, ts: nowMs())
         store.setPref(key(r.id), String(data: (try? JSONEncoder().encode(s)) ?? Data(), encoding: .utf8) ?? "")
+        store.postRingStop(id: r.id, at: r.at, action: action)
     }
 
     static func snoozeId(_ r: RingInfo) -> String { nameUUID("snooze:\(r.id):\(r.at)").uuidString.lowercased() }
@@ -174,13 +175,28 @@ struct RingSnoozeIntent: LiveActivityIntent {
         guard let r = RingInfo.from(ring) else { return .result() }
         let store = Store.shared
         RingLog.answered(r)
-        RingLog.add(r.label, "snoozed", "Snooze on the iPhone alarm, \(max(0, (nowMs() - r.at) / 1000))s after it started; rings again in 5 min")
         AlarmKitScheduler.stop(r.uuid)
-        RingSync.share(store, r, "snoozed")
-        if r.wake { RingLog.wakeLabels.insert(RingLog.base(r.label)) }
-        // One snooze timer per ring, whichever device snoozes.
-        store.startTimer(seconds: 300, label: RingLog.base(r.label) + RingLog.snoozed, id: RingSync.snoozeId(r))
-        await store.syncSoon()
+        // Check /api/ring/state before scheduling a snooze (2 s timeout)
+        let state = await store.ringState(id: r.id, at: r.at)
+        switch state {
+        case .stopped(let s):
+            // Dismissed anywhere: don't snooze, just stop
+            RingLog.add(r.label, s.action == "snoozed" ? "snoozed" : "dismissed", "on \(s.device); snooze cancelled")
+            return .result()
+        case .active:
+            RingLog.add(r.label, "snoozed", "Snooze on the iPhone alarm, \(max(0, (nowMs() - r.at) / 1000))s after it started; rings again in 5 min")
+            RingSync.share(store, r, "snoozed")
+            if r.wake { RingLog.wakeLabels.insert(RingLog.base(r.label)) }
+            // One snooze timer per ring, whichever device snoozes.
+            store.startTimer(seconds: 300, label: RingLog.base(r.label) + RingLog.snoozed, id: RingSync.snoozeId(r))
+            await store.syncSoon()
+        case .unreachable:
+            // Server can't be reached: the usual snooze timer (one id per ring), which syncs once back online.
+            RingLog.add(r.label, "snoozed", "offline, rings again in 5 min")
+            RingSync.share(store, r, "snoozed")
+            if r.wake { RingLog.wakeLabels.insert(RingLog.base(r.label)) }
+            store.startTimer(seconds: 300, label: RingLog.base(r.label) + RingLog.snoozed, id: RingSync.snoozeId(r))
+        }
         return .result()
     }
 }
