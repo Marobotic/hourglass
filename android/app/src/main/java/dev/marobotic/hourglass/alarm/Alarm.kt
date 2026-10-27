@@ -54,9 +54,19 @@ object Scheduler {
     // then still gets a second chance.
     const val WAKE = "dev.marobotic.hourglass.WAKE_CHECK"
     const val IM_UP = "dev.marobotic.hourglass.IM_UP"
+    const val LOCAL_SNOOZE = "dev.marobotic.hourglass.LOCAL_SNOOZE"
     private const val WAKE_NOTE = 4203
+    private const val LOCAL_SNOOZE_REQ = 4205
     private fun wakeOp(ctx: Context, label: String) =
         PendingIntent.getBroadcast(ctx, REQ + 2, Intent(ctx, AlarmReceiver::class.java).setAction(WAKE).putExtra("label", label), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    // Local-only re-ring when server can't be reached during auto-snooze (not a synced timer).
+    fun localSnooze(ctx: Context, label: String, id: String, at: Long, inSeconds: Int = 300) {
+        val am = ctx.getSystemService(AlarmManager::class.java) ?: return
+        val op = PendingIntent.getBroadcast(ctx, LOCAL_SNOOZE_REQ, Intent(ctx, AlarmReceiver::class.java).setAction(LOCAL_SNOOZE).putExtra("label", label).putExtra("id", id).putExtra("at", at), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val show = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        am.setAlarmClock(AlarmManager.AlarmClockInfo(System.currentTimeMillis() + inSeconds * 1000L, show), op)
+    }
 
     fun wakeCheck(ctx: Context, label: String) {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
@@ -113,7 +123,25 @@ class AlarmReceiver : BroadcastReceiver() {
                 start(ctx, RingService.WAKE_PREFIX + label, "alarm", "wake-check")
                 return
             }
+            Scheduler.LOCAL_SNOOZE -> {
+                val label = intent.getStringExtra("label") ?: "Alarm"
+                val id = intent.getStringExtra("id") ?: ""
+                val at = intent.getLongExtra("at", 0L)
+                start(ctx, RingService.baseLabel(label) + RingService.SNOOZED, "alarm", id, at = at)
+                return
+            }
         }
+        val pending = goAsync()
+        Thread {
+            try {
+                handleDue(ctx)
+            } finally {
+                pending.finish()
+            }
+        }.start()
+    }
+
+    private fun handleDue(ctx: Context) {
         RingLog.settle(ctx)
         val repo = App.repo(ctx)
         val now = System.currentTimeMillis()
@@ -127,11 +155,18 @@ class AlarmReceiver : BroadcastReceiver() {
             from = d.at
         }
         if (due.isEmpty()) RingLog.add(ctx, "-", "woke", "Android woke Hourglass but nothing was due (changed or deleted since it was set)")
-        for ((i, d) in due.withIndex()) {
+        var ringIndex = 0
+        for (d in due) {
             val late = (now - d.at) / 1000
             RingLog.add(ctx, d.label, "due", (if (d.kind == "timer") "timer" else "alarm") + " for ${Dates.clock(d.at, repo.zone)}" + if (late > 5) ", Android delivered it ${late}s late" else "")
             var wake = false
             if (d.kind == "timer") {
+                // Ring a snooze timer only if the timer row is still running and not deleted after latest data
+                val t = repo.store.get("timers", d.id)
+                if (t == null || t.optInt("deleted") != 0 || t.optString("state") != "running") {
+                    RingLog.add(ctx, d.label, "skipped", "timer was cancelled or finished on another device")
+                    continue
+                }
                 repo.finishTimer(d.id)
                 // A snoozed wake-up alarm stays a wake-up alarm.
                 wake = d.label.endsWith(RingService.SNOOZED) && wakeLabels(ctx).contains(RingService.baseLabel(d.label))
@@ -147,7 +182,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 RingLog.add(ctx, d.label, "skipped", "already ${other.optString("action")} on ${other.optString("device")}")
                 continue
             }
-            ring(ctx, d, i, wake)
+            ring(ctx, d, ringIndex++, wake)
         }
         Scheduler.reschedule(ctx, repo)
     }

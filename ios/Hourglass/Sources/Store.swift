@@ -994,6 +994,83 @@ final class Store: ObservableObject {
         }
     }
 
+    // --- ring contract endpoints ---
+
+    enum RingStateResponse {
+        case stopped(RingSync.Stop)
+        case active
+        case unreachable
+    }
+
+    // 1. Fire-and-forget stop notification to the server on dismiss or snooze.
+    func postRingStop(id: String, at: Int64, action: String) {
+        guard !server.isEmpty, !token.isEmpty, let base = URL(string: server) else { return }
+        var req = request(base.appendingPathComponent("api/ring/stop"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "alarm_id": id,
+            "at": at,
+            "action": action,
+            "device": RingSync.device
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        Task { _ = try? await URLSession.shared.data(for: req) }
+    }
+
+    // 2. Long-polls GET /api/ring/watch: waits up to 25s. Returns Stop if stopped, nil on timeout.
+    func ringWatch(id: String, at: Int64) async throws -> RingSync.Stop? {
+        guard !server.isEmpty, !token.isEmpty, let base = URL(string: server) else { return nil }
+        var comps = URLComponents(url: base.appendingPathComponent("api/ring/watch"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "alarm_id", value: id),
+            URLQueryItem(name: "at", value: String(at))
+        ]
+        guard let url = comps.url else { return nil }
+        var req = request(url)
+        req.timeoutInterval = 32
+        let (data, res) = try await URLSession.shared.data(for: req)
+        try check((data, res))
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stopped = obj["stopped"] as? [String: Any] else { return nil }
+        return RingSync.Stop(
+            at: (stopped["at"] as? NSNumber)?.int64Value ?? at,
+            action: (stopped["action"] as? String) ?? "dismissed",
+            device: (stopped["device"] as? String) ?? "another device",
+            ts: (stopped["ts"] as? NSNumber)?.int64Value
+        )
+    }
+
+    // 3. Checks GET /api/ring/state before scheduling a snooze (2s timeout).
+    func ringState(id: String, at: Int64) async -> RingStateResponse {
+        guard !server.isEmpty, !token.isEmpty, let base = URL(string: server) else { return .unreachable }
+        var comps = URLComponents(url: base.appendingPathComponent("api/ring/state"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "alarm_id", value: id),
+            URLQueryItem(name: "at", value: String(at))
+        ]
+        guard let url = comps.url else { return .unreachable }
+        var req = request(url)
+        req.timeoutInterval = 2
+        do {
+            let (data, res) = try await URLSession.shared.data(for: req)
+            try check((data, res))
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .unreachable }
+            if let stopped = obj["stopped"] as? [String: Any] {
+                let s = RingSync.Stop(
+                    at: (stopped["at"] as? NSNumber)?.int64Value ?? at,
+                    action: (stopped["action"] as? String) ?? "dismissed",
+                    device: (stopped["device"] as? String) ?? "another device",
+                    ts: (stopped["ts"] as? NSNumber)?.int64Value
+                )
+                return .stopped(s)
+            }
+            return .active
+        } catch {
+            return .unreachable
+        }
+    }
+
     private func request(_ url: URL) -> URLRequest {
         var r = URLRequest(url: url, timeoutInterval: 15)
         r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1078,7 +1155,7 @@ enum Notifications {
             var from = now
             for k in 0..<10 {
                 guard let at = Alarms.next(a, store.db.courses, store.db.events, from), at < now + 8 * 86_400_000 else { break }
-                fires.append(("alarm-\(a.id)-\(k)", at, "Alarm", a.label))
+                fires.append(("alarm-\(a.id)-\(k)", at, "Alarm", Alarms.displayLabel(a, store.db.courses, store.db.events)))
                 from = at
             }
         }

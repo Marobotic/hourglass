@@ -96,6 +96,15 @@ class CoreTest {
         assertNull(Alarms.next(a("time" to "07:00", "enabled" to 0), c, e, from, zone))
     }
 
+    @Test fun alarmDisplayLabel() {
+        val c = listOf(course); val e = listOf(lecture)
+        fun a(vararg kv: Pair<String, Any?>) = JSONObject().put("id", "a").put("enabled", 1).put("deleted", 0).put("days", JSONArray()).apply { for ((k, v) in kv) put(k, v ?: JSONObject.NULL) }
+        assertEquals("Morning", Alarms.displayLabel(a("label" to "Morning"), c, e))
+        assertEquals("Algorithms in 15 min", Alarms.displayLabel(a("label" to "", "lead_course_id" to "c1", "lead_minutes" to 15), c, e))
+        assertEquals("Algorithms in 10 min", Alarms.displayLabel(a("label" to "Alarm", "lead_event_id" to "e1"), c, e))
+        assertEquals("Alarm", Alarms.displayLabel(a("label" to ""), c, e))
+    }
+
     // Same cases as the desktop's Util.renumber.
     @Test fun notesRenumber() {
         assertEquals("1. a\n2. b\n3. c", Md.renumber("1. a\n1. b\n1. c"))
