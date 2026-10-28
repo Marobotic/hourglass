@@ -268,6 +268,101 @@ const drivePath = (t, id) => {
 
 const versions = createVersions({ drivePath });
 
+// Background backfill for existing files missing sha256.
+// One file at a time, only while driveOnline() is true.
+// Retries after a delay if a file fails or Drive is offline.
+const BACKFILL_RETRY_MS = Number(process.env.HOURGLASS_BACKFILL_RETRY_MS || 5000);
+const backfillFailed = new Map(); // fileId -> timestamp of failure
+let backfillRunning = false;
+let backfillTimeout = null;
+
+async function hashFileAsync(filePath) {
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
+function scheduleBackfill(delayMs = BACKFILL_RETRY_MS) {
+  if (backfillTimeout) clearTimeout(backfillTimeout);
+  backfillTimeout = setTimeout(() => {
+    backfillTimeout = null;
+    runBackfill().catch((err) => console.error("Backfill error:", err));
+  }, delayMs);
+  if (backfillTimeout?.unref) backfillTimeout.unref();
+}
+
+async function runBackfill() {
+  if (backfillRunning) return;
+  backfillRunning = true;
+  try {
+    while (true) {
+      if (!driveOnline()) {
+        scheduleBackfill();
+        return;
+      }
+
+      let nextTarget = null;
+      const now = Date.now();
+      for (const t of tenants.values()) {
+        for (const f of t.store.all("files")) {
+          if (!f.deleted && !f.sha256) {
+            const lastFailed = backfillFailed.get(f.id);
+            if (lastFailed && now - lastFailed < BACKFILL_RETRY_MS) {
+              continue;
+            }
+            nextTarget = { t, file: f };
+            break;
+          }
+        }
+        if (nextTarget) break;
+      }
+
+      if (!nextTarget) {
+        let earliestRetry = Infinity;
+        let hasPending = false;
+        for (const t of tenants.values()) {
+          for (const f of t.store.all("files")) {
+            if (!f.deleted && !f.sha256) {
+              const lastFailed = backfillFailed.get(f.id) || 0;
+              const retryAt = lastFailed + BACKFILL_RETRY_MS;
+              earliestRetry = Math.min(earliestRetry, Math.max(0, retryAt - Date.now()));
+              hasPending = true;
+            }
+          }
+        }
+        if (hasPending) {
+          scheduleBackfill(Math.max(100, earliestRetry));
+        }
+        return;
+      }
+
+      const { t, file } = nextTarget;
+      const filePath = drivePath(t, file.id);
+      try {
+        if (!existsSync(filePath)) {
+          throw new Error(`File ${file.id} does not exist at ${filePath}`);
+        }
+        const sha256 = await hashFileAsync(filePath);
+        backfillFailed.delete(file.id);
+        t.store.upsert("files", { id: file.id, sha256 });
+      } catch (e) {
+        console.error(`Backfill failed for file ${file.id}:`, e.message);
+        backfillFailed.set(file.id, Date.now());
+        scheduleBackfill();
+        return;
+      }
+
+      await new Promise((r) => setImmediate(r));
+    }
+  } finally {
+    backfillRunning = false;
+  }
+}
+runBackfill().catch((e) => console.error("Backfill startup error:", e));
+
 // Drop the bytes (and preview, and old versions) of files deleted here or by a device's sync.
 // The Drive folder is a network mount, where a call can stall for seconds: the
 // removes run off the main thread, once per deleted file, so a slow one never
@@ -396,11 +491,13 @@ async function driveRoutes(t, req, res, url, path) {
     mkdirSync(dirname(target), { recursive: true });
     const tmp = target + ".part";
     let size = 0;
+    const hash = createHash("sha256");
     try {
       await pipeline(req, async function* (src) {
         for await (const c of src) {
           size += c.length;
           if (size > MAX_FILE) throw Object.assign(new Error(TOO_BIG), { status: 413 });
+          hash.update(c);
           yield c;
         }
       }, createWriteStream(tmp));
@@ -414,7 +511,8 @@ async function driveRoutes(t, req, res, url, path) {
     }
     renameSync(tmp, drivePath(t, id));
     const course = url.searchParams.get("course") || null;
-    const row = t.store.upsert("files", { id, name, folder_id: course ? null : folder, course_id: course, size, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
+    const sha256 = hash.digest("hex");
+    const row = t.store.upsert("files", { id, name, folder_id: course ? null : folder, course_id: course, size, sha256, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
     versions.started(t, id, whoOf(t, req), size);
     return send(res, 201, row), true;
   }
@@ -426,11 +524,13 @@ async function driveRoutes(t, req, res, url, path) {
     if (!driveOnline()) return send(res, 503, { error: OFFLINE }), true;
     const tmp = drivePath(t, row.id) + ".put";
     let size = 0;
+    const hash = createHash("sha256");
     try {
       await pipeline(req, async function* (src) {
         for await (const c of src) {
           size += c.length;
           if (size > MAX_FILE) throw Object.assign(new Error(TOO_BIG), { status: 413 });
+          hash.update(c);
           yield c;
         }
       }, createWriteStream(tmp));
@@ -438,9 +538,10 @@ async function driveRoutes(t, req, res, url, path) {
       rmSync(tmp, { force: true });
       throw Object.assign(e, { status: e.status || 400 });
     }
+    const sha256 = hash.digest("hex");
     // The contents it had stay as a version.
     versions.replace(t, row, tmp, whoOf(t, req), { size });
-    return send(res, 200, t.store.upsert("files", { id: row.id, size })), true;
+    return send(res, 200, t.store.upsert("files", { id: row.id, size, sha256 })), true;
   }
   // Versions: the list (with who changed it and when), one's bytes, what
   // changed (text files), and putting one back.
@@ -480,10 +581,25 @@ async function driveRoutes(t, req, res, url, path) {
     }
     if (what === "restore" && m === "POST") {
       // What it has now becomes a version too: a restore loses nothing.
-      const tmp = await versions.copyOut(t, row.id, vid);
-      const size = statSync(tmp).size;
+      const srcFile = versions.path(t, row.id, vid);
+      const tmp = drivePath(t, row.id) + ".restore";
+      let size = 0;
+      const hash = createHash("sha256");
+      try {
+        await pipeline(createReadStream(srcFile), async function* (src) {
+          for await (const c of src) {
+            size += c.length;
+            hash.update(c);
+            yield c;
+          }
+        }, createWriteStream(tmp));
+      } catch (e) {
+        rmSync(tmp, { force: true });
+        throw Object.assign(e, { status: 500 });
+      }
+      const sha256 = hash.digest("hex");
       versions.replace(t, row, tmp, whoOf(t, req), { size, restored_from: vid });
-      return send(res, 200, t.store.upsert("files", { id: row.id, size })), true;
+      return send(res, 200, t.store.upsert("files", { id: row.id, size, sha256 })), true;
     }
     return send(res, 405, { error: "method not allowed" }), true;
   }
