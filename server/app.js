@@ -179,14 +179,22 @@ export function createHandler({ store, service, token, icalToken, publicUrl = ""
       if (TABLE_NAMES.includes(seg[1])) {
         const table = seg[1];
         if (seg.length === 2 && m === "GET") return send(res, 200, store.all(table));
-        if (seg.length === 2 && m === "POST") return send(res, 201, store.upsert(table, { ...(await readJson(req)), id: undefined }));
+        if (seg.length === 2 && m === "POST") {
+          const body = await readJson(req);
+          if (table === "files") delete body.sha256;
+          return send(res, 201, store.upsert(table, { ...body, id: undefined }));
+        }
         if (seg.length === 3) {
           if (m === "GET") {
             const row = store.get(table, seg[2]);
             if (!row || row.deleted) throw new HttpError(404, "not found");
             return send(res, 200, row);
           }
-          if (m === "PUT" || m === "PATCH") return send(res, 200, store.upsert(table, { ...(await readJson(req)), id: seg[2] }));
+          if (m === "PUT" || m === "PATCH") {
+            const body = await readJson(req);
+            if (table === "files") delete body.sha256;
+            return send(res, 200, store.upsert(table, { ...body, id: seg[2] }));
+          }
           if (m === "DELETE") return send(res, 200, store.remove(table, seg[2]) ?? { ok: true });
         }
       }

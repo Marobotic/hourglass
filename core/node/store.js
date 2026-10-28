@@ -178,9 +178,10 @@ export function applyPush(store, changes, guard) {
   for (const t of TABLE_NAMES) {
     if (t === "note_versions") continue; // written by the server only
     for (const incoming of changes?.[t] ?? []) {
-      const sent = normalize(t, incoming);
+      const existing = incoming.id ? store.get(t, incoming.id) : null;
+      // A file's sha256 is the server's to set, never a device's.
+      const sent = normalize(t, t === "files" ? { ...incoming, sha256: existing?.sha256 ?? null } : incoming);
       const row = (guard && guard(t, sent)) || sent;
-      const existing = store.get(t, row.id);
       const baseRev = Number(incoming.base_rev ?? incoming.rev ?? 0);
       if (t === "notes" && existing && !existing.deleted && !row.deleted && existing.rev > baseRev && existing.body !== row.body && existing.body && row.body) {
         if (existing.updated_at > row.updated_at) {
