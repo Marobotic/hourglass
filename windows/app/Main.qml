@@ -63,9 +63,9 @@ ApplicationWindow {
         running: app.shotPath !== "" && app.loaded
         interval: 1500
         onTriggered: {
-            // popups live on the overlay layer, so grab the open one's content instead
+            // Include the popup background in a dialog screenshot.
             const open = [eventDialog, courseDialog, sessionDialog, drivePage.driveFolderPicker, drivePage.stopSyncDlg].find(d => d && d.visible);
-            (open ? open.contentItem : shell).grabToImage(r => { r.saveToFile(app.shotPath); app.quit(); });
+            (open ? open.contentItem.parent : shell).grabToImage(r => { r.saveToFile(app.shotPath); app.quit(); });
         }
     }
     readonly property bool narrow: width < 980

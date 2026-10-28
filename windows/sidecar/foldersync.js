@@ -244,6 +244,8 @@ export function createFolderSync({
     const actions = pair.pendingDeletes?.actions || [];
     const deleteRemote = actions.filter(action => action.type === "delete_remote").length;
     const deleteLocal = actions.filter(action => action.type === "delete_local").length;
+    const fromPC = actions.some(action => action.type === "delete_remote" || action.type === "delete_remote_folder");
+    const fromDrive = actions.some(action => action.type === "delete_local" || action.type === "delete_local_folder");
     return {
       id: pair.id,
       local: pair.local,
@@ -255,7 +257,7 @@ export function createFolderSync({
       pending: pair.pending || 0,
       errors: pair.errors || [],
       delete_count: deleteRemote + deleteLocal,
-      delete_side: deleteRemote && deleteLocal ? "this PC and Drive" : deleteLocal ? "Drive" : "this PC",
+      delete_side: fromPC && fromDrive ? "this PC and Drive" : fromDrive ? "Drive" : "this PC",
     };
   }
 

@@ -38,9 +38,10 @@ Item {
     property var syncCommands: ({})
     property var expandedSyncErrors: ({})
     property bool loadingSyncFolders: false
+    readonly property bool syncVisible: visible && (!app || (app.visible !== false && app.visibility !== Window.Minimized))
 
     function loadSyncFolders() {
-        if (!page.visible || loadingSyncFolders) return;
+        if (!syncVisible || loadingSyncFolders) return;
         loadingSyncFolders = true;
         Api.request("GET", "/api/syncfolders", null, (list, err) => {
             loadingSyncFolders = false;
@@ -154,11 +155,12 @@ Item {
     function go(f, c) { page.folder = f || ""; page.course = c || ""; load(); }
     Component.onCompleted: { load(); loadUsage(); loadSyncFolders(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
     onVisibleChanged: if (visible) { load(); loadUsage(); loadSyncFolders(); }
+    onSyncVisibleChanged: if (syncVisible) loadSyncFolders()
     Connections { target: Api; function onChanged() { if (page.visible) { page.load(); page.loadSyncFolders(); } } }
     // Real time: the list is read again every few seconds while you look (an
     // edited file's new size, files from other devices); the server's disk, which
     // barely moves, every minute and after each upload or delete.
-    Timer { interval: 3000; running: page.visible; repeat: true; onTriggered: page.loadSyncFolders() }
+    Timer { interval: 3000; running: page.syncVisible; repeat: true; onTriggered: page.loadSyncFolders() }
     Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
     Timer { interval: 60000; running: page.visible; repeat: true; onTriggered: page.loadUsage() }
 
@@ -680,22 +682,22 @@ Item {
                 Layout.margins: 40
                 spacing: 18
 
-                RowLayout {
+                Flow {
                     Layout.fillWidth: true
                     spacing: 8
-                    Text { Layout.fillWidth: true; text: "Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
+                    Text { width: Math.max(100, parent.width - viewChoices.width - syncFolderButton.width - (newFolderButton.visible ? newFolderButton.width + 8 : 0) - uploadButton.width - 24); text: "Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
                     // How the files look.
                     Row {
+                        id: viewChoices
                         spacing: 2
                         Repeater {
                             model: [{ key: "icons", icon: "grid", tip: "Icons" }, { key: "details", icon: "list", tip: "Details" }, { key: "gallery", icon: "gallery", tip: "Gallery" }]
                             Btn { required property var modelData; compact: true; icon: modelData.icon; tip: modelData.tip; active: look.view === modelData.key; onClicked: look.view = modelData.key }
                         }
                     }
-                    Item { width: 6 }
-                    Btn { icon: "sync"; text: "Sync a folder…"; onClicked: localFolderPicker.open() }
-                    Btn { visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
-                    Btn { kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
+                    Btn { id: syncFolderButton; icon: "sync"; text: "Sync a folder…"; onClicked: localFolderPicker.open() }
+                    Btn { id: newFolderButton; visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
+                    Btn { id: uploadButton; kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
                 }
 
                 // The server's disk
@@ -775,6 +777,7 @@ Item {
                             id: syncCard
                             required property var modelData
                             required property int index
+                            readonly property bool errorsExpanded: !!page.expandedSyncErrors[modelData.id]
                             Layout.fillWidth: true
                             implicitHeight: syncCardCol.implicitHeight + 24
                             color: Theme.surface
@@ -856,7 +859,7 @@ Item {
                                             }
                                             Text {
                                                 text: "·  " + modelData.pending + " pending"
-                                                color: Theme.accent
+                                                color: modelData.pending > 0 ? Theme.accent : Theme.muted
                                                 font.family: Theme.mono
                                                 font.pixelSize: 12
                                             }
@@ -974,7 +977,6 @@ Item {
                                         }
                                     }
                                 }
-                                readonly property bool errorsExpanded: !!page.expandedSyncErrors[modelData.id]
                                 ColumnLayout {
                                     visible: !!(modelData.errors && modelData.errors.length)
                                     Layout.fillWidth: true
