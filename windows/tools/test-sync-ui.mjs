@@ -46,7 +46,8 @@ try {
   await mkdir(join(temp, "local"));
   runner = spawn(process.argv[2] || "C:/Qt/6.8.3/msvc2022_64/bin/qmltestrunner.exe",
     ["-platform", "offscreen", "-import", join(root, "windows/app"), "-input", temp, "-o", `${join(temp, "results.txt")},txt`], {
-      env: { ...process.env, APPDATA: join(temp, "roaming"), LOCALAPPDATA: join(temp, "local"), QT_QUICK_CONTROLS_STYLE: "Basic" },
+      env: { ...process.env, APPDATA: join(temp, "roaming"), LOCALAPPDATA: join(temp, "local"),
+        QT_QPA_FONTDIR: join(process.env.WINDIR || "C:/Windows", "Fonts"), QT_QUICK_CONTROLS_STYLE: "Basic" },
       windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
     });
   runner.stdout.pipe(process.stdout);

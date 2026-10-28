@@ -44,6 +44,14 @@ TestCase {
         request("/test/reset", {});
     }
     function cleanup() { page.driveFolderPicker.close(); page.visible = false; }
+    function withText(root, text) {
+        if (root.text === text) return root;
+        for (const child of root.children || []) {
+            const found = withText(child, text);
+            if (found) return found;
+        }
+        return null;
+    }
 
     function test_1_paths() {
         compare(page.localPath("file:///C:/Temp/Studio%20%23100%25"), "C:\\Temp\\Studio #100%");
@@ -79,7 +87,9 @@ TestCase {
     function test_3_queued_resolution_and_visibility() {
         page.visible = true;
         tryVerify(() => page.syncFolders.length === 1);
-        page.expandedSyncErrors = ({ pair: true });
+        tryVerify(() => withText(page, "Show 1 error") !== null);
+        mouseClick(withText(page, "Show 1 error"));
+        tryVerify(() => withText(page, "Test error").visible);
         page.syncCommand("pair", "confirm");
         page.syncCommand("pair", "keep"); // cannot change a queued choice
         tryCompare(page, "syncCommands", { pair: "waiting" });
@@ -92,6 +102,7 @@ TestCase {
         wait(17300); // the original 20-second polling limit must not return
         compare(page.syncCommands.pair, "waiting");
         verify(page.expandedSyncErrors.pair);
+        verify(withText(page, "Test error").visible);
         tryVerify(() => !page.syncCommands.pair, 7000);
         verify(page.syncFolders[0].state !== "paused");
         const status = request("/test/inspect");
