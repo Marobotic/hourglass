@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   occurrenceDates, expand, toRRule, resolveNow, nextAlarm, dueBetween, alarmLabel,
-  zonedToEpoch, localParts, weekday, addDays, normalize, shortLabel,
+  zonedToEpoch, localParts, weekday, addDays, normalize, shortLabel, snoozeTimerId,
 } from "../index.js";
 
 const TZ = "Europe/London";
@@ -177,4 +177,13 @@ test("normalize validates", () => {
   assert.throws(() => normalize("courses", { name: " " }));
   const p = normalize("notes", { title: "x" }, { partial: true });
   assert.equal(p.body, undefined);
+});
+
+test("a snooze timer has the same id on every device", () => {
+  // The vector is a real row the phone made for an alarm it snoozed: Android's
+  // UUID.nameUUIDFromBytes, iOS's nameUUID and this function must agree, or the
+  // devices make different snooze timers and a dismiss cannot cancel them all.
+  assert.equal(snoozeTimerId("5a707a84-89bc-48e4-bdc9-06db6d9fafcf", 1792989900000), "06dcb18c-5ac5-3c14-a8dc-34167bf16340");
+  // Another occurrence of the same alarm is another timer.
+  assert.notEqual(snoozeTimerId("5a707a84-89bc-48e4-bdc9-06db6d9fafcf", 1792989960000), "06dcb18c-5ac5-3c14-a8dc-34167bf16340");
 });

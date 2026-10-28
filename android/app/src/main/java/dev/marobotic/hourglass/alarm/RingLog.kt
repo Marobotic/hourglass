@@ -73,7 +73,7 @@ object RingSync {
     }.getOrNull()
 
     fun share(repo: dev.marobotic.hourglass.data.Repo, id: String, at: Long, action: String) {
-        if (id == "test" || id == "wake-check" || at == 0L) return
+        if (id == "test" || at == 0L) return
         repo.store.upsert("prefs", mapOf("value" to JSONObject().put("at", at).put("action", action).put("device", DEVICE).put("ts", System.currentTimeMillis()).toString()), key(id))
         Thread { runCatching { repo.postRingStop(id, at, action) } }.start()
         Thread { runCatching { repo.syncBlocking() } }.start()

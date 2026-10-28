@@ -120,7 +120,7 @@ function ics(service) {
 }
 
 // options: { store, service, token, icalToken, publicUrl, extra(req, res, url) -> handled? }
-export function createHandler({ store, service, token, icalToken, publicUrl = "", extra }) {
+export function createHandler({ store, service, token, icalToken, publicUrl = "", extra, guard }) {
   return async (req, res) => {
     const url = new URL(req.url, "http://local");
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -168,7 +168,7 @@ export function createHandler({ store, service, token, icalToken, publicUrl = ""
         if (m === "GET") return send(res, 200, store.changesSince(Number(q.since) || 0));
         if (m === "POST") {
           const body = await readJson(req);
-          const result = applyPush(store, body.changes);
+          const result = applyPush(store, body.changes, guard);
           return send(res, 200, { ...result, rev: store.meta("rev", 0) });
         }
       }

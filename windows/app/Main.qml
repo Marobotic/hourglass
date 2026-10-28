@@ -615,26 +615,10 @@ ApplicationWindow {
         }
     }
 
-    // Wake check: rings again in 5 minutes unless "I'm up".
-    Rectangle {
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 52
-        z: 99
-        visible: !!app.appState.wake_check && !ringOverlay.visible
-        color: Theme.surface
-        border.color: Theme.accent
-        border.width: 1
-        RowLayout {
-            anchors { fill: parent; leftMargin: 18; rightMargin: 10 }
-            Text { Layout.fillWidth: true; text: app.appState.wake_check ? "Wake check: " + app.appState.wake_check.label + " rings again at " + Util.clock(app.appState.wake_check.at) : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
-            Btn { text: "I'm up"; kind: "primary"; onClicked: Api.post("/api/ring/awake", {}, () => app.pollState()) }
-        }
-    }
-
     // Reminders that showed: a card each, bottom right, until Done or Snooze
     // (here or on another device). Not an alarm: nothing takes over the window.
     Column {
-        anchors { right: parent.right; bottom: parent.bottom; rightMargin: 18; bottomMargin: (!!app.appState.wake_check && !ringOverlay.visible ? 52 : 0) + 18 }
+        anchors { right: parent.right; bottom: parent.bottom; rightMargin: 18; bottomMargin: 18 }
         z: 98
         spacing: 10
         visible: !ringOverlay.visible

@@ -15,7 +15,7 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
-import { BUILTIN_RINGTONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate } from "../../core/index.js";
+import { BUILTIN_RINGTONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, snoozeTimerId } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
 
 const HOME = homedir();
@@ -323,17 +323,13 @@ const AUTO_SNOOZES = 3;
 const SNOOZED = " (snoozed)";
 const stopKey = (id) => `ring_stop:${id}`;
 const autoSnoozes = new Map();
-const snoozeId = (item) => {
-  const b = createHash("md5").update(`snooze:${item.id}:${item.at}`).digest();
-  b[6] = (b[6] & 0x0f) | 0x30; b[8] = (b[8] & 0x3f) | 0x80;
-  const h = b.toString("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-};
+// core gives the id, so the phone makes the same snooze timer (see snoozeTimerId).
+const snoozeId = (item) => snoozeTimerId(item.id, item.at);
 function stoppedElsewhere(item) {
   try { const v = JSON.parse(store.get("prefs", stopKey(item.id))?.value ?? "null"); return v && v.at === item.at ? v : null; } catch { return null; }
 }
 function shareStop(item, action) {
-  if (item.test || item.id === "wake-check") return;
+  if (item.test) return;
   store.upsert("prefs", { id: stopKey(item.id), value: JSON.stringify({ at: item.at, action, device: DEVICE, ts: Date.now() }) });
   scheduleSync(0);
   ringClient.stop(item, action);
@@ -452,8 +448,14 @@ function ringOut(id) {
   }).catch(() => {
     autoSnoozes.set(label, n + 1);
     ring_stop(id);
+    const source = { id: r.id, at: r.at };
     const local = { id: `local-auto:${r.id}:${r.at}:${Date.now()}`, kind: "alarm", at: Date.now() + 5 * 60000, label };
-    setTimeout(() => ring(local), 5 * 60000);
+    // Offline snooze: still not a way back for an occurrence dismissed meanwhile.
+    setTimeout(() => {
+      const other = stoppedElsewhere(source);
+      if (other) return log("skipped", local.kind, `${r.label} was already ${other.action} on ${other.device}`);
+      ring(local);
+    }, 5 * 60000);
   });
 }
 setInterval(() => { for (const [id, r] of ringing) if (Date.now() - (r.started || 0) >= RING_MS) ringOut(id); }, 1000);

@@ -39,19 +39,16 @@ enum AlarmKitScheduler {
     static func upcoming(_ store: Store) -> [RingInfo] {
         let now = nowMs()
         var fires: [RingInfo] = []
-        let wakeLabels = RingLog.wakeLabels
         for t in store.timers where t.state == "running" {
             if let at = t.ends_at, at > now {
-                let wake = t.label.hasSuffix(RingLog.snoozed) && wakeLabels.contains(RingLog.base(t.label))
-                fires.append(RingInfo(id: t.id, kind: "timer", at: at, label: t.label, wake: wake))
+                fires.append(RingInfo(id: t.id, kind: "timer", at: at, label: t.label))
             }
         }
         for a in store.alarms {
-            let wake = a.lead_event_id != nil || a.lead_course_id != nil || a.label.localizedCaseInsensitiveContains("wake")
             var from = now
             for _ in 0..<7 {
                 guard let at = Alarms.next(a, store.db.courses, store.db.events, from), at < now + 8 * 86_400_000 else { break }
-                fires.append(RingInfo(id: a.id, kind: "alarm", at: at, label: Alarms.displayLabel(a, store.db.courses, store.db.events), wake: wake))
+                fires.append(RingInfo(id: a.id, kind: "alarm", at: at, label: Alarms.displayLabel(a, store.db.courses, store.db.events)))
                 from = at
             }
         }
@@ -70,14 +67,13 @@ enum AlarmKitScheduler {
             guard AlarmManager.shared.authorizationState == .authorized else { return }
             let want = upcoming(store)
             let wantIds = Set(want.map(\.uuid))
-            let wake = WakeCheck.pending.map { RingInfo(id: "wake-check", kind: "alarm", at: $0.at, label: RingLog.wakePrefix + $0.label).uuid }
             let have = (try? AlarmManager.shared.alarms) ?? []
             let haveIds = Set(have.map(\.id))
             var pending = RingLog.pending
             for r in want { pending[r.uuid.uuidString] = r }
             RingLog.pending = pending
             Task {
-                for old in have where !wantIds.contains(old.id) && old.id != wake {
+                for old in have where !wantIds.contains(old.id) {
                     if old.state == .alerting {
                         // Ringing now: stop it if another device answered it, or if it's a snooze timer marked done/deleted.
                         if let r = RingLog.pending[old.id.uuidString] {
@@ -139,13 +135,6 @@ enum AlarmKitScheduler {
             }
         }
         RingLog.pending = pending
-    }
-
-    @MainActor
-    static func scheduleOne(_ r: RingInfo) async {
-        #if canImport(AlarmKit)
-        if #available(iOS 26.0, *), AlarmManager.shared.authorizationState == .authorized { await schedule(r) }
-        #endif
     }
 
     static func stop(_ id: UUID) {
