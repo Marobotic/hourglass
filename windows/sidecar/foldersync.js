@@ -490,7 +490,8 @@ export function createFolderSync({
     }
 
     for (const entry of entries) {
-      if (ignored(entry.name)) return false;
+      // desktop.ini and Thumbs.db go to the Recycle Bin with their folder.
+      if (ignored(entry.name)) continue;
       const child = join(absolute, entry.name);
       const rel = relative(pair.local, child).split(sep).join("/");
       if (entry.isFile() && fileDeletes.has(rel)) continue;
@@ -544,7 +545,9 @@ export function createFolderSync({
       if (!existsSync(pair.local)) {
         throw Object.assign(new Error("The synced folder is missing or unreadable."), { pause: "root_unreadable" });
       }
-      await readdir(pair.local);
+      await readdir(pair.local).catch((error) => {
+        throw Object.assign(error, { pause: "root_unreadable" });
+      });
       if (!signedIn()) {
         pair.state = "idle";
         return;
@@ -555,7 +558,10 @@ export function createFolderSync({
 
       const local = await scan(pair.local, pair.base || {});
       let remote = remoteTree(pair.folder_id);
+      // Folders made on Drive come down; one deleted here since the last pass
+      // is left out, so it can be deleted on Drive instead of coming back.
       for (const folder of Object.keys(remote.folders)) {
+        if (pair.base?.folders?.[folder] && !Object.hasOwn(local.folders, folder)) continue;
         await mkdir(join(pair.local, ...folder.split("/")), { recursive: true });
       }
 
@@ -614,7 +620,7 @@ export function createFolderSync({
           const row = (getRows().files || []).find((item) => item.id === action.file_id);
           if (row) getRows().removeFile?.(row.id);
         } else if (action.type === "delete_local") {
-        localFileDeletes.push(action.path);
+          localFileDeletes.push(action.path);
         }
         pair.pending--;
       }
@@ -654,7 +660,10 @@ export function createFolderSync({
       if (local.pending.length || afterLocal.pending.length) schedule(pair, 2000);
     } catch (error) {
       pair.pending = 0;
-      if (error.pause || ["ENOENT", "EACCES", "EPERM"].includes(error.code)) {
+      // A file that vanished or was locked mid-pass is retried next pass; only
+      // a missing or unreadable root pauses the pair.
+      const rootGone = ["ENOENT", "EACCES", "EPERM"].includes(error.code) && !existsSync(pair.local);
+      if (error.pause || rootGone) {
         pause(pair, error.pause || "root_unreadable", error.message);
       } else {
         pair.state = "error";

@@ -375,6 +375,8 @@ test("a deleted remote folder recycles its unchanged files and folder in one bat
   const sub = join(root, "class");
   await mkdir(sub, { recursive: true });
   await writeFile(join(sub, "a.txt"), "same");
+  // Windows' own Thumbs.db must not keep the folder alive.
+  await writeFile(join(sub, "Thumbs.db"), "x");
   const fileStat = await stat(join(sub, "a.txt"));
   const { data } = await savedPair({
     temp,
@@ -459,6 +461,10 @@ test("deleting a local folder tombstones its now-empty Drive folder", async () =
   try {
     await engine.run("pair-1");
     assert.deepEqual(state.files, []);
+    assert.deepEqual(state.folders.map((folder) => folder.id), ["folder-root"]);
+    // It stays gone on both sides: not made again here, nor on Drive next pass.
+    assert.equal(exists(join(root, "class")), false);
+    await engine.run("pair-1");
     assert.deepEqual(state.folders.map((folder) => folder.id), ["folder-root"]);
   } finally {
     engine.remove("pair-1");
