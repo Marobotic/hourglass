@@ -273,6 +273,7 @@ const versions = createVersions({ drivePath });
 // Retries after a delay if a file fails or Drive is offline.
 const BACKFILL_RETRY_MS = Number(process.env.HOURGLASS_BACKFILL_RETRY_MS || 5000);
 const backfillFailed = new Map(); // fileId -> timestamp of failure
+const backfillLogged = new Set(); // each failing file is logged once, not on every retry
 let backfillRunning = false;
 let backfillTimeout = null;
 
@@ -347,9 +348,11 @@ async function runBackfill() {
         }
         const sha256 = await hashFileAsync(filePath);
         backfillFailed.delete(file.id);
+        backfillLogged.delete(file.id);
         t.store.upsert("files", { id: file.id, sha256 });
       } catch (e) {
-        console.error(`Backfill failed for file ${file.id}:`, e.message);
+        if (!backfillLogged.has(file.id)) console.error(`Backfill failed for file ${file.id}:`, e.message);
+        backfillLogged.add(file.id);
         backfillFailed.set(file.id, Date.now());
         scheduleBackfill();
         return;
