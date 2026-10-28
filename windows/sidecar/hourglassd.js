@@ -1196,9 +1196,7 @@ async function syncFolderRoutes(req, res, path) {
       return json(res, 400, { error: "Choose an existing folder." }), true;
     }
 
-    let raw = decodeURIComponent(String(b.local || "").replace(/^file:\/\/\/?/, ""));
-    if (WIN) raw = raw.replace(/^\/([A-Za-z]:)/, "$1");
-    let local = resolve(raw);
+    let local = resolve(String(b.local));
     const folderId = String(b.folder_id || "");
     if (!existsSync(local) || !statSync(local).isDirectory()) {
       return json(res, 400, { error: "Choose an existing folder." }), true;

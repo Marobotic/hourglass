@@ -795,3 +795,29 @@ function exists(path) {
 function requireText(path) {
   return readFileSync(path, "utf8");
 }
+
+test("mass-delete status describes files and their source without counting other pending work", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-delete-view-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  const { data } = await savedPair({ temp, root, paused: true, pendingDeletes: {
+    actions: [
+      { type: "delete_remote", path: "pc.txt" },
+      { type: "delete_local", path: "drive.txt" },
+      { type: "delete_remote_folder", path: "empty" },
+      { type: "record", path: "unchanged.txt" },
+    ],
+  } });
+  const engine = createFolderSync({ dataDir: data, driveDir: join(temp, "drive"),
+    getRows: () => ({ folders: [], files: [] }), syncOnce: async () => {},
+    upload: async () => {}, download: async () => {}, removeLocal: async () => {},
+    signedIn: () => false, watchFactory: fakeWatch,
+  });
+  try {
+    assert.equal(engine.list()[0].delete_count, 2);
+    assert.equal(engine.list()[0].delete_side, "this PC and Drive");
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});

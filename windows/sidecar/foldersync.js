@@ -239,10 +239,11 @@ export function createFolderSync({
   }
 
   function view(pair) {
-    const deleteRemote = pair.pendingDeletes?.deleteRemote || 0;
-    const deleteLocal = pair.pendingDeletes?.deleteLocal || 0;
-    const deleteCount = Math.max(deleteRemote, deleteLocal) || pair.pending || 0;
-    const deleteSide = deleteRemote >= deleteLocal ? "this PC" : "Drive";
+    // The guard counts folders too. The prompt needs the number of files
+    // and where they disappeared, rather than the total pending work.
+    const actions = pair.pendingDeletes?.actions || [];
+    const deleteRemote = actions.filter(action => action.type === "delete_remote").length;
+    const deleteLocal = actions.filter(action => action.type === "delete_local").length;
     return {
       id: pair.id,
       local: pair.local,
@@ -253,8 +254,8 @@ export function createFolderSync({
       last_sync: pair.last_sync,
       pending: pair.pending || 0,
       errors: pair.errors || [],
-      delete_count: deleteCount,
-      delete_side: deleteSide,
+      delete_count: deleteRemote + deleteLocal,
+      delete_side: deleteRemote && deleteLocal ? "this PC and Drive" : deleteLocal ? "Drive" : "this PC",
     };
   }
 

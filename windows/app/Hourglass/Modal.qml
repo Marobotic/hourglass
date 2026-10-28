@@ -34,7 +34,6 @@ Popup {
 
     contentItem: ColumnLayout {
         spacing: 0
-        Rectangle { z: -1; anchors.fill: parent; color: Theme.surface; border.width: 1; border.color: Theme.border }
         ColumnLayout {
             Layout.fillWidth: true
             Layout.margins: 20
