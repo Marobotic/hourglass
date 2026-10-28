@@ -18,8 +18,9 @@ const token = "t0k";
 let base, server;
 
 before(async () => {
-  const ringRoute = createRingRoutes({ store, service });
-  server = createServer(createHandler({ store, service, token, icalToken: "ik", extra: ringRoute }));
+  const ring = { store, service };
+  const ringRoute = createRingRoutes(ring);
+  server = createServer(createHandler({ store, service, token, icalToken: "ik", extra: ringRoute, guard: ring.ringGuard }));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -51,6 +52,43 @@ test("dismiss marks its shared snooze timer done and ring routes require auth", 
   assert.equal(store.get("timers", id).state, "done");
   assert.equal((await fetch(`${base}/api/ring/state?alarm_id=x&at=${at}`)).status, 401);
 });
+
+// A dismissed occurrence is over. Another device can still send its snooze
+// timer (it was offline, or it auto-snoozed and synced late): the server keeps
+// it from running, so the alarm cannot come back 5 minutes after the dismiss.
+const pushTimer = (id, extra = {}) =>
+  call("POST", "/api/sync", {
+    changes: { timers: [{ id, label: "Alarm (snoozed)", duration_s: 300, state: "running", ends_at: clockMs + 300_000, updated_at: Date.now(), ...extra }] },
+  });
+
+test("a snooze timer pushed after the dismissal is stored done, not running", async () => {
+  const at = 123456792;
+  const id = snoozeId("ring-late", at);
+  assert.equal((await call("POST", "/api/ring/stop", { alarm_id: "ring-late", at, action: "dismissed", device: "phone" })).status, 200);
+  const push = await pushTimer(id);
+  assert.equal(push.status, 200);
+  assert.equal(store.get("timers", id).state, "done");
+  // The device that pushed it pulls the same row back as done, so it stops too.
+  const pulled = await call("GET", "/api/sync?since=0");
+  assert.equal(pulled.body.changes.timers.find((t) => t.id === id)?.state, "done");
+});
+
+test("a snoozed alarm's late snooze timer still runs", async () => {
+  const at = 123456793;
+  const id = snoozeId("ring-late-snoozed", at);
+  await call("POST", "/api/ring/stop", { alarm_id: "ring-late-snoozed", at, action: "snoozed", device: "phone" });
+  await pushTimer(id);
+  assert.equal(store.get("timers", id).state, "running");
+});
+
+test("dismissing one occurrence leaves the alarm's next occurrence alone", async () => {
+  const at = 123456794;
+  await call("POST", "/api/ring/stop", { alarm_id: "ring-next", at, action: "dismissed", device: "phone" });
+  const id = snoozeId("ring-next", at + 86_400_000);
+  await pushTimer(id);
+  assert.equal(store.get("timers", id).state, "running");
+});
+
 after(() => server.close());
 
 const call = async (method, path, body, tok = token) => {

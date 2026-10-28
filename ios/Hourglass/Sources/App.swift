@@ -111,18 +111,6 @@ struct RootView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                // Wake check: rings again in 5 minutes unless "I'm up".
-                Ticking { _ in
-                    if let w = WakeCheck.pending, w.at > nowMs() {
-                        HStack(spacing: 10) {
-                            T("Wake check: \(w.label) rings again at \(Dates.clock(w.at))", 13, lines: 2)
-                            Spacer(minLength: 0)
-                            HButton("I'm up", primary: true) { WakeCheck.imUp() }
-                        }
-                        .padding(.horizontal, 18).padding(.vertical, 8)
-                        .background(H.accent.opacity(0.18))
-                    }
-                }
                 Group {
                     switch tab {
                     case 0: NowView(path: $path)

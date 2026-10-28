@@ -1,19 +1,30 @@
-import { createHash } from "node:crypto";
+import { finishedTimer } from "../core/alarms.js";
+import { snoozeTimerId } from "../core/ring.js";
 
 const STOP_TTL = 24 * 60 * 60_000;
 const WAIT_MS = 25_000;
 
+// A dismissed alarm occurrence never rings again, so the snooze timer it would
+// have made must never run either: the id is fixed by the alarm and the
+// occurrence (see snoozeTimerId), which lets the server cancel it before the
+// row even exists. A device that was offline, or one that auto-snoozed and
+// synced late, used to bring a dismissed alarm back 5 minutes later.
 export function snoozeId(alarmId, at) {
-  const b = createHash("md5").update(`snooze:${alarmId}:${at}`).digest();
-  b[6] = (b[6] & 0x0f) | 0x30;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = b.toString("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  return snoozeTimerId(alarmId, at);
 }
 
 export function createRingRoutes(t) {
   t.ringStops ??= new Map();
   t.ringWatchers ??= new Map();
+  t.dismissedSnoozes ??= new Map(); // snooze timer id -> when the alarm was dismissed
+  // applyPush runs this on every row a device pushes (see createHandler).
+  t.ringGuard ??= (table, row) => {
+    if (table !== "timers" || row.state !== "running" || row.deleted) return row;
+    const dismissedAt = t.dismissedSnoozes.get(row.id);
+    if (dismissedAt === undefined) return row;
+    if (dismissedAt < Date.now() - STOP_TTL) { t.dismissedSnoozes.delete(row.id); return row; }
+    return { ...row, ...finishedTimer(row) };
+  };
   const keyOf = (id, at) => `${id}:${at}`;
   const state = (key) => {
     const hit = t.ringStops.get(key);
@@ -61,7 +72,10 @@ export function createRingRoutes(t) {
     for (const [k, hit] of t.ringStops) if (hit.ts < Date.now() - STOP_TTL) t.ringStops.delete(k);
     t.store.upsert("prefs", { id: `ring_stop:${b.alarm_id}`, value: JSON.stringify({ at, ...stopped }) });
     if (b.action === "dismissed") {
-      for (const id of new Set([snoozeId(b.alarm_id, at), String(b.alarm_id)])) {
+      const snooze = snoozeId(b.alarm_id, at);
+      t.dismissedSnoozes.set(snooze, Date.now());
+      for (const [k, ts] of t.dismissedSnoozes) if (ts < Date.now() - STOP_TTL) t.dismissedSnoozes.delete(k);
+      for (const id of new Set([snooze, String(b.alarm_id)])) {
         const timer = t.store.get("timers", id);
         if (timer && !timer.deleted && timer.state === "running") t.service.updateTimer({ timer_id: id, action: "done" });
       }

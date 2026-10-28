@@ -15,7 +15,7 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { Service } from "../../core/node/service.js";
-import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue } from "../../core/index.js";
+import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, snoozeTimerId } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
 
 const HOME = homedir();
@@ -358,13 +358,12 @@ setInterval(() => scheduleSync(0), 30000);
 
 // --- alarms & timers ------------------------------------------------------------------
 
-const ringing = new Map(); // id -> { kind, id, label, at, started, wake, stop }
+const ringing = new Map(); // id -> { kind, id, label, at, started, stop }
 let lastCheck = now();
 const RING_MS = 10 * 60000; // rings this long, then snoozes by itself
 const AUTO_SNOOZES = 3; // then it gives up
 const SNOOZED = " (snoozed)";
-const WAKE_PREFIX = "Are you up? ";
-const baseLabel = (l) => String(l).replace(WAKE_PREFIX, "").replace(/( \(snoozed\))+$/, "");
+const baseLabel = (l) => String(l).replace(/( \(snoozed\))+$/, "");
 const DEVICE = hostname();
 const ringClient = createRingClient({ server: () => config().server, token: () => config().token, device: () => DEVICE });
 const localRings = new Set();
@@ -409,26 +408,18 @@ function stoppedElsewhere(item) {
   } catch { return null; }
 }
 function shareStop(item, action) {
-  if (item.test || item.id === "wake-check") return;
+  if (item.test) return;
   store.upsert("prefs", { id: stopKey(item.id), value: JSON.stringify({ at: item.at, action, device: DEVICE, ts: Date.now() }) });
   scheduleSync(0);
   ringClient.stop(item, action);
 }
 
-// One snooze timer per ring, whichever device snoozes: the id comes from the
-// alarm and occurrence (a name-based UUID, the same as Java's nameUUIDFromBytes).
-function snoozeId(item) {
-  const b = createHash("md5").update(`snooze:${item.id}:${item.at}`).digest();
-  b[6] = (b[6] & 0x0f) | 0x30;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = b.toString("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
+// One snooze timer per ring, whichever device snoozes: core gives the id, so
+// the phone makes the same row (see snoozeTimerId).
+const snoozeId = (item) => snoozeTimerId(item.id, item.at);
 const snoozeTimer = (item) => service.startTimer({ id: snoozeId(item), minutes: 5, label: baseLabel(item.label) + SNOOZED });
 
 const autoSnoozes = new Map(); // base label -> times snoozed by itself in a row
-const wakeLabels = new Set(); // wake-up alarms, so their snoozes are too
-let wakeCheck = null; // { label, at, timer }: rings again unless "I'm up"
 
 function notify(item) {
   if (SILENT) return;
@@ -497,21 +488,15 @@ function ring(item) {
   const late = Math.round((now() - item.at) / 1000);
   if (!item.test) ringLog(item.label, "due", `${kind} for ${new Date(item.at).toLocaleTimeString("en-GB", { timeZone: service.tz })}` + (late > 5 ? `, ${late}s late` : ""));
   const data = service.data();
-  let wake = false;
-  if (item.kind === "timer") {
-    service.updateTimer({ timer_id: item.id, action: "done" });
-    wake = item.label.endsWith(SNOOZED) && wakeLabels.has(baseLabel(item.label));
-  }
-  if (item.kind === "alarm" && !item.test && item.id !== "wake-check") {
+  if (item.kind === "timer") service.updateTimer({ timer_id: item.id, action: "done" });
+  if (item.kind === "alarm" && !item.test) {
     const a = data.alarms.find((x) => x.id === item.id);
     if (a && isSpent(a, data, now() + 1000, service.tz)) store.upsert("alarms", { id: a.id, enabled: 0 });
-    wake = !!(a && (a.lead_event_id || a.lead_course_id)) || /wake/i.test(item.label);
-    if (wake) wakeLabels.add(item.label);
   }
   const other = stoppedElsewhere(item);
   if (other) return ringLog(item.label, "skipped", `already ${other.action} on ${other.device}`);
   notify(item);
-  ringing.set(item.id, { ...item, wake, started: Date.now(), stop: playLoop(item) });
+  ringing.set(item.id, { ...item, started: Date.now(), stop: playLoop(item) });
   ringClient.watch(item, () => ringing.has(item.id), (other) => {
     const current = ringing.get(item.id);
     if (!current) return;
@@ -533,12 +518,13 @@ function ring_stop(id, outcome = null, detail = "") {
   return r;
 }
 
+// Dismissed once, gone: a dismissal is final for that occurrence, on every
+// device, until the alarm's next scheduled time.
 function dismiss(id, via) {
   const r = ring_stop(id, "dismissed", via);
   if (!r) return false;
   autoSnoozes.delete(baseLabel(r.label));
   shareStop(r, "dismissed");
-  if (r.wake) startWakeCheck(baseLabel(r.label));
   return true;
 }
 
@@ -565,8 +551,15 @@ function ringOut(id) {
       ring_stop(id, "auto-snoozed", `nobody answered for 10 min, rings again in 5 min (${n + 1} of ${AUTO_SNOOZES})`);
       snoozeTimer(r);
     }).catch(() => {
+      const source = { id: r.id, at: r.at };
       const local = { id: `local-auto:${r.id}:${r.at}:${Date.now()}`, kind: "alarm", at: now() + 5 * 60000, label: r.label };
-      const timer = setTimeout(() => { localRings.delete(timer); ring(local); }, 5 * 60000);
+      const timer = setTimeout(() => {
+        localRings.delete(timer);
+        // Offline snooze: still not a way back for an occurrence dismissed meanwhile.
+        const other = stoppedElsewhere(source);
+        if (other) return ringLog(r.label, "skipped", `already ${other.action} on ${other.device}`);
+        ring(local);
+      }, 5 * 60000);
       localRings.add(timer);
       ring_stop(id, "auto-snoozed", "server unavailable, rings again locally in 5 min");
     });
@@ -577,22 +570,7 @@ function ringOut(id) {
   }
 }
 
-// 5 minutes after a wake-up alarm is dismissed it rings again, unless "I'm up".
-function startWakeCheck(label) {
-  clearTimeout(wakeCheck?.timer);
-  const at = now() + 5 * 60000;
-  wakeCheck = { label, at, timer: setTimeout(() => { wakeCheck = null; ring({ id: "wake-check", kind: "alarm", label: WAKE_PREFIX + label, at }); }, 5 * 60000) };
-  ringLog(label, "wake check", "set for 5 min from now");
-}
-function imUp() {
-  if (!wakeCheck) return false;
-  clearTimeout(wakeCheck.timer);
-  ringLog(wakeCheck.label, "awake", "clicked I'm up: wake check cancelled");
-  wakeCheck = null;
-  return true;
-}
-
-// Stopped on another device: stop here too.
+// Stopped on another device: stop here too, and never ring it again.
 function checkStopped() {
   for (const r of [...ringing.values()]) {
     const other = stoppedElsewhere(r);
@@ -1176,7 +1154,6 @@ async function extra(req, res, url, path) {
       theme: theme(),
       sync: { ...sync, server: config().server ?? null },
       ringing: [...ringing.values()].map(({ stop, ...r }) => r),
-      wake_check: wakeCheck ? { label: wakeCheck.label, at: wakeCheck.at } : null,
       reminders: waitingReminders(),
       settings: service.settings(),
       account: account(),
@@ -1198,7 +1175,6 @@ async function extra(req, res, url, path) {
     if (!t) return json(res, 404, { error: "not ringing" }), true;
     return json(res, 200, t), true;
   }
-  if (path === "/api/ring/awake" && req.method === "POST") return json(res, 200, { ok: imUp() }), true;
   if (path === "/api/ring/history" && req.method === "GET") return json(res, 200, ringHistory().slice(0, 100)), true;
   if (path === "/api/account" && req.method === "GET") return json(res, 200, account()), true;
   if (path === "/api/account/login" && req.method === "POST") {

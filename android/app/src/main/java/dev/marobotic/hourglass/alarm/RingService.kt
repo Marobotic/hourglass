@@ -68,26 +68,23 @@ class RingService : Service() {
         const val RING_MS = 10 * 60_000L // rings this long, then snoozes by itself
         private const val AUTO_SNOOZES = 3 // then it gives up
         const val SNOOZED = " (snoozed)"
-        const val WAKE_PREFIX = "Are you up? "
         var ringing: Triple<String, String, String>? = null // label, kind, id
             private set
 
         // test: Settings > Test alarm, which plays even with the alarm sound off.
-        // wake: a wake-up alarm; dismissing it sets a wake check 5 minutes later.
         // at: the occurrence ringing, so other devices can tell it was stopped.
-        fun start(ctx: Context, label: String, kind: String, id: String, test: Boolean = false, wake: Boolean = false, at: Long = 0L) =
-            ctx.startForegroundService(Intent(ctx, RingService::class.java).putExtra("label", label).putExtra("kind", kind).putExtra("id", id).putExtra("test", test).putExtra("wake", wake).putExtra("at", at))
+        fun start(ctx: Context, label: String, kind: String, id: String, test: Boolean = false, at: Long = 0L) =
+            ctx.startForegroundService(Intent(ctx, RingService::class.java).putExtra("label", label).putExtra("kind", kind).putExtra("id", id).putExtra("test", test).putExtra("at", at))
         // via: what stopped it, for the alarm history.
         fun stop(ctx: Context, via: String) = ctx.startService(Intent(ctx, RingService::class.java).setAction(STOP).putExtra("via", via))
         fun snooze(ctx: Context, via: String) = ctx.startService(Intent(ctx, RingService::class.java).setAction(SNOOZE).putExtra("via", via))
 
-        fun baseLabel(label: String) = label.removePrefix(WAKE_PREFIX).removeSuffix(SNOOZED)
+        fun baseLabel(label: String) = label.removeSuffix(SNOOZED)
     }
 
     private var player: MediaPlayer? = null
     private val handler = Handler(Looper.getMainLooper())
     private var test = false
-    private var wake = false
     private var startedAt = 0L
     private var savedVolume: Int? = null
     private var ringAt = 0L
@@ -103,8 +100,8 @@ class RingService : Service() {
                 ringing?.let { r ->
                     RingLog.add(this, r.first, "dismissed", "$via after ${secs()}s")
                     autoSnoozes(baseLabel(r.first), reset = true)
+                    // Dismissed once, gone: the dismissal is final for this occurrence.
                     RingSync.share(App.repo(this), r.third, ringAt, "dismissed")
-                    if (wake) Scheduler.wakeCheck(this, baseLabel(r.first))
                 }
                 finish(); return START_NOT_STICKY
             }
@@ -125,7 +122,6 @@ class RingService : Service() {
         val kind = intent?.getStringExtra("kind") ?: "alarm"
         val id = intent?.getStringExtra("id") ?: ""
         test = intent?.getBooleanExtra("test", false) == true
-        wake = intent?.getBooleanExtra("wake", false) == true
         ringAt = intent?.getLongExtra("at", 0L) ?: 0L
         startedAt = System.currentTimeMillis()
         ringing = Triple(label, kind, id)

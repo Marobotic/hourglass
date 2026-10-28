@@ -170,13 +170,16 @@ export function numberedTitle(store, base, { startAt = 1 } = {}) {
 // accepted row got so the client can base its next edit on it. A note edited
 // on two devices at once is never copied: the newer edit wins and the other
 // text is kept as a version of the same note.
-export function applyPush(store, changes) {
+// guard(table, row), optional, may return a replacement row: the server uses it
+// to write a row it will not accept as sent (a snooze timer of a dismissed alarm).
+export function applyPush(store, changes, guard) {
   const result = { applied: 0, conflicts: 0, revs: {} };
   const note = (t, row) => ((result.revs[t] ??= {})[row.id] = row.rev);
   for (const t of TABLE_NAMES) {
     if (t === "note_versions") continue; // written by the server only
     for (const incoming of changes?.[t] ?? []) {
-      const row = normalize(t, incoming);
+      const sent = normalize(t, incoming);
+      const row = (guard && guard(t, sent)) || sent;
       const existing = store.get(t, row.id);
       const baseRev = Number(incoming.base_rev ?? incoming.rev ?? 0);
       if (t === "notes" && existing && !existing.deleted && !row.deleted && existing.rev > baseRev && existing.body !== row.body && existing.body && row.body) {

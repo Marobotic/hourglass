@@ -1,7 +1,6 @@
 import Foundation
 import AppIntents
 import CryptoKit
-import UserNotifications
 #if canImport(AlarmKit)
 import AlarmKit
 #endif
@@ -13,7 +12,6 @@ struct RingInfo: Codable, Hashable {
     var kind: String // "alarm" | "timer"
     var at: Int64
     var label: String
-    var wake = false // a wake-up alarm: Stop sets a wake check
 
     // The AlarmKit id: from the ring, so rescheduling keeps it.
     var uuid: UUID { nameUUID("ring:\(id):\(at)") }
@@ -34,10 +32,8 @@ func nameUUID(_ s: String) -> UUID {
 // and how it ended. Same lines as the phone's and desktop's history.
 enum RingLog {
     static let snoozed = " (snoozed)"
-    static let wakePrefix = "Are you up? "
     static func base(_ label: String) -> String {
         var l = label
-        if l.hasPrefix(wakePrefix) { l.removeFirst(wakePrefix.count) }
         while l.hasSuffix(snoozed) { l.removeLast(snoozed.count) }
         return l
     }
@@ -75,12 +71,6 @@ enum RingLog {
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: pendingKey) }
     }
     static func answered(_ r: RingInfo) { var p = pending; p[r.uuid.uuidString] = nil; pending = p }
-
-    // Wake-up alarms by label, so their snoozes are wake-up alarms too.
-    static var wakeLabels: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: "wake_labels") ?? []) }
-        set { UserDefaults.standard.set(Array(newValue.suffix(50)), forKey: "wake_labels") }
-    }
 }
 
 // Dismissed or snoozed on one device = stopped on all of them, through a synced
@@ -99,45 +89,12 @@ enum RingSync {
 
     @MainActor
     static func share(_ store: Store, _ r: RingInfo, _ action: String) {
-        guard r.id != "wake-check" else { return }
         let s = Stop(at: r.at, action: action, device: device, ts: nowMs())
         store.setPref(key(r.id), String(data: (try? JSONEncoder().encode(s)) ?? Data(), encoding: .utf8) ?? "")
         store.postRingStop(id: r.id, at: r.at, action: action)
     }
 
     static func snoozeId(_ r: RingInfo) -> String { nameUUID("snooze:\(r.id):\(r.at)").uuidString.lowercased() }
-}
-
-// 5 minutes after a wake-up alarm is stopped it rings again, unless "I'm up"
-// is tapped in the app first.
-enum WakeCheck {
-    struct Pending: Codable { var label: String; var at: Int64 }
-    static var pending: Pending? {
-        get { UserDefaults.standard.data(forKey: "wake_check").flatMap { try? JSONDecoder().decode(Pending.self, from: $0) } }
-        set { UserDefaults.standard.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: "wake_check") }
-    }
-
-    @MainActor
-    static func start(_ label: String) async {
-        let at = nowMs() + 5 * 60_000
-        pending = Pending(label: label, at: at)
-        await AlarmKitScheduler.scheduleOne(RingInfo(id: "wake-check", kind: "alarm", at: at, label: RingLog.wakePrefix + label))
-        let content = UNMutableNotificationContent()
-        content.title = "Wake check in 5 min"
-        content.body = "Open Hourglass and tap I'm up, or \(label) rings again."
-        content.interruptionLevel = .timeSensitive
-        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "hourglass-wake-check", content: content, trigger: nil))
-        RingLog.add(label, "wake check", "set for 5 min from now")
-    }
-
-    @MainActor
-    static func imUp() {
-        guard let p = pending else { return }
-        pending = nil
-        AlarmKitScheduler.cancel(RingInfo(id: "wake-check", kind: "alarm", at: p.at, label: RingLog.wakePrefix + p.label).uuid)
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["hourglass-wake-check"])
-        RingLog.add(p.label, "awake", "tapped I'm up: wake check cancelled")
-    }
 }
 
 // The ring screen's buttons. iOS runs them in Hourglass (opening it in the
@@ -156,8 +113,8 @@ struct RingStopIntent: LiveActivityIntent {
         RingLog.answered(r)
         RingLog.add(r.label, "dismissed", "Stop on the iPhone alarm, \(max(0, (nowMs() - r.at) / 1000))s after it started")
         AlarmKitScheduler.stop(r.uuid)
+        // Dismissed once, gone: the dismissal is final for this occurrence.
         RingSync.share(store, r, "dismissed")
-        if r.wake { await WakeCheck.start(RingLog.base(r.label)) }
         await store.syncSoon()
         return .result()
     }
@@ -186,7 +143,6 @@ struct RingSnoozeIntent: LiveActivityIntent {
         case .active:
             RingLog.add(r.label, "snoozed", "Snooze on the iPhone alarm, \(max(0, (nowMs() - r.at) / 1000))s after it started; rings again in 5 min")
             RingSync.share(store, r, "snoozed")
-            if r.wake { RingLog.wakeLabels.insert(RingLog.base(r.label)) }
             // One snooze timer per ring, whichever device snoozes.
             store.startTimer(seconds: 300, label: RingLog.base(r.label) + RingLog.snoozed, id: RingSync.snoozeId(r))
             await store.syncSoon()
@@ -194,7 +150,6 @@ struct RingSnoozeIntent: LiveActivityIntent {
             // Server can't be reached: the usual snooze timer (one id per ring), which syncs once back online.
             RingLog.add(r.label, "snoozed", "offline, rings again in 5 min")
             RingSync.share(store, r, "snoozed")
-            if r.wake { RingLog.wakeLabels.insert(RingLog.base(r.label)) }
             store.startTimer(seconds: 300, label: RingLog.base(r.label) + RingLog.snoozed, id: RingSync.snoozeId(r))
         }
         return .result()

@@ -12,7 +12,6 @@ import dev.marobotic.hourglass.App
 import dev.marobotic.hourglass.R
 import dev.marobotic.hourglass.core.Alarms
 import dev.marobotic.hourglass.core.Dates
-import dev.marobotic.hourglass.core.str
 import dev.marobotic.hourglass.core.Due
 import dev.marobotic.hourglass.data.Repo
 import dev.marobotic.hourglass.ui.MainActivity
@@ -49,16 +48,8 @@ object Scheduler {
         am.setAlarmClock(AlarmManager.AlarmClockInfo(System.currentTimeMillis() + inSeconds * 1000L, show), op)
     }
 
-    // A wake check: 5 minutes after a wake-up alarm is dismissed it rings again,
-    // unless "I'm up" is tapped in the notification first. A sleepy Dismiss
-    // then still gets a second chance.
-    const val WAKE = "dev.marobotic.hourglass.WAKE_CHECK"
-    const val IM_UP = "dev.marobotic.hourglass.IM_UP"
     const val LOCAL_SNOOZE = "dev.marobotic.hourglass.LOCAL_SNOOZE"
-    private const val WAKE_NOTE = 4203
     private const val LOCAL_SNOOZE_REQ = 4205
-    private fun wakeOp(ctx: Context, label: String) =
-        PendingIntent.getBroadcast(ctx, REQ + 2, Intent(ctx, AlarmReceiver::class.java).setAction(WAKE).putExtra("label", label), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     // Local-only re-ring when server can't be reached during auto-snooze (not a synced timer).
     fun localSnooze(ctx: Context, label: String, id: String, at: Long, inSeconds: Int = 300) {
@@ -66,30 +57,6 @@ object Scheduler {
         val op = PendingIntent.getBroadcast(ctx, LOCAL_SNOOZE_REQ, Intent(ctx, AlarmReceiver::class.java).setAction(LOCAL_SNOOZE).putExtra("label", label).putExtra("id", id).putExtra("at", at), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val show = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         am.setAlarmClock(AlarmManager.AlarmClockInfo(System.currentTimeMillis() + inSeconds * 1000L, show), op)
-    }
-
-    fun wakeCheck(ctx: Context, label: String) {
-        val am = ctx.getSystemService(AlarmManager::class.java) ?: return
-        val show = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        am.setAlarmClock(AlarmManager.AlarmClockInfo(System.currentTimeMillis() + 5 * 60_000L, show), wakeOp(ctx, label))
-        ensureChannel(ctx)
-        val up = PendingIntent.getBroadcast(ctx, REQ + 3, Intent(ctx, AlarmReceiver::class.java).setAction(IM_UP).putExtra("label", label), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notif = NotificationCompat.Builder(ctx, CHANNEL)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Wake check in 5 min")
-            .setContentText("Tap I'm up, or $label rings again.")
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setOngoing(true)
-            .addAction(0, "I'm up", up)
-            .build()
-        runCatching { ctx.getSystemService(NotificationManager::class.java).notify(WAKE_NOTE, notif) }
-        RingLog.add(ctx, label, "wake check", "set for 5 min from now")
-    }
-
-    fun cancelWakeCheck(ctx: Context, label: String) {
-        ctx.getSystemService(AlarmManager::class.java)?.cancel(wakeOp(ctx, label))
-        ctx.getSystemService(NotificationManager::class.java).cancel(WAKE_NOTE)
     }
 
     fun soonest(repo: Repo, from: Long): Due? =
@@ -110,19 +77,6 @@ class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         when (intent.action) {
             Scheduler.TEST -> { start(ctx, "Test alarm", "alarm", "test", test = true); return }
-            Scheduler.IM_UP -> {
-                val label = intent.getStringExtra("label") ?: "Alarm"
-                Scheduler.cancelWakeCheck(ctx, label)
-                RingLog.add(ctx, label, "awake", "tapped I'm up: wake check cancelled")
-                return
-            }
-            Scheduler.WAKE -> {
-                val label = intent.getStringExtra("label") ?: "Alarm"
-                ctx.getSystemService(NotificationManager::class.java).cancel(4203)
-                RingLog.add(ctx, label, "due", "wake check: I'm up was not tapped")
-                start(ctx, RingService.WAKE_PREFIX + label, "alarm", "wake-check")
-                return
-            }
             Scheduler.LOCAL_SNOOZE -> {
                 val label = intent.getStringExtra("label") ?: "Alarm"
                 val id = intent.getStringExtra("id") ?: ""
@@ -159,7 +113,6 @@ class AlarmReceiver : BroadcastReceiver() {
         for (d in due) {
             val late = (now - d.at) / 1000
             RingLog.add(ctx, d.label, "due", (if (d.kind == "timer") "timer" else "alarm") + " for ${Dates.clock(d.at, repo.zone)}" + if (late > 5) ", Android delivered it ${late}s late" else "")
-            var wake = false
             if (d.kind == "timer") {
                 // Ring a snooze timer only if the timer row is still running and not deleted after latest data
                 val t = repo.store.get("timers", d.id)
@@ -168,42 +121,30 @@ class AlarmReceiver : BroadcastReceiver() {
                     continue
                 }
                 repo.finishTimer(d.id)
-                // A snoozed wake-up alarm stays a wake-up alarm.
-                wake = d.label.endsWith(RingService.SNOOZED) && wakeLabels(ctx).contains(RingService.baseLabel(d.label))
             }
             if (d.kind == "alarm") repo.store.get("alarms", d.id)?.let { a ->
                 if (Alarms.isSpent(a, repo.store.all("courses"), repo.events(), now + 1000, repo.zone)) repo.setAlarmEnabled(d.id, false)
-                // Before a lecture, or labelled as a wake-up: gets the wake check.
-                wake = a.str("lead_event_id") != null || a.str("lead_course_id") != null || d.label.contains("wake", ignoreCase = true)
-                if (wake) wakeLabels(ctx, add = d.label)
             }
             val other = RingSync.stoppedElsewhere(repo, d.id, d.at)
             if (other != null) {
                 RingLog.add(ctx, d.label, "skipped", "already ${other.optString("action")} on ${other.optString("device")}")
                 continue
             }
-            ring(ctx, d, ringIndex++, wake)
+            ring(ctx, d, ringIndex++)
         }
         Scheduler.reschedule(ctx, repo)
     }
 
-    private fun wakeLabels(ctx: Context, add: String? = null): Set<String> {
-        val p = ctx.getSharedPreferences("ringlog", Context.MODE_PRIVATE)
-        val set = p.getStringSet("wake_labels", emptySet())!!.toMutableSet()
-        if (add != null && set.add(add)) p.edit().putStringSet("wake_labels", set.toList().takeLast(50).toSet()).apply()
-        return set
-    }
-
     // Starting the ring can fail (Android refuses the foreground service):
     // that is the app breaking, so it goes in the history as such.
-    private fun start(ctx: Context, label: String, kind: String, id: String, test: Boolean = false, wake: Boolean = false, at: Long = 0L) {
-        runCatching { RingService.start(ctx, label, kind, id, test, wake, at) }
+    private fun start(ctx: Context, label: String, kind: String, id: String, test: Boolean = false, at: Long = 0L) {
+        runCatching { RingService.start(ctx, label, kind, id, test, at) }
             .onFailure { RingLog.add(ctx, label, "broke", "could not start ringing: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
     // The first due item rings (sound + full-screen); the rest only notify.
-    private fun ring(ctx: Context, d: Due, n: Int, wake: Boolean) {
-        if (n == 0) { start(ctx, d.label, d.kind, d.id, wake = wake, at = d.at); return }
+    private fun ring(ctx: Context, d: Due, n: Int) {
+        if (n == 0) { start(ctx, d.label, d.kind, d.id, at = d.at); return }
         RingLog.add(ctx, d.label, "notified", "another alarm was already ringing, so this one only shows a notification")
         Scheduler.ensureChannel(ctx)
         val notif = NotificationCompat.Builder(ctx, Scheduler.CHANNEL)
