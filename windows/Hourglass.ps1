@@ -4,7 +4,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $conf = Join-Path $env:APPDATA 'Hourglass'
-$port = 8931
+$port = if ($env:HOURGLASS_PORT) { [int]$env:HOURGLASS_PORT } else { 8931 }
 $node = Join-Path $root 'node\node.exe'
 if (-not (Test-Path $node)) { $node = (Get-Command node -ErrorAction Stop).Source }
 # Hourglass.exe is qml.exe with Hourglass's name and icon (tools\brand.ps1), so
@@ -56,11 +56,27 @@ if ($open) {
   [HgWindow]::SetForegroundWindow($open.MainWindowHandle) | Out-Null
 }
 $asked = $false
-try {
-  Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/api/window/show" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 5 | Out-Null
-  $asked = $true
-} catch {}
-if (-not $asked -and -not $open) {
+$oldService = $false
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+  try {
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/api/window/show" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 8 | Out-Null
+    $asked = $true
+    break
+  } catch {
+    $status = $null
+    try { $status = [int]$_.Exception.Response.StatusCode } catch {}
+    if ($status -eq 404) {
+      $oldService = $true
+      break
+    }
+    if ($status) { break }
+    if ($attempt -lt 3) { Start-Sleep -Seconds 1 }
+  }
+}
+if ($oldService -and -not $open) {
   # An older service without /api/window: start the window ourselves.
   Start-Process -FilePath $qml -ArgumentList @('--apptype', 'widget', '-platform', 'windows:menus=native', '-I', "`"$root\app`"", "`"$root\app\Main.qml`"", '--', '--port', $port, '--token', $token) -WindowStyle Normal
+} elseif (-not $asked) {
+  Add-Type -AssemblyName PresentationFramework
+  [System.Windows.MessageBox]::Show('The Hourglass service is running but could not open its window. Try again in a moment.', 'Hourglass') | Out-Null
 }
