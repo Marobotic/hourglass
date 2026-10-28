@@ -239,6 +239,10 @@ export function createFolderSync({
   }
 
   function view(pair) {
+    const deleteRemote = pair.pendingDeletes?.deleteRemote || 0;
+    const deleteLocal = pair.pendingDeletes?.deleteLocal || 0;
+    const deleteCount = Math.max(deleteRemote, deleteLocal) || pair.pending || 0;
+    const deleteSide = deleteRemote >= deleteLocal ? "this PC" : "Drive";
     return {
       id: pair.id,
       local: pair.local,
@@ -249,6 +253,8 @@ export function createFolderSync({
       last_sync: pair.last_sync,
       pending: pair.pending || 0,
       errors: pair.errors || [],
+      delete_count: deleteCount,
+      delete_side: deleteSide,
     };
   }
 

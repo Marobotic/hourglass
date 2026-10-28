@@ -43,6 +43,12 @@ ApplicationWindow {
             if (app.devOpen === "event") app.editEvent(null);
             if (app.devOpen === "session") app.openSession(f);
             if (app.devOpen.startsWith("note:")) Api.get("/api/notes/" + app.devOpen.slice(5), n => app.editingNote = n);
+            if (app.devOpen === "drive-picker") drivePage.driveFolderPicker.ask("C:\\Users\\Maro\\Documents\\Projects");
+            if (app.devOpen === "drive-picker-new") {
+                drivePage.driveFolderPicker.ask("C:\\Users\\Maro\\Documents\\Projects");
+                drivePage.driveFolderPicker.mode = "new";
+            }
+            if (app.devOpen === "stop-sync") drivePage.stopSyncDlg.askStop(drivePage.syncFolders[0]);
             console.log("dev-open", app.devOpen);
         }
     }
@@ -52,7 +58,7 @@ ApplicationWindow {
         interval: 1500
         onTriggered: {
             // popups live on the overlay layer, so grab the open one's content instead
-            const open = [eventDialog, courseDialog, sessionDialog].find(d => d.visible);
+            const open = [eventDialog, courseDialog, sessionDialog, drivePage.driveFolderPicker, drivePage.stopSyncDlg].find(d => d && d.visible);
             (open ? open.contentItem : shell).grabToImage(r => { r.saveToFile(app.shotPath); app.quit(); });
         }
     }
