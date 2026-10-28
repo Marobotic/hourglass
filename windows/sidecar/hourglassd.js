@@ -7,8 +7,9 @@
 //   config.json: { "server": "https://...", "token": "..." }
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rm as rmAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { homedir, hostname, tmpdir } from "node:os";
@@ -76,58 +77,100 @@ const MUSIC_SETTINGS = join(HOME, ".config/omarchy/maro-music/settings.json");
 const CONFIG_FILE = join(CONF_DIR, "config.json");
 const dpapiFile = (key) => join(CONF_DIR, key === "sync-token" ? "sync.dpapi" : `${key}.dpapi`);
 
-function keyringGet(key) {
+function runChild(command, args, { input, windowsHide = false } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      windowsHide,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", (error) => resolve({ status: null, stdout, stderr: error.message }));
+    child.once("close", (status) => resolve({ status, stdout, stderr }));
+    if (input === undefined) child.stdin.end();
+    else child.stdin.end(input);
+  });
+}
+
+async function injectedKeyringRead() {
+  const delay = Number(process.env.HOURGLASS_TEST_KEYRING_DELAY_MS || 0);
+  if (!delay) return { used: false };
+  const marker = process.env.HOURGLASS_TEST_KEYRING_STARTED;
+  if (marker) await writeFileAsync(marker, "reading\n").catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  return { used: true, value: null };
+}
+
+async function keyringGet(key) {
+  if (WIN && !existsSync(dpapiFile(key))) return null;
+  const injected = await injectedKeyringRead();
+  if (injected.used) return injected.value;
+
   if (WIN) {
-    if (!existsSync(dpapiFile(key))) return null;
-    const r = spawnSync("powershell.exe", ["-NoProfile", "-Command",
-      `$s = Get-Content -Raw ${psq(dpapiFile(key))} | ConvertTo-SecureString; [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))`], { encoding: "utf8", windowsHide: true });
+    const r = await runChild("powershell.exe", ["-NoProfile", "-Command",
+      `$s = Get-Content -Raw ${psq(dpapiFile(key))} | ConvertTo-SecureString; [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))`], { windowsHide: true });
     return r.status === 0 ? r.stdout.trim() || null : null;
   }
-  const r = spawnSync("secret-tool", ["lookup", "service", "hourglass", "key", key], { encoding: "utf8" });
+  const r = await runChild("secret-tool", ["lookup", "service", "hourglass", "key", key]);
   return r.status === 0 ? r.stdout.trim() || null : null;
 }
 
-function keyringSet(key, value) {
+async function keyringSet(key, value) {
   if (WIN) {
-    const r = spawnSync("powershell.exe", ["-NoProfile", "-Command",
+    const r = await runChild("powershell.exe", ["-NoProfile", "-Command",
       `ConvertTo-SecureString ${psq(value)} -AsPlainText -Force | ConvertFrom-SecureString | Set-Content -NoNewline ${psq(dpapiFile(key))}`], { windowsHide: true });
     return r.status === 0;
   }
-  const r = spawnSync("secret-tool", ["store", `--label=Hourglass ${key}`, "service", "hourglass", "key", key], { input: value });
+  const r = await runChild("secret-tool", ["store", `--label=Hourglass ${key}`, "service", "hourglass", "key", key], { input: value });
   return r.status === 0;
 }
 
-function keyringClear(key) {
-  if (WIN) return rmSync(dpapiFile(key), { force: true });
-  spawnSync("secret-tool", ["clear", "service", "hourglass", "key", key]);
+async function keyringClear(key) {
+  if (WIN) return rmAsync(dpapiFile(key), { force: true });
+  await runChild("secret-tool", ["clear", "service", "hourglass", "key", key]);
 }
 
 const readConfig = () => {
   try { return JSON.parse(readFileSync(CONFIG_FILE, "utf8")); } catch { return {}; }
 };
-const writeConfig = (cfg) => writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
+const writeConfig = (cfg) => writeFileAsync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
 
 // Move a provisioned token into the keyring and scrub it from config.json.
-function adoptToken() {
+async function adoptToken() {
   const cfg = readConfig();
   const incoming = process.env.HOURGLASS_PROVISION || cfg.token;
-  if (incoming && keyringSet("sync-token", incoming)) {
+  if (incoming && await keyringSet("sync-token", incoming)) {
     delete cfg.token;
     delete cfg.server;
-    writeConfig(cfg);
+    await writeConfig(cfg);
     log("sync token moved into the keyring");
   }
 }
 
 let cred = null; // { token, kind: "session" | "token" }
 let sessionEnded = null; // why the sign-in page is up when the server signed us out
+let credentialsLoaded = false;
+let markCredentialsReady;
+const credentialsReady = new Promise((resolve) => { markCredentialsReady = resolve; });
+
+async function loadCredentials() {
+  const session = await keyringGet("session");
+  const legacy = session ? null : await keyringGet("sync-token");
+  cred = session
+    ? { token: session, kind: "session" }
+    : legacy
+      ? { token: legacy, kind: "token" }
+      : { token: null, kind: null };
+  credentialsLoaded = true;
+  markCredentialsReady();
+}
+
 const config = () => {
-  if (!cred) {
-    const session = keyringGet("session");
-    const legacy = session ? null : keyringGet("sync-token");
-    cred = session ? { token: session, kind: "session" } : legacy ? { token: legacy, kind: "token" } : { token: null, kind: null };
-  }
-  return cred.token ? { server: SERVER, token: cred.token } : {};
+  return credentialsLoaded && cred?.token ? { server: SERVER, token: cred.token } : {};
 };
 
 // What time it really is. The PC's clock can be hours off (a Linux dual boot leaves the hardware
@@ -149,7 +192,6 @@ function learnClock(r, sentAt) {
   dirtyUpcoming = true;
 }
 
-adoptToken();
 const SCHEMA = 5; // bump when a table is added: forces one full pull
 const store = new Store(join(DATA_DIR, "hourglass.db"), { replica: true, clock: now });
 const service = new Service(store, { clock: now });
@@ -202,7 +244,7 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
     }
   }
   const out = await r.json().catch(() => ({}));
-  if (r.status === 401 && bearer && bearer === cred?.token && !path.startsWith("/auth/")) endSession();
+  if (r.status === 401 && bearer && bearer === cred?.token && !path.startsWith("/auth/")) await endSession();
   if (!r.ok) throw Object.assign(new Error(remoteError(r.status, out, !!bearer)), { status: r.status < 500 ? r.status : 502 });
   return out;
 }
@@ -224,11 +266,10 @@ function useAccount(email) {
 // password change or reset ends every session), so it is gone for good: drop it
 // and show the sign-in page instead of failing quietly forever. The account name
 // and local data stay, so signing in again with it sends the unsynced changes.
-function endSession() {
+async function endSession() {
   if (cred?.kind !== "session" && cred?.kind !== "token") return;
   log("the server ended this sign-in; showing the sign-in page");
-  keyringClear("session");
-  keyringClear("sync-token");
+  await Promise.all([keyringClear("session"), keyringClear("sync-token")]);
   cred = null;
   sessionEnded = "You were signed out, usually because the password was changed. Sign in again: nothing on this computer is lost.";
   Object.assign(sync, { state: "signed_out" });
@@ -236,12 +277,12 @@ function endSession() {
 
 async function signIn(session, email) {
   sessionEnded = null;
-  keyringSet("session", session);
-  keyringClear("sync-token");
-  cred = null;
+  await keyringSet("session", session);
+  await keyringClear("sync-token");
+  cred = { token: session, kind: "session" };
   const cfg = readConfig();
   delete cfg.signed_out;
-  writeConfig(cfg);
+  await writeConfig(cfg);
   useAccount(email);
   await syncOnce();
   return account();
@@ -250,10 +291,9 @@ async function signIn(session, email) {
 async function signOut() {
   const { token: t } = config();
   if (cred?.kind === "session") await remote("/auth/logout", { method: "POST", bearer: t }).catch(() => {});
-  keyringClear("session");
-  keyringClear("sync-token");
-  cred = null;
-  writeConfig({ ...readConfig(), signed_out: true });
+  await Promise.all([keyringClear("session"), keyringClear("sync-token")]);
+  cred = { token: null, kind: null };
+  await writeConfig({ ...readConfig(), signed_out: true });
   Object.assign(sync, { state: "local", error: null });
   return account();
 }
@@ -294,6 +334,7 @@ function theme() {
 const sync = { state: "local", last_ok: null, error: null, pending: 0 };
 
 async function syncOnce() {
+  if (!credentialsLoaded) return;
   const { server, token: remoteToken } = config();
   const dirty = store.dirtyRows();
   sync.pending = TABLE_NAMES.reduce((n, t) => n + dirty[t].length, 0);
@@ -327,7 +368,7 @@ async function syncOnce() {
     if (!store.meta("account", null)) store.setMeta("account", (await remote("/api/account")).email);
     await fetchSounds();
   } catch (e) {
-    if (/ 401$/.test(e.message)) endSession();
+    if (/ 401$/.test(e.message)) await endSession();
     Object.assign(sync, { state: / 401$/.test(e.message) ? "signed_out" : "offline", error: e.message });
   }
 }
@@ -719,6 +760,7 @@ const edited = (have) => { try { return statSync(have.path).mtimeMs > have.mtime
 const settling = new Map(); // id -> size seen last tick, for edits still being written
 let watching = false;
 async function watchDrive() {
+  if (!credentialsLoaded) return;
   if (watching) return;
   watching = true;
   try {
@@ -1043,6 +1085,7 @@ function windowExe() {
 function openWindow() {
   showSeq++;
   if (ui) return { started: false };
+  if (process.env.HOURGLASS_TEST_WINDOW === "1") return { started: true };
   const exe = windowExe();
   if (!exe) return { error: "the Qt runtime is missing" };
   // menus=native: Qt's own tray menu opens and Windows closes it at once (the app
@@ -1130,6 +1173,12 @@ if (WIN) {
 }
 
 async function extra(req, res, url, path) {
+  const windowRequest = WIN && (
+    (path === "/api/window/show" && req.method === "POST")
+    || (path === "/api/window" && req.method === "GET")
+  );
+  if (!windowRequest) await credentialsReady;
+
   if (await driveRoutes(req, res, url, path)) return true;
   if (WIN && path === "/api/window" && req.method === "GET") return json(res, 200, { show_seq: showSeq, open: !!ui }), true;
   if (WIN && path === "/api/window/show" && req.method === "POST") {
@@ -1266,12 +1315,24 @@ createServer((req, res) => {
   const writeHead = res.writeHead;
   res.writeHead = (status, ...rest) => writeHead.call(res, QT_UNREADABLE.has(status) ? 400 : status, ...rest);
   const url = new URL(req.url, "http://local");
-  if (url.pathname.startsWith("/files/")) return serveFile(req, res, url);
-  if (url.pathname.startsWith("/thumbs/")) return serveThumb(req, res, url);
+  if (url.pathname.startsWith("/files/")) {
+    return credentialsReady.then(() => serveFile(req, res, url));
+  }
+  if (url.pathname.startsWith("/thumbs/")) {
+    return credentialsReady.then(() => serveThumb(req, res, url));
+  }
   return handler(req, res);
 }).listen(PORT, "127.0.0.1", async () => {
   log(`hourglassd on http://127.0.0.1:${PORT} (data ${DATA_DIR}, tz ${service.tz})`);
-  config();
+  try {
+    await adoptToken();
+    await loadCredentials();
+  } catch (error) {
+    log("could not load credentials:", error.message);
+    cred = { token: null, kind: null };
+    credentialsLoaded = true;
+    markCredentialsReady();
+  }
   service.ensureHomeClock();
   await adoptMusicSession();
   scheduleSync(0);
