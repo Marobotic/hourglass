@@ -27,7 +27,7 @@ Item {
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 5000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     function whenText(r) {
         const repeat = !r.days || !r.days.length ? "" : r.days.length === 7 ? "Every day" : r.days.join() === "1,2,3,4,5" ? "Weekdays" : r.days.join() === "6,7" ? "Weekends" : r.days.map(d => Util.weekdays[d - 1]).join(", ");

@@ -31,7 +31,7 @@ Item {
     Component.onCompleted: { load(); aiLoad(false); }
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 5000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     FileDialog {
         id: picker

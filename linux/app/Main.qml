@@ -18,6 +18,16 @@ ApplicationWindow {
     property var appState: ({ ringing: [], sync: { state: "local" } })
     property var courses: []
     property double clock: Date.now()
+    // Up in front of someone: only then do animations, polling and the clock's
+    // seconds run. Minimised they wait (see wake()).
+    readonly property bool onScreen: Util.shown(app)
+    // Something on screen shows seconds: a running timer (Now, Timers), the
+    // ring, or the Now page's bar through a class. Every other page shows
+    // minutes.
+    readonly property bool showsSeconds: app.onScreen
+        && (((app.appState && app.appState.ringing) || []).length > 0
+            || (((app.nowData && app.nowData.timers) || []).some(t => t.state === "running"))
+            || (app.page === 0 && !!(app.nowData && app.nowData.active)))
     property var editingNote: null
     property bool loaded: false
     property var settings: ({})
@@ -111,13 +121,36 @@ ApplicationWindow {
         return withNone ? [{ label: "No course", value: null }].concat(o) : o;
     }
 
+    // Back on screen after being minimised: the clock jumps to now and the
+    // pages reload, so nothing keeps showing what it showed when it was put
+    // away. (Before the first state arrives there is nothing to catch up on:
+    // the pages load on their own.)
+    function wake() {
+        app.clock = Date.now();
+        app.pollState();
+        Api.changed();
+    }
+    onVisibleChanged: if (app.visible && app.loaded) app.wake()
+    onVisibilityChanged: if (app.onScreen && app.loaded) app.wake()
+
     Connections { target: Api; function onChanged() { app.refresh(); } }
     // Signed out, the sign-in page shows its own errors; pages loading behind it
     // would only toast "sign in first". Before the first state arrives (boot) too.
     Connections { target: Api; function onError(message) { if (app.appState.account && app.appState.account.signed_in) toast.show(message); } }
-    Timer { interval: 1000; running: true; repeat: true; onTriggered: app.clock = Date.now() }
-    Timer { interval: 15000; running: true; repeat: true; onTriggered: app.refresh() }
-    Timer { interval: 2000; running: true; repeat: true; onTriggered: app.pollState() }
+    // The clock moves only as often as something shows it: a second at a time
+    // while seconds are on screen, otherwise on the minute (and the interval
+    // lands on :00, so the hour changes when it should). Stopped while the
+    // window is away; wake() brings it up to date.
+    Timer {
+        interval: app.showsSeconds ? 1000 : Math.max(1000, 60000 - app.clock % 60000)
+        running: app.onScreen
+        repeat: true
+        onTriggered: app.clock = Date.now()
+    }
+    // The window's data: as often as the pages need it while it is up, slowly
+    // while it is minimised (the ring still brings it back on its own).
+    Timer { interval: app.onScreen ? 2000 : 5000; running: true; repeat: true; onTriggered: app.pollState() }
+    Timer { interval: 15000; running: app.onScreen; repeat: true; onTriggered: app.refresh() }
 
     // --- actions shared by pages ---------------------------------------------------
 
@@ -385,7 +418,7 @@ ApplicationWindow {
                 Logo {
                     Layout.alignment: Qt.AlignHCenter
                     cell: 7
-                    SequentialAnimation on rotation { running: ringOverlay.visible; loops: Animation.Infinite; NumberAnimation { from: -8; to: 8; duration: 180 } NumberAnimation { from: 8; to: -8; duration: 180 } }
+                    SequentialAnimation on rotation { running: ringOverlay.visible && app.onScreen; loops: Animation.Infinite; NumberAnimation { from: -8; to: 8; duration: 180 } NumberAnimation { from: 8; to: -8; duration: 180 } }
                 }
                 Text { Layout.alignment: Qt.AlignHCenter; text: ringOverlay.item && ringOverlay.item.kind === "timer" ? "TIME'S UP" : "ALARM"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 2 }
                 Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: ringOverlay.item ? ringOverlay.item.label : ""; color: Theme.fg; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 22; font.weight: Font.DemiBold }

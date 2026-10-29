@@ -41,7 +41,7 @@ Item {
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { if (page.visible) page.load(); } }
     // Marks made on another page, device or by an AI show up while you look.
-    Timer { interval: 4000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 4000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     // unmarked -> attended -> absent -> off -> unmarked
     function next(m) { return m === "" ? "attended" : m === "attended" ? "absent" : m === "absent" ? "off" : "none"; }

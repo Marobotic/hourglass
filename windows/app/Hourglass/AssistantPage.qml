@@ -25,6 +25,9 @@ Item {
     readonly property bool uploading: attachments.some(a => !a.id && !a.error)
 
     readonly property bool busy: sending || chat.busy || pending !== ""
+    // The second "Working 12 s" counts with: the app's clock only moves on the
+    // minute unless a timer is running, and this one has to count while it works.
+    property double now: Date.now()
     readonly property var messages: {
         const list = (chat.messages || []).slice();
         if (pending !== "" && !list.some(m => m.role === "user" && m.text === pending))
@@ -208,8 +211,14 @@ Item {
         }
     }
     onVisibleChanged: if (visible) { load(); input.area.forceActiveFocus(); }
-    Timer { interval: 900; running: page.visible && page.busy; repeat: true; onTriggered: page.load() }
-    Timer { interval: 15000; running: page.visible && !page.busy; repeat: true; onTriggered: page.load() }
+    Timer {
+        interval: 900
+        running: page.visible && page.busy && Util.shown(page.app)
+        repeat: true
+        onRunningChanged: if (running) page.now = Date.now()
+        onTriggered: { page.now = Date.now(); page.load(); }
+    }
+    Timer { interval: 15000; running: page.visible && !page.busy && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     ColumnLayout {
         anchors { fill: parent; margins: 28; topMargin: 24 }
@@ -466,7 +475,7 @@ Item {
                             }
                             Text {
                                 id: dots
-                                text: "Working" + (working.current ? "  " + Math.max(0, Math.round((page.app ? page.app.clock : Date.now()) - working.current.time) / 1000).toFixed(0) + " s" : "")
+                                text: "Working" + (working.current ? "  " + Math.max(0, Math.round((page.now - working.current.time) / 1000)).toFixed(0) + " s" : "")
                                 color: Theme.muted
                                 font.family: Theme.mono
                                 font.pixelSize: 13

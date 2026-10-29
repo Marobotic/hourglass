@@ -11,6 +11,11 @@ QtObject {
 
     function pad(n) { return n < 10 ? "0" + n : "" + n; }
 
+    // The window is up and not minimised: the only time animations, polling and
+    // the seconds on screen are worth any work. A page with no window over it
+    // (a QML test) counts as shown.
+    function shown(win) { return !win || (win.visible !== false && win.visibility !== Window.Minimized); }
+
     // "YYYY-MM-DD" helpers on UTC midnights (no DST drift)
     function parse(d) { const p = d.split("-"); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
     function fmt(ms) { const d = new Date(ms); return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()); }

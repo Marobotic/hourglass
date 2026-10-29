@@ -49,7 +49,7 @@ Item {
     Connections { target: Api; function onChanged() { if (page.visible) page.load(); } }
     // Real time: the disk is read again every few seconds while you look,
     // and the list too (an edited file's new size, files from other devices).
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: { page.loadUsage(); page.load(); } }
+    Timer { interval: 5000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: { page.loadUsage(); page.load(); } }
 
     function size(n) {
         if (n === undefined || n === null) return "";
