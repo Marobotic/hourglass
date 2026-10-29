@@ -12,9 +12,11 @@
   2. Builds the Android APK here, signed with the release key (android/local.properties),
      and the Linux bundle.
   3. Waits for the two CI runs and downloads their builds.
-  4. Uploads it all to /var/www/marobotic.dev/apps/hourglass/<version>/ on the droplet and
+  4. Uploads it all to /var/www/marobotic.dev/apps/hourglass/<version>/ on the server and
      writes latest.json (what the apps read) and the SideStore source last, so an app
      never sees a version whose files are not there yet.
+  5. Puts each build in Documents\Project Exports\Hourglass\<Platform>, and sends the
+     versions it replaces to the Recycle Bin.
 
   Needs: git, gh (signed in), ssh/scp, the release key, a clean main branch.
 #>
@@ -31,8 +33,8 @@ Set-Location $repo
 # [IO.File] resolves relative paths against the process's directory, not Set-Location's.
 [Environment]::CurrentDirectory = $repo
 
-$Key = 'C:\Users\Maro\Documents\Droplets\id_ed25519_claude'
-$Droplet = 'root@157.245.131.195'
+$Key = 'C:\Users\Maro\Documents\Droplets\bluehost\id_ed25519_bluehost'
+$Droplet = 'root@129.121.150.7'
 $WebRoot = '/var/www/marobotic.dev/apps'
 $Base = 'https://marobotic.dev/apps'
 $ssh = @('-i', $Key, '-o', 'IdentitiesOnly=yes', '-o', 'ConnectTimeout=20')
@@ -198,6 +200,19 @@ if (-not (Test-Path 'assets\icon-256.png')) { throw "no assets\icon-256.png" }
 & scp @ssh "$out\sidestore.json" "${Droplet}:$WebRoot/sidestore.json.new"
 & ssh @ssh $Droplet "mv $WebRoot/hourglass/latest.json.new $WebRoot/hourglass/latest.json && mv $WebRoot/sidestore.json.new $WebRoot/sidestore.json && chmod -R a+rX $WebRoot"
 Step "Hourglass $Version is out: $Base/hourglass/latest.json"
+
+Step "Project Exports"
+$exports = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Project Exports\Hourglass'
+Add-Type -AssemblyName Microsoft.VisualBasic
+foreach ($p in @(@('Windows', $exe), @('Android', $apk), @('iOS', $ipa), @('Linux', $linux))) {
+  $to = Join-Path $exports $p[0]
+  New-Item -ItemType Directory -Force $to | Out-Null
+  # Older versions only: the uninstaller and anything not named for a version stay.
+  Get-ChildItem $to -File | Where-Object { $_.Name -match '^hourglass-\d+\.\d+\.\d+' -and $_.Name -ne (Split-Path -Leaf $p[1]) } |
+    ForEach-Object { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($_.FullName, 'OnlyErrorDialogs', 'SendToRecycleBin') }
+  Copy-Item $p[1] $to -Force
+}
+"  $exports"
 # Depot (the marobotic app updater) reads a signed catalog of every app's feed.
 $depot = "C:\Users\Maro\Documents\GitHub\maro-projects-plans\depot\tools\publish-catalog.ps1"
 if (Test-Path $depot) { Step "Depot catalog"; & $depot }
