@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: "0.2.10"
-    CURRENT_PROJECT_VERSION: "14"
+    MARKETING_VERSION: "0.2.11"
+    CURRENT_PROJECT_VERSION: "15"
 targets:
   Hourglass:
     type: application
