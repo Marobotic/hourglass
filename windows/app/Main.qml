@@ -24,6 +24,20 @@ ApplicationWindow {
     // else's change (a sync, the assistant, an AI), so the pages reload and glow.
     property int dataRev: -1
     property double clock: Date.now()
+    // Up in front of someone: only then do animations, polling and the clock's
+    // seconds run. In the tray or minimised they wait (see wake()).
+    readonly property bool onScreen: Util.shown(app)
+    // And has the person's attention: the only time the decorative loops (the
+    // grain, the LIVE pulse, the sync ring) run. Behind another app the window
+    // is a still picture, so an idle Hourglass costs nothing.
+    readonly property bool inUse: app.onScreen && app.active
+    // Something on screen shows seconds: a running timer (Now, Timers), the
+    // ring, or the Now page's bar through a class. Every other page shows
+    // minutes.
+    readonly property bool showsSeconds: app.onScreen
+        && (((app.appState && app.appState.ringing) || []).length > 0
+            || (((app.nowData && app.nowData.timers) || []).some(t => t.state === "running"))
+            || (app.page === 0 && !!(app.nowData && app.nowData.active)))
     property var editingNote: null
     property bool loaded: false
     property var settings: ({})
@@ -103,6 +117,7 @@ ApplicationWindow {
         }
         pollState();
         refresh();
+        if (!app.shotPath) app.askWindow();
     }
 
     // --- system tray -------------------------------------------------------------
@@ -148,19 +163,26 @@ ApplicationWindow {
 
     // Opening Hourglass from the Start menu while the window sits in the tray:
     // the launcher asks the service, which bumps show_seq, and the window comes
-    // back. Quick while hidden, slow while shown.
+    // back. The service holds the question open until that number moves, so a
+    // window in the tray waits on one quiet request instead of asking every
+    // 400 ms.
     property int showSeq: -1
     property bool showPoll: true
-    Timer {
-        interval: app.visible ? 3000 : 400
-        running: app.showPoll && !app.shotPath
-        repeat: true
-        onTriggered: Api.request("GET", "/api/window", null, (d, err) => {
+    function askWindow() {
+        const asked = Date.now();
+        Api.request("GET", "/api/window?since=" + app.showSeq, null, (d, err) => {
             if (!d) { app.showPoll = false; return; } // an older service: no window routes
             if (app.showSeq >= 0 && d.show_seq !== app.showSeq) app.restoreWindow();
             app.showSeq = d.show_seq;
-        }, true)
+            if (!app.showPoll) return;
+            // A held answer means something happened: ask again at once, so the
+            // next one waits too. A service that answers straight back (one
+            // that does not hold it) is asked again after a while.
+            windowPoll.interval = Date.now() - asked > 1000 ? 1 : 3000;
+            windowPoll.restart();
+        }, true);
     }
+    Timer { id: windowPoll; interval: 3000; onTriggered: app.askWindow() }
 
     onClosing: close => {
         if (app.quitting) return;
@@ -176,6 +198,18 @@ ApplicationWindow {
         const r = app.appState ? app.appState.ringing : null;
         if (r && r.length && !app.visible) restoreWindow();
     }
+
+    // Back on screen after time in the tray or minimised: the clock jumps to
+    // now and everything reloads, so nothing keeps showing what it showed when
+    // it was put away. (Before the first state arrives there is nothing to
+    // catch up on: the pages load on their own.)
+    function wake() {
+        app.clock = Date.now() + app.clockSkew;
+        app.pollState();
+        Api.changed();
+    }
+    onVisibleChanged: if (app.visible && app.loaded) app.wake()
+    onVisibilityChanged: if (app.onScreen && app.loaded) app.wake()
 
     // --- data --------------------------------------------------------------------
 
@@ -218,9 +252,20 @@ ApplicationWindow {
     // Signed out, the sign-in page shows its own errors; pages loading behind it
     // would only toast "sign in first". Before the first state arrives (boot) too.
     Connections { target: Api; function onError(message) { if (app.appState.account && app.appState.account.signed_in) toast.show(message); } }
-    Timer { interval: 1000; running: true; repeat: true; onTriggered: app.clock = Date.now() + app.clockSkew }
-    Timer { interval: 15000; running: true; repeat: true; onTriggered: app.refresh() }
-    Timer { interval: 2000; running: true; repeat: true; onTriggered: app.pollState() }
+    // The clock moves only as often as something shows it: a second at a time
+    // while seconds are on screen, otherwise on the minute (and the interval
+    // lands on :00, so the hour changes when it should). Stopped while the
+    // window is away; wake() brings it up to date.
+    Timer {
+        interval: app.showsSeconds ? 1000 : Math.max(1000, 60000 - app.clock % 60000)
+        running: app.onScreen
+        repeat: true
+        onTriggered: app.clock = Date.now() + app.clockSkew
+    }
+    // The window's data: as often as the pages need it while it is up, slowly
+    // while it sits in the tray (the ring still brings it back on its own).
+    Timer { interval: app.onScreen ? 2000 : 5000; running: true; repeat: true; onTriggered: app.pollState() }
+    Timer { interval: 15000; running: app.onScreen; repeat: true; onTriggered: app.refresh() }
 
     // --- actions shared by pages ---------------------------------------------------
 
@@ -294,7 +339,7 @@ ApplicationWindow {
                         Layout.leftMargin: app.narrow ? 9 : 8
                         Layout.bottomMargin: 18
                         spacing: 12
-                        Logo { cell: 3; alive: true }
+                        Logo { cell: 3; alive: app.inUse }
                         Text { visible: !app.narrow; text: "Hourglass"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Bold }
                     }
 
@@ -351,7 +396,7 @@ ApplicationWindow {
                             spacing: 2
                             Text {
                                 text: "● LIVE"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1
-                                SequentialAnimation on opacity { running: liveCard.visible; loops: Animation.Infinite; NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine } NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine } }
+                                SequentialAnimation on opacity { running: liveCard.visible && app.inUse; loops: Animation.Infinite; NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine } NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine } }
                             }
                             Text { Layout.fillWidth: true; text: parent.parent.a ? parent.parent.a.title : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                         }
@@ -437,6 +482,7 @@ ApplicationWindow {
                             width: 7; height: 7; radius: 0
                             color: parent.st === "synced" ? Theme.teal : parent.st === "offline" ? Theme.orange : Theme.faint
                             // Synced: a ring ripples out now and then. Offline: the dot blinks.
+                            // Both only while someone is looking at the window.
                             Rectangle {
                                 id: ripple
                                 anchors.centerIn: parent
@@ -444,7 +490,7 @@ ApplicationWindow {
                                 color: "transparent"; border.width: 1; border.color: syncDot.color
                                 opacity: 0
                                 SequentialAnimation {
-                                    running: syncDot.parent.st === "synced"
+                                    running: syncDot.parent.st === "synced" && app.inUse
                                     loops: Animation.Infinite
                                     ParallelAnimation {
                                         NumberAnimation { target: ripple; property: "scale"; from: 1; to: 2.8; duration: 1100; easing.type: Easing.OutCubic }
@@ -454,7 +500,7 @@ ApplicationWindow {
                                 }
                             }
                             SequentialAnimation on opacity {
-                                running: syncDot.parent.st === "offline"
+                                running: syncDot.parent.st === "offline" && app.inUse
                                 loops: Animation.Infinite
                                 NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
                             }
@@ -545,8 +591,8 @@ ApplicationWindow {
                         anchors.centerIn: parent
                         spacing: 14
                         Logo {
-                            Layout.alignment: Qt.AlignHCenter; cell: 6; alive: true
-                            SequentialAnimation on y { running: !app.loaded; loops: Animation.Infinite; NumberAnimation { to: -5; duration: 900; easing.type: Easing.InOutSine } NumberAnimation { to: 0; duration: 900; easing.type: Easing.InOutSine } }
+                            Layout.alignment: Qt.AlignHCenter; cell: 6; alive: app.inUse
+                            SequentialAnimation on y { running: !app.loaded && app.inUse; loops: Animation.Infinite; NumberAnimation { to: -5; duration: 900; easing.type: Easing.InOutSine } NumberAnimation { to: 0; duration: 900; easing.type: Easing.InOutSine } }
                         }
                         Text { Layout.alignment: Qt.AlignHCenter; text: "Starting Hourglass…"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 15 }
                     }
@@ -595,7 +641,7 @@ ApplicationWindow {
                 Logo {
                     Layout.alignment: Qt.AlignHCenter
                     cell: 7
-                    SequentialAnimation on rotation { running: ringOverlay.visible; loops: Animation.Infinite; NumberAnimation { from: -8; to: 8; duration: 180 } NumberAnimation { from: 8; to: -8; duration: 180 } }
+                    SequentialAnimation on rotation { running: ringOverlay.visible && app.onScreen; loops: Animation.Infinite; NumberAnimation { from: -8; to: 8; duration: 180 } NumberAnimation { from: 8; to: -8; duration: 180 } }
                 }
                 Text { Layout.alignment: Qt.AlignHCenter; text: ringOverlay.item && ringOverlay.item.kind === "timer" ? "TIME'S UP" : "ALARM"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 2 }
                 Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: ringOverlay.item ? ringOverlay.item.label : ""; color: Theme.fg; wrapMode: Text.Wrap; font.family: Theme.mono; font.pixelSize: 22; font.weight: Font.DemiBold }

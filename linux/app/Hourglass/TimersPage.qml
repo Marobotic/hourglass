@@ -15,7 +15,7 @@ Item {
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 5000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     readonly property var current: timers.filter(t => (t.state === "running" && !((t.start_at || 0) > app.clock)) || t.state === "paused")
         .sort((a, b) => (a.ends_at || 0) - (b.ends_at || 0))[0] || null

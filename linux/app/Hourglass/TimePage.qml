@@ -16,7 +16,7 @@ Item {
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 5000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: page.load() }
     function searchZones(q) {
         if (!q.trim()) { zoneHits = []; return; }
         Api.get("/api/timezones?q=" + encodeURIComponent(q), d => { if (d) page.zoneHits = d.slice(0, 8); });

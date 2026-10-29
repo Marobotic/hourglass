@@ -20,7 +20,7 @@ Item {
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
-    Timer { interval: 30000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 30000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     ScrollView {
         anchors.fill: parent

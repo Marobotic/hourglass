@@ -46,7 +46,7 @@ Item {
     Component.onCompleted: load()
     onVisibleChanged: if (visible) load()
     Connections { target: Api; function onChanged() { page.load(); } }
-    Timer { interval: 60000; running: page.visible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 60000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     ColumnLayout {
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 40 }

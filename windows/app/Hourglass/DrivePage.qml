@@ -38,7 +38,7 @@ Item {
     property var syncCommands: ({})
     property var expandedSyncErrors: ({})
     property bool loadingSyncFolders: false
-    readonly property bool syncVisible: visible && (!app || (app.visible !== false && app.visibility !== Window.Minimized))
+    readonly property bool syncVisible: visible && Util.shown(app)
 
     function loadSyncFolders() {
         if (!syncVisible || loadingSyncFolders) return;
@@ -161,8 +161,8 @@ Item {
     // edited file's new size, files from other devices); the server's disk, which
     // barely moves, every minute and after each upload or delete.
     Timer { interval: 3000; running: page.syncVisible; repeat: true; onTriggered: page.loadSyncFolders() }
-    Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
-    Timer { interval: 60000; running: page.visible; repeat: true; onTriggered: page.loadUsage() }
+    Timer { interval: 5000; running: page.syncVisible; repeat: true; onTriggered: page.load() }
+    Timer { interval: 60000; running: page.syncVisible; repeat: true; onTriggered: page.loadUsage() }
 
     function size(n) {
         if (n === undefined || n === null) return "";

@@ -163,8 +163,10 @@ Item {
         }
     }
     onVisibleChanged: if (visible) { load(); input.area.forceActiveFocus(); }
-    Timer { interval: 900; running: page.visible && page.busy; repeat: true; onTriggered: page.load() }
-    Timer { interval: 15000; running: page.visible && !page.busy; repeat: true; onTriggered: page.load() }
+    // Polled while you look at it and the window is up (wake() reloads it when
+    // the window comes back).
+    Timer { interval: 900; running: page.visible && page.busy && Util.shown(page.app); repeat: true; onTriggered: page.load() }
+    Timer { interval: 15000; running: page.visible && !page.busy && Util.shown(page.app); repeat: true; onTriggered: page.load() }
 
     ColumnLayout {
         anchors { fill: parent; margins: 28; topMargin: 24 }
