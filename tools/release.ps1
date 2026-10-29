@@ -107,7 +107,8 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 foreach ($x in 'core', 'server', 'assets', 'linux') { Copy-Item $x "$stage\$x" -Recurse }
 foreach ($x in 'core\test', 'server\test', 'server\data') { if (Test-Path "$stage\$x") { Remove-Item "$stage\$x" -Recurse -Force } }
 $linux = "$out\hourglass-$Version-linux.tar.gz"
-tar -czf $linux -C "$out\stage" hourglass
+# Windows' own tar: GNU tar from Git Bash reads C: as a remote host.
+& "$env:SystemRoot\System32\tar.exe" -czf $linux -C "$out\stage" hourglass
 if ($LASTEXITCODE -ne 0) { throw "tar failed" }
 
 # ---------------------------------------------------------------- 3. CI builds
