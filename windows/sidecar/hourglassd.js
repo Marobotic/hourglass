@@ -811,7 +811,11 @@ async function watchDrive() {
     watching = false;
   }
 }
-setInterval(() => watchDrive().catch((e) => log("drive watch:", e.message)), 3000);
+// Every few seconds the copies this PC has are checked; with none there is
+// nothing that could have changed here, so the tick is free.
+setInterval(() => {
+  if (Object.keys(index).length) watchDrive().catch((e) => log("drive watch:", e.message));
+}, 3000);
 
 // GET /thumbs/<id>?k=<FILE_KEY>[&size=big]: a small JPEG for the file list
 // (big: 480 px, for the gallery), made on the server, so listing a folder never
@@ -1267,6 +1271,22 @@ const pathsOverlap = (a, b) => withinPath(a, b) || withinPath(b, a);
 const APP_ROOT = join(import.meta.dirname, "..");
 let ui = null;
 let showSeq = 0;
+// The window asks with ?since=<n> and the answer is held until that number
+// moves (or 25 s pass), so a window in the tray waits on one quiet request
+// instead of asking every few hundred ms - and still comes back at once.
+const showWaiters = new Set();
+function bumpShow() {
+  showSeq++;
+  for (const wake of [...showWaiters]) wake();
+}
+function waitForShow(since) {
+  if (since !== showSeq) return null;
+  return new Promise((resolve) => {
+    const wake = () => { clearTimeout(timer); showWaiters.delete(wake); resolve(); };
+    const timer = setTimeout(wake, 25000);
+    showWaiters.add(wake);
+  });
+}
 
 function windowExe() {
   for (const p of ["qt/bin/Hourglass.exe", "qt/bin/qml.exe", "qt/qml.exe"]) {
@@ -1277,7 +1297,7 @@ function windowExe() {
 }
 
 function openWindow() {
-  showSeq++;
+  bumpShow();
   if (ui) return { started: false };
   if (process.env.HOURGLASS_TEST_WINDOW === "1") return { started: true };
   const exe = windowExe();
@@ -1375,7 +1395,10 @@ async function extra(req, res, url, path) {
 
   if (await syncFolderRoutes(req, res, path)) return true;
   if (await driveRoutes(req, res, url, path)) return true;
-  if (WIN && path === "/api/window" && req.method === "GET") return json(res, 200, { show_seq: showSeq, open: !!ui }), true;
+  if (WIN && path === "/api/window" && req.method === "GET") {
+    if (url.searchParams.has("since")) await waitForShow(Number(url.searchParams.get("since")));
+    return json(res, 200, { show_seq: showSeq, open: !!ui }), true;
+  }
   if (WIN && path === "/api/window/show" && req.method === "POST") {
     const r = openWindow();
     return json(res, r.error ? 500 : 200, r), true;
