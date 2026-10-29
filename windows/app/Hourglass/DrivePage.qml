@@ -31,6 +31,74 @@ Item {
     property var info: null // { file_base, thumb_base, key } for previews
     property var shares: ({}) // file or folder id -> its link
     property var allFolders: [] // every folder, for "Move to…"
+    property var syncFolders: [] // folders synced between this PC and Drive
+    property alias driveFolderPicker: driveFolderPicker
+    property alias stopSyncDlg: stopSyncDlg
+    property alias localFolderPicker: localFolderPicker
+    property var syncCommands: ({})
+    property var expandedSyncErrors: ({})
+    property bool loadingSyncFolders: false
+    readonly property bool syncVisible: visible && (!app || (app.visible !== false && app.visibility !== Window.Minimized))
+
+    function loadSyncFolders() {
+        if (!syncVisible || loadingSyncFolders) return;
+        loadingSyncFolders = true;
+        Api.request("GET", "/api/syncfolders", null, (list, err) => {
+            loadingSyncFolders = false;
+            if (!list) return;
+            page.syncFolders = list;
+            const commands = Object.assign({}, syncCommands);
+            for (const id of Object.keys(commands)) {
+                const pair = list.find(p => p.id === id);
+                if (!pair || (commands[id] === "waiting" && pair.state !== "paused")) delete commands[id];
+            }
+            syncCommands = commands;
+        }, true);
+    }
+    function isFolderSynced(folderId) {
+        if (!folderId || !page.syncFolders) return false;
+        return page.syncFolders.some(p => p.folder_id === folderId);
+    }
+    function formatSyncTime(ms) {
+        if (!ms) return "Never";
+        const sec = Math.floor((Date.now() - ms) / 1000);
+        if (sec < 10) return "just now";
+        if (sec < 60) return sec + "s ago";
+        const min = Math.floor(sec / 60);
+        if (min < 60) return min + "m ago";
+        return Util.shortDate(Util.dayOf(ms)) + " " + Util.clock(ms);
+    }
+    function syncCommand(pairId, action) {
+        if (syncCommands[pairId]) return;
+        syncCommands = Object.assign({}, syncCommands, { [pairId]: "sending" });
+        Api.request("POST", "/api/syncfolders/" + pairId + "/" + action, {}, function(pair, err) {
+            const commands = Object.assign({}, page.syncCommands);
+            // confirm/keep can wait behind a running pass. The visible-page
+            // timer keeps checking for as long as the pair remains paused.
+            if (!err && (action === "confirm" || action === "keep") && pair.state === "paused") commands[pairId] = "waiting";
+            else delete commands[pairId];
+            page.syncCommands = commands;
+            if (err) page.problem = err;
+            page.loadSyncFolders();
+        }, true);
+    }
+
+    function localPath(url) {
+        const raw = url.toString();
+        // Decode only URLs: a literal '%' in a Windows path is valid.
+        if (!raw.startsWith("file://")) return raw;
+        let path = decodeURIComponent(raw.slice(7));
+        if (Qt.platform.os === "windows") {
+            if (!path.startsWith("/")) path = "//" + path; // UNC host/share
+            path = path.replace(/^\/([A-Za-z]:)/, "$1").replace(/\//g, "\\");
+        }
+        return path;
+    }
+    function localUrl(path) {
+        const normalized = path.replace(/\\/g, "/");
+        return (normalized.startsWith("//") ? "file:" : normalized.startsWith("/") ? "file://" : "file:///")
+            + normalized.split("/").map(part => encodeURIComponent(part).replace(/%3A/gi, ":")).join("/");
+    }
 
     // How the files look, kept on this computer: "icons" (a grid, like
     // Windows), "details" (a list with columns), "gallery" (big pictures).
@@ -85,12 +153,14 @@ Item {
     }
     function loadUsage() { Api.get("/api/drive/usage", d => { if (d) page.usage = d; }); loadShares(); }
     function go(f, c) { page.folder = f || ""; page.course = c || ""; load(); }
-    Component.onCompleted: { load(); loadUsage(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
-    onVisibleChanged: if (visible) { load(); loadUsage(); }
-    Connections { target: Api; function onChanged() { if (page.visible) page.load(); } }
+    Component.onCompleted: { load(); loadUsage(); loadSyncFolders(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
+    onVisibleChanged: if (visible) { load(); loadUsage(); loadSyncFolders(); }
+    onSyncVisibleChanged: if (syncVisible) loadSyncFolders()
+    Connections { target: Api; function onChanged() { if (page.visible) { page.load(); page.loadSyncFolders(); } } }
     // Real time: the list is read again every few seconds while you look (an
     // edited file's new size, files from other devices); the server's disk, which
     // barely moves, every minute and after each upload or delete.
+    Timer { interval: 3000; running: page.syncVisible; repeat: true; onTriggered: page.loadSyncFolders() }
     Timer { interval: 5000; running: page.visible; repeat: true; onTriggered: page.load() }
     Timer { interval: 60000; running: page.visible; repeat: true; onTriggered: page.loadUsage() }
 
@@ -200,6 +270,189 @@ Item {
         title: "Upload files"
         fileMode: FileDialog.OpenFiles
         onAccepted: page.upload(selectedFiles)
+    }
+
+    FolderDialog {
+        id: localFolderPicker
+        title: "Choose a folder on this PC to sync"
+        currentFolder: StandardPaths.writableLocation(StandardPaths.HomeLocation)
+        onAccepted: {
+            driveFolderPicker.ask(page.localPath(selectedFolder));
+        }
+    }
+
+    Modal {
+        id: driveFolderPicker
+        property string localPath: ""
+        property string localDisplay: ""
+        property string defaultFolderName: ""
+        property string mode: "new" // "new" | "existing"
+        property string selectedFolderId: ""
+        property string parentFolderId: ""
+        property string problem: ""
+        property bool submitting: false
+        width: Math.min(560, page.width - 32)
+        title: "Sync with Hourglass Drive"
+        subtitle: "Keep a folder on this PC and a folder on Hourglass Drive in sync."
+
+        readonly property var folderOptions: {
+            const all = page.allFolders || [];
+            const byId = {};
+            for (const f of all) byId[f.id] = f;
+            const pathOf = f => {
+                const names = [];
+                for (let x = f, n = 0; x && n < 20; x = byId[x.parent_id], n++) names.unshift(x.name);
+                return names.join(" / ");
+            };
+            return all.map(f => ({ label: pathOf(f), value: f.id })).sort((a, b) => a.label.localeCompare(b.label));
+        }
+        readonly property var parentOptions: {
+            return [{ label: "Top of Drive (Root)", value: "" }].concat(folderOptions);
+        }
+        function ask(path) {
+            localPath = path;
+            localDisplay = path;
+            const parts = path.split(/[\\\/]/).filter(Boolean);
+            defaultFolderName = parts.length ? parts[parts.length - 1] : "Folder";
+            newFolderNameField.text = defaultFolderName;
+            selectedFolderId = folderOptions.length ? folderOptions[0].value : "";
+            parentFolderId = "";
+            mode = folderOptions.length ? "existing" : "new";
+            problem = "";
+            open();
+        }
+        function submit() {
+            if (submitting) return;
+            problem = "";
+            var body = { local: localPath };
+            if (mode === "new") {
+                var name = newFolderNameField.text.trim();
+                if (!name) { problem = "Enter a folder name."; return; }
+                body.folder_name = name;
+                if (parentFolderId) body.parent_id = parentFolderId;
+            } else {
+                if (!selectedFolderId) { problem = "Choose a Drive folder."; return; }
+                body.folder_id = selectedFolderId;
+            }
+            submitting = true;
+            Api.request("POST", "/api/syncfolders", body, function(res, err) {
+                driveFolderPicker.submitting = false;
+                if (err) {
+                    driveFolderPicker.problem = err;
+                } else {
+                    driveFolderPicker.close();
+                    page.loadSyncFolders();
+                    page.load();
+                    page.app.showToast("Started syncing " + (res.folder_path || res.local));
+                }
+            }, true);
+        }
+
+        Text { text: "LOCAL FOLDER"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1.5 }
+        Rectangle {
+            Layout.fillWidth: true
+            height: 36
+            color: Theme.bg
+            border.width: 1
+            border.color: Theme.border
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 11
+                anchors.rightMargin: 11
+                Text { Layout.fillWidth: true; text: driveFolderPicker.localDisplay; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 13 }
+            }
+        }
+
+        Text { text: "DESTINATION ON DRIVE"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1.5 }
+        RowLayout {
+            spacing: 8
+            Btn {
+                text: "Existing folder"; icon: "folder"; compact: true
+                active: driveFolderPicker.mode === "existing"
+                onClicked: driveFolderPicker.mode = "existing"
+            }
+            Btn {
+                text: "New folder"; icon: "plus"; compact: true
+                active: driveFolderPicker.mode === "new"
+                onClicked: driveFolderPicker.mode = "new"
+            }
+        }
+
+        ColumnLayout {
+            visible: driveFolderPicker.mode === "existing"
+            Layout.fillWidth: true
+            spacing: 8
+            Text {
+                visible: !driveFolderPicker.folderOptions.length
+                text: "No folders on Drive yet. Click New folder above to create one."
+                color: Theme.faint
+                font.family: Theme.mono
+                font.pixelSize: 13
+            }
+            Picker {
+                visible: driveFolderPicker.folderOptions.length > 0
+                Layout.fillWidth: true
+                options: driveFolderPicker.folderOptions
+                value: driveFolderPicker.selectedFolderId
+                onPicked: v => driveFolderPicker.selectedFolderId = v
+            }
+        }
+
+        ColumnLayout {
+            visible: driveFolderPicker.mode === "new"
+            Layout.fillWidth: true
+            spacing: 8
+            Field {
+                id: newFolderNameField
+                Layout.fillWidth: true
+                placeholderText: "New folder name"
+                onAccepted: driveFolderPicker.submit()
+            }
+            Text { text: "INSIDE (OPTIONAL)"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1.5 }
+            Picker {
+                Layout.fillWidth: true
+                options: driveFolderPicker.parentOptions
+                value: driveFolderPicker.parentFolderId
+                onPicked: v => driveFolderPicker.parentFolderId = v
+            }
+        }
+
+        Text {
+            visible: driveFolderPicker.problem !== ""
+            text: driveFolderPicker.problem
+            color: Theme.accent
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            font.family: Theme.mono
+            font.pixelSize: 13
+        }
+
+        footer: [
+            Item { Layout.fillWidth: true },
+            Btn { text: "Cancel"; onClicked: driveFolderPicker.close() },
+            Btn { kind: "primary"; icon: "sync"; text: driveFolderPicker.submitting ? "Starting…" : "Start syncing"; enabled: !driveFolderPicker.submitting; onClicked: driveFolderPicker.submit() }
+        ]
+    }
+
+    ConfirmDialog {
+        id: stopSyncDlg
+        property string pairId: ""
+        function askStop(pair) {
+            pairId = pair.id;
+            ask("Stop syncing " + (pair.folder_path || "folder") + "?",
+                "Syncing will stop. All files will stay on this PC and on Drive.",
+                "Stop syncing",
+                function() {
+                    Api.request("DELETE", "/api/syncfolders/" + pairId, null, function(d, err) {
+                        if (err) page.problem = err;
+                        else {
+                            page.app.showToast("Stopped syncing");
+                            page.loadSyncFolders();
+                        }
+                    }, true);
+                }
+            );
+        }
     }
 
     // New folder / rename
@@ -429,21 +682,22 @@ Item {
                 Layout.margins: 40
                 spacing: 18
 
-                RowLayout {
+                Flow {
                     Layout.fillWidth: true
                     spacing: 8
-                    Text { Layout.fillWidth: true; text: "Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
+                    Text { width: Math.max(100, parent.width - viewChoices.width - syncFolderButton.width - (newFolderButton.visible ? newFolderButton.width + 8 : 0) - uploadButton.width - 24); text: "Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
                     // How the files look.
                     Row {
+                        id: viewChoices
                         spacing: 2
                         Repeater {
                             model: [{ key: "icons", icon: "grid", tip: "Icons" }, { key: "details", icon: "list", tip: "Details" }, { key: "gallery", icon: "gallery", tip: "Gallery" }]
                             Btn { required property var modelData; compact: true; icon: modelData.icon; tip: modelData.tip; active: look.view === modelData.key; onClicked: look.view = modelData.key }
                         }
                     }
-                    Item { width: 6 }
-                    Btn { visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
-                    Btn { kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
+                    Btn { id: syncFolderButton; icon: "sync"; text: "Sync a folder…"; onClicked: localFolderPicker.open() }
+                    Btn { id: newFolderButton; visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
+                    Btn { id: uploadButton; kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
                 }
 
                 // The server's disk
@@ -506,6 +760,278 @@ Item {
                     Item { width: 16 }
                     Text { text: page.busy; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13 }
                     Text { text: page.problem; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13 }
+                }
+
+                // Synced folders on this PC
+                ColumnLayout {
+                    visible: !page.course && !page.folder && page.syncFolders.length > 0
+                    Layout.fillWidth: true
+                    spacing: 12
+                    Section {
+                        text: "SYNCED FOLDERS"
+                        detail: page.syncFolders.length + (page.syncFolders.length === 1 ? " pair" : " pairs")
+                    }
+                    Repeater {
+                        model: page.syncFolders
+                        Rectangle {
+                            id: syncCard
+                            required property var modelData
+                            required property int index
+                            readonly property bool errorsExpanded: !!page.expandedSyncErrors[modelData.id]
+                            Layout.fillWidth: true
+                            implicitHeight: syncCardCol.implicitHeight + 24
+                            color: Theme.surface
+                            border.width: 1
+                            border.color: Theme.border
+                            Rectangle {
+                                width: 4
+                                height: parent.height
+                                color: modelData.state === "error" ? Theme.accent : modelData.state === "paused" ? Theme.gold : modelData.state === "syncing" ? Theme.teal : Theme.border
+                            }
+                            ColumnLayout {
+                                id: syncCardCol
+                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12; leftMargin: 16 }
+                                spacing: 10
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 3
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Icon { name: "sync"; size: 16; color: Theme.teal }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: modelData.local
+                                                color: Theme.fg
+                                                font.family: Theme.mono
+                                                font.pixelSize: 14
+                                                font.weight: Font.DemiBold
+                                                elide: Text.ElideMiddle
+                                                Layout.preferredWidth: 1
+                                                ToolTip.visible: localHover.hovered
+                                                ToolTip.text: modelData.local
+                                                HoverHandler { id: localHover }
+                                            }
+                                            Icon { name: "right"; size: 10; color: Theme.muted }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                Layout.preferredWidth: 1
+                                                ToolTip.visible: driveHover.hovered
+                                                ToolTip.text: modelData.folder_path || "Drive"
+                                                HoverHandler { id: driveHover }
+                                                text: "Drive / " + ((modelData.folder_path || "Folder").replace(/^Drive\s*\/\s*/i, ""))
+                                                color: Theme.fg
+                                                font.family: Theme.mono
+                                                font.pixelSize: 14
+                                                font.weight: Font.DemiBold
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Text {
+                                                text: {
+                                                    if (modelData.state === "paused") {
+                                                        if (modelData.reason === "mass_delete") return "PAUSED · Review deleted files";
+                                                        if (modelData.reason === "root_unreadable") return "PAUSED · Folder unreadable";
+                                                        if (modelData.reason === "drive_folder_missing") return "PAUSED · Drive folder missing";
+                                                        if (modelData.reason === "user") return "PAUSED · Paused by you";
+                                                        if (modelData.reason) return "PAUSED · " + modelData.reason;
+                                                        return "PAUSED";
+                                                    }
+                                                    return (modelData.state || "idle").toUpperCase();
+                                                }
+                                                color: modelData.state === "error" ? Theme.accent : modelData.state === "paused" ? Theme.gold : modelData.state === "syncing" ? Theme.teal : Theme.muted
+                                                font.family: Theme.mono
+                                                font.pixelSize: 12
+                                                font.weight: Font.Bold
+                                            }
+                                            Text { text: "·"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12 }
+                                            Text {
+                                                text: modelData.last_sync ? "Last synced " + page.formatSyncTime(modelData.last_sync) : "Not synced yet"
+                                                color: Theme.muted
+                                                font.family: Theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                text: "·  " + modelData.pending + " pending"
+                                                color: modelData.pending > 0 ? Theme.accent : Theme.muted
+                                                font.family: Theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                    }
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Btn {
+                                            compact: true
+                                            icon: "sync"
+                                            text: "Sync now"
+                                            enabled: !page.syncCommands[modelData.id] && modelData.state !== "paused" && modelData.state !== "syncing"
+                                            onClicked: page.syncCommand(modelData.id, "now")
+                                        }
+                                        Btn {
+                                            compact: true
+                                            icon: modelData.state === "paused" ? "play" : "pause"
+                                            text: modelData.state === "paused" ? "Resume" : "Pause"
+                                            enabled: !page.syncCommands[modelData.id] && modelData.reason !== "mass_delete"
+                                            onClicked: {
+                                                var op = modelData.state === "paused" ? "resume" : "pause";
+                                                page.syncCommand(modelData.id, op);
+                                            }
+                                        }
+                                        Btn {
+                                            compact: true
+                                            icon: "folder-open"
+                                            text: "Open folder"
+                                            tip: "Show in Windows Explorer"
+                                            onClicked: Qt.openUrlExternally(page.localUrl(modelData.local))
+                                        }
+                                        Btn {
+                                            compact: true
+                                            kind: "danger"
+                                            icon: "trash"
+                                            text: "Stop syncing"
+                                            onClicked: stopSyncDlg.askStop(modelData)
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    visible: modelData.state === "paused" && (modelData.reason === "root_unreadable" || modelData.reason === "drive_folder_missing")
+                                    Layout.fillWidth: true
+                                    color: Theme.alpha(Theme.gold, 0.12)
+                                    border.width: 1
+                                    border.color: Theme.gold
+                                    implicitHeight: unreadableCol.implicitHeight + 16
+                                    ColumnLayout {
+                                        id: unreadableCol
+                                        anchors { fill: parent; margins: 8; leftMargin: 12; rightMargin: 12 }
+                                        RowLayout {
+                                            spacing: 8
+                                            Icon { name: "alert-triangle"; size: 14; color: Theme.gold }
+                                            Text {
+                                                text: modelData.reason === "root_unreadable"
+                                                    ? "This folder on your PC cannot be found or read. Check that the folder exists and permissions allow access."
+                                                    : "The paired Drive folder is missing on the server."
+                                                color: Theme.fg
+                                                font.family: Theme.mono
+                                                font.pixelSize: 13
+                                                wrapMode: Text.Wrap
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    visible: modelData.state === "paused" && modelData.reason === "mass_delete"
+                                    Layout.fillWidth: true
+                                    color: Theme.alpha(Theme.accent, 0.12)
+                                    border.width: 1
+                                    border.color: Theme.accent
+                                    implicitHeight: massDelCol.implicitHeight + 20
+                                    ColumnLayout {
+                                        id: massDelCol
+                                        anchors { fill: parent; margins: 10; leftMargin: 12; rightMargin: 12 }
+                                        spacing: 8
+                                        RowLayout {
+                                            spacing: 8
+                                            Icon { name: "bell"; size: 14; color: Theme.accent }
+                                            Text {
+                                                text: modelData.delete_count > 0
+                                                    ? modelData.delete_count + " files were deleted from " + modelData.delete_side + ". Delete them on the other side too?"
+                                                    : "Folders were deleted from " + modelData.delete_side + ". Delete them on the other side too?"
+                                                color: Theme.fg
+                                                font.family: Theme.mono
+                                                font.pixelSize: 13
+                                                font.weight: Font.DemiBold
+                                                wrapMode: Text.Wrap
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+                                        Text {
+                                            visible: page.syncCommands[modelData.id] === "waiting"
+                                            text: "Waiting for the current sync to finish?"
+                                            color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
+                                        }
+                                        RowLayout {
+                                            spacing: 8
+                                            Btn {
+                                                kind: "danger"
+                                                compact: true
+                                                text: "Delete them"
+                                                enabled: !page.syncCommands[modelData.id]
+                                                onClicked: page.syncCommand(modelData.id, "confirm")
+                                            }
+                                            Btn {
+                                                kind: "primary"
+                                                compact: true
+                                                text: "Put them back"
+                                                enabled: !page.syncCommands[modelData.id]
+                                                onClicked: page.syncCommand(modelData.id, "keep")
+                                            }
+                                        }
+                                    }
+                                }
+                                ColumnLayout {
+                                    visible: !!(modelData.errors && modelData.errors.length)
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    RowLayout {
+                                        spacing: 6
+                                        Btn {
+                                            compact: true
+                                            kind: "subtle"
+                                            icon: syncCard.errorsExpanded ? "up" : "down"
+                                            text: (syncCard.errorsExpanded ? "Hide " : "Show ") + modelData.errors.length + (modelData.errors.length === 1 ? " error" : " errors")
+                                            onClicked: page.expandedSyncErrors = Object.assign({}, page.expandedSyncErrors, { [syncCard.modelData.id]: !syncCard.errorsExpanded })
+                                        }
+                                    }
+                                    ColumnLayout {
+                                        visible: syncCard.errorsExpanded
+                                        Layout.fillWidth: true
+                                        spacing: 4
+                                        Repeater {
+                                            model: modelData.errors || []
+                                            Rectangle {
+                                                required property var modelData
+                                                Layout.fillWidth: true
+                                                color: Theme.surface2
+                                                border.color: Theme.border
+                                                implicitHeight: errRow.implicitHeight + 10
+                                                RowLayout {
+                                                    id: errRow
+                                                    anchors { fill: parent; margins: 6; leftMargin: 10; rightMargin: 10 }
+                                                    spacing: 8
+                                                    Text {
+                                                        text: modelData.path
+                                                        color: Theme.fg
+                                                        font.family: Theme.mono
+                                                        font.pixelSize: 12
+                                                        elide: Text.ElideMiddle
+                                                        Layout.preferredWidth: 260
+                                                    }
+                                                    Text { text: "·"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12 }
+                                                    Text {
+                                                        text: modelData.error
+                                                        color: Theme.accent
+                                                        font.family: Theme.mono
+                                                        font.pixelSize: 12
+                                                        wrapMode: Text.Wrap
+                                                        Layout.fillWidth: true
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Courses: one folder each (at the top only)
@@ -667,6 +1193,7 @@ Item {
                                 }
                             }
                             Text { Layout.fillWidth: true; text: item.f.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 14 }
+                            Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); name: "sync"; size: 13; color: Theme.teal; ToolTip.visible: syncHover.hovered; ToolTip.text: "Synced to this PC"; HoverHandler { id: syncHover } }
                             Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 13; color: Theme.teal; ToolTip.visible: shareHover.hovered; ToolTip.text: item.shareTip; HoverHandler { id: shareHover } }
                             Text { Layout.preferredWidth: 190; text: item.when; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
                             Text { Layout.preferredWidth: 110; text: page.typeOf(item.f, item.isFolder); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
@@ -715,6 +1242,7 @@ Item {
                                 elide: Text.ElideRight
                                 color: Theme.fg; font.family: Theme.mono; font.pixelSize: 12
                             }
+                            Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); anchors { top: parent.top; right: parent.right; margins: 8 } name: "sync"; size: 12; color: Theme.teal }
                             Icon { visible: !!page.shares[item.f.id]; anchors { top: parent.top; left: parent.left; margins: 8 } name: "link"; size: 12; color: Theme.teal }
                         }
 
@@ -754,6 +1282,7 @@ Item {
                                 height: item.isFolder ? parent.height : 34
                                 spacing: 8
                                 Icon { visible: item.isFolder; name: "folder"; size: 16; color: Theme.accent }
+                                Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); name: "sync"; size: 12; color: Theme.teal; ToolTip.visible: syncHoverG.hovered; ToolTip.text: "Synced to this PC"; HoverHandler { id: syncHoverG } }
                                 Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 12; color: Theme.teal }
                                 Text { Layout.fillWidth: true; text: item.f.name; elide: Text.ElideMiddle; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13 }
                                 Btn { id: moreG; compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: page.openMenu(item.modelData, moreG, 0, moreG.height) }

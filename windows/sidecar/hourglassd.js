@@ -8,13 +8,14 @@
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { appendFileSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { rm as rmAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { homedir, hostname, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Store } from "../../core/node/store.js";
+import { createFolderSync } from "./foldersync.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, snoozeTimerId } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
@@ -1065,6 +1066,199 @@ async function driveRoutes(req, res, url, path) {
   return false;
 }
 
+async function uploadFolderFile(file, { name, folder_id, existing }) {
+  const { server, token } = config();
+  if (!server) throw new Error("Sign in to sync folders.");
+
+  const size = statSync(file).size;
+  const upload = startUpload(name, size);
+  const headers = {
+    authorization: `Bearer ${token}`,
+    "content-type": "application/octet-stream",
+    "content-length": String(size),
+    "x-hourglass-device": deviceName(),
+  };
+  const options = {
+    headers,
+    body: createReadStream(file).pipe(counting(upload)),
+    duplex: "half",
+    signal: AbortSignal.any([AbortSignal.timeout(3600000), upload.ctrl.signal]),
+  };
+
+  try {
+    let response;
+    if (existing) {
+      response = await fetch(`${server}/api/files/${existing}/raw`, { ...options, method: "PUT" });
+    } else {
+      const query = new URLSearchParams({ name });
+      if (folder_id) query.set("folder", folder_id);
+      response = await fetch(`${server}/api/files/upload?${query}`, { ...options, method: "POST" });
+    }
+
+    const row = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(row.error || `upload failed (${response.status})`);
+    endUpload(upload);
+    store.write("files", row, { mode: "remote" });
+    return row;
+  } catch (error) {
+    endUpload(upload, error.message);
+    throw error;
+  }
+}
+
+async function downloadFolderFile(id, target) {
+  const { server, token } = config();
+  if (!server) throw new Error("Sign in to sync folders.");
+
+  const response = await fetch(`${server}/api/files/${id}/raw`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(3600000),
+  });
+  if (!response.ok) throw new Error(`download failed (${response.status})`);
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(target));
+}
+
+async function moveFilesToRecycleBin(paths) {
+  if (!paths.length) return;
+  if (!WIN) throw new Error("Recycle Bin sync is available on Windows only.");
+
+  const encodedPaths = Buffer.from(JSON.stringify(paths), "utf8").toString("base64");
+  const command = `
+Add-Type -AssemblyName Microsoft.VisualBasic
+$paths = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPaths}')) | ConvertFrom-Json
+$files = @($paths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Container) })
+$folders = @($paths | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Sort-Object { $_.Length } -Descending)
+foreach ($path in $files) {
+  if (Test-Path -LiteralPath $path) {
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile([string]$path, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+  }
+}
+foreach ($path in $folders) {
+  if (-not (Test-Path -LiteralPath $path)) { continue }
+  if (Get-ChildItem -LiteralPath $path -Force | Select-Object -First 1) { throw "Folder is not empty: $path" }
+  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory([string]$path, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+}
+`;
+
+  await new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "-"], {
+      stdio: ["pipe", "ignore", "pipe"],
+      windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdin.once("error", reject);
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || "Could not move the files to the Recycle Bin."));
+    });
+    child.stdin.end(command, "utf8");
+  });
+}
+
+const folderSync = createFolderSync({
+  dataDir: DATA_DIR,
+  driveDir: DRIVE_DIR,
+  getRows: () => ({
+    folders: store.all("folders"),
+    files: store.all("files"),
+    createFolder: (name, parent_id) => store.upsert("folders", { name, parent_id }),
+    removeFolder: (id) => store.remove("folders", id),
+    removeFile: (id) => store.remove("files", id),
+    moveFile: (id, name, folder_id) => store.upsert("files", { id, name, folder_id }),
+  }),
+  syncOnce,
+  upload: uploadFolderFile,
+  download: downloadFolderFile,
+  removeLocal: moveFilesToRecycleBin,
+  deviceName: () => decodeURIComponent(deviceName()),
+  signedIn: () => !!config().token && sync.state === "synced",
+  maxFile: async () => (await remote("/api/drive/usage")).max_file || Infinity,
+});
+
+store.onChange((table) => {
+  if (table !== "files" && table !== "folders") return;
+  for (const pair of folderSync.list()) {
+    if (pair.state !== "paused") folderSync.schedule(pair.id, 2000);
+  }
+});
+
+async function syncFolderRoutes(req, res, path) {
+  const m = req.method;
+  if (path === "/api/syncfolders" && m === "GET") {
+    return json(res, 200, folderSync.list()), true;
+  }
+  if (path === "/api/syncfolders" && m === "POST") {
+    const b = await readBody(req);
+    if (!String(b.local || "").trim()) {
+      return json(res, 400, { error: "Choose an existing folder." }), true;
+    }
+
+    let local = resolve(String(b.local));
+    const folderId = String(b.folder_id || "");
+    if (!existsSync(local) || !statSync(local).isDirectory()) {
+      return json(res, 400, { error: "Choose an existing folder." }), true;
+    }
+    local = realpathSync(local);
+    if (withinPath(DRIVE_DIR, local)) {
+      return json(res, 400, { error: "The Hourglass Drive folder cannot be synced." }), true;
+    }
+
+    const pairs = folderSync.list();
+    if (pairs.some((pair) => pathsOverlap(pair.local, local))) {
+      return json(res, 409, { error: "This folder overlaps another synced folder." }), true;
+    }
+
+    let rows = store.all("folders");
+    if (!folderId && b.folder_name) {
+      const parent = b.parent_id || null;
+      if (parent && !rows.some((folder) => folder.id === parent)) {
+        return json(res, 400, { error: "Choose a Drive parent folder." }), true;
+      }
+      const folder = store.upsert("folders", { name: String(b.folder_name).trim(), parent_id: parent });
+      await syncOnce();
+      b.folder_id = folder.id;
+      rows = store.all("folders");
+    }
+    if (!rows.some((folder) => folder.id === b.folder_id)) {
+      return json(res, 400, { error: "Choose a Drive folder." }), true;
+    }
+
+    const descendants = (id) => rows
+      .filter((folder) => folder.parent_id === id)
+      .flatMap((folder) => [folder.id, ...descendants(folder.id)]);
+    if (pairs.some((pair) => pair.folder_id === b.folder_id
+      || descendants(b.folder_id).includes(pair.folder_id)
+      || descendants(pair.folder_id).includes(b.folder_id))) {
+      return json(res, 409, { error: "This Drive folder overlaps another synced folder." }), true;
+    }
+    return json(res, 201, folderSync.add(local, b.folder_id)), true;
+  }
+
+  const op = /^\/api\/syncfolders\/([0-9a-f-]+)\/(pause|resume|now|confirm|keep)$/.exec(path);
+  if (op && m === "POST") {
+    const value = folderSync.command(op[1], op[2]);
+    return value
+      ? (json(res, 200, value), true)
+      : (json(res, 404, { error: "Sync folder not found." }), true);
+  }
+
+  const del = /^\/api\/syncfolders\/([0-9a-f-]+)$/.exec(path);
+  if (del && m === "DELETE") {
+    return folderSync.remove(del[1])
+      ? (json(res, 200, { ok: true }), true)
+      : (json(res, 404, { error: "Sync folder not found." }), true);
+  }
+  return false;
+}
+const withinPath = (parent, path) => {
+  const rel = relative(resolve(parent), resolve(path));
+  return !rel.startsWith("..") && !isAbsolute(rel);
+};
+const pathsOverlap = (a, b) => withinPath(a, b) || withinPath(b, a);
+
 // --- the window (Windows) ---------------------------------------------------------
 // The service starts the window as its own child, so Task Manager shows one
 // Hourglass, not a window and a service side by side. The launcher asks for it
@@ -1179,6 +1373,7 @@ async function extra(req, res, url, path) {
   );
   if (!windowRequest) await credentialsReady;
 
+  if (await syncFolderRoutes(req, res, path)) return true;
   if (await driveRoutes(req, res, url, path)) return true;
   if (WIN && path === "/api/window" && req.method === "GET") return json(res, 200, { show_seq: showSeq, open: !!ui }), true;
   if (WIN && path === "/api/window/show" && req.method === "POST") {
