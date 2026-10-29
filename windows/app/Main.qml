@@ -171,7 +171,13 @@ ApplicationWindow {
     function askWindow() {
         const asked = Date.now();
         Api.request("GET", "/api/window?since=" + app.showSeq, null, (d, err) => {
-            if (!d) { app.showPoll = false; return; } // an older service: no window routes
+            if (!d) {
+                // An older service has no window routes; anything else (the service
+                // restarting mid-wait) is asked again shortly.
+                if (String(err).indexOf("404") >= 0) app.showPoll = false;
+                else { windowPoll.interval = 3000; windowPoll.restart(); }
+                return;
+            }
             if (app.showSeq >= 0 && d.show_seq !== app.showSeq) app.restoreWindow();
             app.showSeq = d.show_seq;
             if (!app.showPoll) return;
