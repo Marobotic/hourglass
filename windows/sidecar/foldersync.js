@@ -291,19 +291,28 @@ export function createFolderSync({
     renameSync(tmp, file);
   }
 
+  // folderPath scans every row, and view() runs on every progress emit: on a
+  // 5,000-file pair that scan was the whole of the sidecar's CPU. Remember the
+  // answer for the pass; run() clears it, so a rename shows up on the next one.
+  const folderPaths = new Map();
+
   function folderPath(id) {
+    if (folderPaths.has(id)) return folderPaths.get(id);
     const rows = getRows().folders || [];
     const course = (getRows().courses || []).find((row) => row.id === id);
-    if (course) return `Drive/${course.name}`;
-    const names = [];
-    const seen = new Set();
-    let folder = rows.find((row) => row.id === id);
-    while (folder && !seen.has(folder.id)) {
-      seen.add(folder.id);
-      names.unshift(folder.name);
-      folder = rows.find((row) => row.id === folder.parent_id);
-    }
-    return ["Drive", ...names].join("/");
+    const path = course ? `Drive/${course.name}` : (() => {
+      const names = [];
+      const seen = new Set();
+      let folder = rows.find((row) => row.id === id);
+      while (folder && !seen.has(folder.id)) {
+        seen.add(folder.id);
+        names.unshift(folder.name);
+        folder = rows.find((row) => row.id === folder.parent_id);
+      }
+      return ["Drive", ...names].join("/");
+    })();
+    folderPaths.set(id, path);
+    return path;
   }
 
   function view(pair) {
@@ -336,7 +345,13 @@ export function createFolderSync({
     };
   }
 
+  // Progress goes out per file, and view() costs a little; the window shows a
+  // badge, not every byte. A change of state always goes out at once.
   function emit(pair) {
+    const now = clock();
+    if (pair._emitState === pair.state && now - (pair._emitAt || 0) < 250) return;
+    pair._emitAt = now;
+    pair._emitState = pair.state;
     onState(view(pair));
   }
 
@@ -662,6 +677,7 @@ export function createFolderSync({
       return;
     }
     running.add(id);
+    folderPaths.delete(pair.folder_id);
     pair.state = "syncing";
     pair.errors = [];
     pair.pending = 0;

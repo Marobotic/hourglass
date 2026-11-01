@@ -258,6 +258,104 @@ test("pausing a pull pair mid-pass leaves remaining local files untouched", asyn
   }
 });
 
+async function removePullWhileDownloadIsInFlight(withTwoWayPair) {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-pull-remove-inflight-"));
+  const root = join(temp, "course-copy");
+  const otherRoot = join(temp, "sharex");
+  const data = join(temp, "data");
+  await mkdir(root);
+  await mkdir(otherRoot);
+  await mkdir(data);
+  const courseFiles = ["lesson-a.txt", "lesson-b.txt", "lesson-c.txt"].map((name) => ({
+    id: name,
+    name,
+    course_id: "course-1",
+    folder_id: null,
+    sha256: createHash("sha256").update(name).digest("hex"),
+    size: name.length,
+  }));
+  let downloadStarted;
+  const started = new Promise((resolve) => { downloadStarted = resolve; });
+  let releaseDownload;
+  const delayedResponse = new Promise((resolve) => { releaseDownload = resolve; });
+  const requestedFiles = [];
+  const rows = {
+    courses: [{ id: "course-1", name: "Course" }],
+    folders: [
+      { id: "course-folder", name: "Course" },
+      { id: "sharex-folder", name: "ShareX" },
+    ],
+    files: courseFiles,
+  };
+  let canSync = false;
+  const initialPasses = new Set();
+  const startedInitialPasses = new Set();
+  const engine = createFolderSync({
+    dataDir: data,
+    driveDir: join(temp, "drive"),
+    getRows: () => rows,
+    syncOnce: async () => {},
+    upload: async () => assert.fail("a pull pair must not upload"),
+    download: async (id, target) => {
+      requestedFiles.push(id);
+      if (requestedFiles.length === 1) {
+        downloadStarted();
+        await delayedResponse;
+      }
+      await writeFile(target, id);
+    },
+    removeLocal: async () => {},
+    signedIn: () => canSync,
+    watchFactory: fakeWatch,
+    onState: (pair) => {
+      if (pair.state === "syncing") startedInitialPasses.add(pair.id);
+      else if (pair.state === "idle" && startedInitialPasses.has(pair.id)) initialPasses.add(pair.id);
+    },
+  });
+
+  try {
+    const pull = engine.addPull("course-folder", root, "course-1");
+    await waitFor(() => initialPasses.has(pull.id));
+    const unrelated = withTwoWayPair ? engine.add(otherRoot, "sharex-folder") : null;
+    if (unrelated) await waitFor(() => initialPasses.has(unrelated.id));
+    canSync = true;
+
+    const runningPass = engine.run(pull.id);
+    await started;
+    engine.remove(pull.id);
+    const requestsAtRemoval = requestedFiles.length;
+    releaseDownload();
+
+    const settled = await Promise.race([
+      runningPass.then(() => true, () => true),
+      pause(2500).then(() => false),
+    ]);
+    assert.equal(settled, true, "removed pull run did not settle within 2500 ms");
+    await pause(500);
+    assert.equal(requestedFiles.length, requestsAtRemoval, "removed pull pair started another file request");
+    assert.equal(engine.list().some((pair) => pair.id === pull.id), false);
+
+    if (withTwoWayPair) {
+      assert.equal(engine.list().some((pair) => pair.id === unrelated.id && pair.mode === "two-way"), true);
+      await engine.run(unrelated.id);
+      assert.equal(engine.list().find((pair) => pair.id === unrelated.id).state, "idle");
+    }
+  } finally {
+    releaseDownload();
+    for (const pair of engine.list()) engine.remove(pair.id);
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
+test("removing a pull pair during a delayed download settles and starts no more requests", async () => {
+  await removePullWhileDownloadIsInFlight(false);
+});
+
+test("removing a pull pair during a delayed download leaves an unrelated two-way pair runnable", async () => {
+  await removePullWhileDownloadIsInFlight(true);
+});
+
 test("simultaneous and first-pair differing files get a timestamped conflict name", () => {
   const now = new Date(2026, 9, 28, 9, 4);
   const firstPair = compareTrees(

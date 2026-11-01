@@ -1321,7 +1321,9 @@ async function localCopyRoutes(req, res, path) {
       return json(res, 400, { error: "The local copy folder is unavailable." }), true;
     }
     folderSync.remove(pair.id);
-    rmSync(local, { recursive: true, force: true });
+    // A course can be gigabytes: delete it off the event loop, or the whole
+    // sidecar stops answering while Windows walks the tree.
+    await rmAsync(local, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
     return json(res, 200, { ok: true }), true;
   }
   return false;
