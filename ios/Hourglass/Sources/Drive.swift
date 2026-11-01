@@ -255,16 +255,21 @@ struct DriveView: View {
                 Button { importing = true } label: { Image(systemName: "square.and.arrow.up").foregroundStyle(H.muted).frame(width: 40, height: 40) }
             }
             .padding(.horizontal, 12)
-            if let u = usage, let total = u["total"], total > 0 {
+            if let u = usage {
                 VStack(alignment: .leading, spacing: 4) {
-                    GeometryReader { g in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(H.surface2)
-                            Rectangle().fill(H.teal).frame(width: g.size.width * CGFloat(min(1, Double(u["used"] ?? 0) / Double(total))))
+                    if let total = u["total"], total > 0 {
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Rectangle().fill(H.surface2)
+                                Rectangle().fill(H.teal).frame(width: g.size.width * CGFloat(min(1, max(0, Double(u["used"] ?? (total - (u["free"] ?? 0))) / Double(total)))))
+                            }
                         }
+                        .frame(height: 4)
                     }
-                    .frame(height: 4)
-                    T("\(fmtBytes(u["mine"] ?? 0)) yours  ·  \(fmtBytes(u["free"] ?? 0)) free of \(fmtBytes(total))", 11, H.muted)
+                    let total = u["total"] ?? 0
+                    let free = u["free"] ?? 0
+                    let used = u["used"] ?? (total - free)
+                    T("\(fmtBytes(used)) used of \(fmtBytes(total))  ·  \(fmtBytes(free)) free  ·  your files \(fmtBytes(u["mine"]))", 11, H.muted)
                 }
                 .padding(.horizontal, 18)
             }

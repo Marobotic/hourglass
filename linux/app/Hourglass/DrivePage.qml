@@ -51,12 +51,17 @@ Item {
     // and the list too (an edited file's new size, files from other devices).
     Timer { interval: 5000; running: page.visible && Util.shown(page.app); repeat: true; onTriggered: { page.loadUsage(); page.load(); } }
 
+    // One unit family everywhere: bytes as they are, KB to GB with one decimal,
+    // TB and up with two, so 5.0 and 5.002 TB never both read "5.0 TB".
     function size(n) {
         if (n === undefined || n === null) return "";
-        const u = ["B", "KB", "MB", "GB", "TB"];
-        let i = 0;
+        n = Number(n);
+        if (!isFinite(n) || n < 0) return "";
+        if (n < 1024) return Math.round(n) + " B";
+        const u = ["KB", "MB", "GB", "TB", "PB"];
+        let i = -1;
         while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-        return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + " " + u[i];
+        return n.toFixed(i >= 3 ? 2 : 1) + " " + u[i];
     }
     function isImage(f) { return /^image\//.test(f.mime) && !/svg/.test(f.mime); }
     function isVideo(f) { return /^video\//.test(f.mime) || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name); }
@@ -390,18 +395,19 @@ Item {
                         color: Theme.surface2
                         Rectangle {
                             height: parent.height
-                            width: page.usage ? parent.width * Math.min(1, page.usage.used / page.usage.total) : 0
-                            color: page.usage && page.usage.free / page.usage.total < 0.1 ? Theme.accent : Theme.muted
+                            width: page.usage && page.usage.total > 0 ? parent.width * Math.min(1, Math.max(0, page.usage.used / page.usage.total)) : 0
+                            color: page.usage && page.usage.total > 0 && page.usage.free / page.usage.total < 0.1 ? Theme.accent : Theme.muted
                         }
                         Rectangle {
                             height: parent.height
-                            width: page.usage ? Math.max(2, parent.width * page.usage.mine / page.usage.total) : 0
+                            width: page.usage && page.usage.total > 0 ? Math.max(2, parent.width * Math.min(1, page.usage.mine / page.usage.total)) : 0
                             color: Theme.accent
                         }
                     }
                     Text {
                         text: !page.usage ? "Reading the server's storage…"
-                            : page.size(page.usage.free) + " free of " + page.size(page.usage.total) + " on the server  ·  your files " + page.size(page.usage.mine)
+                            : page.size(page.usage.used) + " used of " + page.size(page.usage.total) + " on the server"
+                              + "  ·  " + page.size(page.usage.free) + " free  ·  your files " + page.size(page.usage.mine)
                               + "  ·  up to " + page.size(Math.min(page.usage.usable, page.usage.max_file)) + " per upload"
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap

@@ -28,9 +28,11 @@ import { createAssistant } from "./assistant.js";
 import { createShares } from "./share.js";
 import { createVersions, isText, lineDiff, whoOf } from "./versions.js";
 import { createRingRoutes } from "./ring.js";
+import { measureDriveTree, parseRcloneAbout, sumFileSizes } from "./drive-usage.js";
 
 const dataDir = resolve(process.env.HOURGLASS_DATA || join(import.meta.dirname, "data"));
 const driveDir = process.env.HOURGLASS_DRIVE_DIR ? resolve(process.env.HOURGLASS_DRIVE_DIR) : null;
+const rcloneRemote = process.env.HOURGLASS_RCLONE_REMOTE || "gdrive";
 const port = Number(process.env.HOURGLASS_PORT || 8930);
 const host = process.env.HOURGLASS_HOST || "127.0.0.1";
 const maroUrl = (process.env.MARO_ACCOUNT_URL || "http://127.0.0.1:8900").replace(/\/+$/, "");
@@ -440,20 +442,54 @@ async function thumbnail(t, row, big) {
   return thumbing.get(out);
 }
 
-// The disks are asked at most every 30 s (the mount asks Google, which can be
-// slow) and never on the main thread; every app with Drive open asks often.
-let disks = null; // { at, total, free, room }
+// Google account quota is authoritative for all Drive usage, including files
+// outside Hourglass's mounted folder. Cache it alongside the per-user tree scan.
+let disks = null; // { at, total, free, used, room, userDirs, userBytes }
 let disksAsking = null;
+const rcloneAbout = () => new Promise((resolve, reject) => {
+  const target = rcloneRemote.endsWith(":") ? rcloneRemote : `${rcloneRemote}:`;
+  const child = spawn("rclone", ["about", target], { stdio: ["ignore", "pipe", "ignore"] });
+  let output = "";
+  const timeout = setTimeout(() => {
+    child.kill("SIGTERM");
+    reject(new Error("rclone about timed out"));
+  }, 15_000);
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+  child.once("close", (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) return reject(new Error(`rclone about exited ${code}`));
+    const result = parseRcloneAbout(output);
+    if (!result) return reject(new Error("rclone about returned incomplete quota data"));
+    resolve(result);
+  });
+});
+
 async function readDisks(t) {
-  if (disks && Date.now() - disks.at < 30_000) return disks;
+  if (disks && Date.now() - disks.at < 60_000) return disks;
   disksAsking ??= (async () => {
     try {
-      const s = await statfs(driveDir || t.dir);
-      // rclone writes an upload to the droplet's disk before sending it to Google,
-      // so the droplet needs room for it too.
-      const local = await statfs(t.dir);
-      const free = s.bavail * s.bsize;
-      disks = { at: Date.now(), total: s.blocks * s.bsize, free, room: Math.min(free, local.bavail * local.bsize) };
+      const tree = driveDir || join(t.dir, "drive");
+      const [quota, local, measured] = await Promise.all([
+        rcloneAbout().catch(async () => {
+          const fallback = await statfs(driveDir || t.dir);
+          const total = fallback.blocks * fallback.bsize;
+          const free = fallback.bavail * fallback.bsize;
+          return { total, free, used: total - free };
+        }),
+        statfs(t.dir),
+        measureDriveTree(tree),
+      ]);
+      const total = quota.total;
+      const used = quota.used;
+      let free = quota.free;
+      // Keep free consistent if a source ever reports less free space than the
+      // measured used bytes imply.
+      if (used > total - free) free = Math.max(0, total - used);
+      // Uploads first land on the server disk as well as needing Drive quota.
+      const room = Math.min(free, local.bavail * local.bsize);
+      disks = { at: Date.now(), total, free, used, room, driveDirs: measured.driveDirs, driveBytes: measured.driveBytes };
       return disks;
     } finally {
       disksAsking = null;
@@ -463,11 +499,20 @@ async function readDisks(t) {
 }
 
 async function diskUsage(t) {
-  const { total, free, room } = await readDisks(t);
+  const snapshot = await readDisks(t);
+  const { total, free, used, room } = snapshot;
   const files = t.store.all("files");
-  // Old versions take room too.
-  const mine = files.reduce((n, f) => n + (f.size || 0), 0) + versions.bytes(t, files.map((f) => f.id));
-  return { total, free, used: total - free, mine, usable: Math.max(0, room - DISK_RESERVE), max_file: MAX_FILE };
+  const userSubdir = driveDir ? (t.email === owner ? "owner" : sha(t.email).slice(0, 24)) : null;
+  // The mount stores every account under its own subdirectory. If it exists,
+  // its measured bytes include current files and historical versions. Fall back
+  // to database metadata only for older accounts without a drive subdirectory.
+  const mine = !driveDir
+    ? used
+    : snapshot.driveDirs.has(userSubdir)
+      ? snapshot.driveBytes.get(userSubdir) || 0
+      : sumFileSizes(files) + Number(versions.bytes(t, files.map((f) => f.id)) || 0);
+  const usable = Math.max(0, Math.min(free, room - DISK_RESERVE));
+  return { total, free, used, mine, usable, max_file: MAX_FILE };
 }
 
 const MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp",
@@ -690,7 +735,7 @@ async function ringtoneRoutes(t, req, res, url, path) {
 
 // --- server ------------------------------------------------------------------
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://local");
   const path = url.pathname.replace(/\/+$/, "") || "/";
   try {
@@ -752,6 +797,14 @@ createServer(async (req, res) => {
     if (!e.status) console.error(e);
     send(res, e.status ?? 502, { error: e.message });
   }
-}).listen(port, host, () => {
+});
+// Node stops a request it has not received in full after 5 minutes by default.
+// A large video over a slow line takes longer than that (it reset the 71 MB
+// upload partway through a folder sync, every time), so the whole request has
+// no deadline; an idle connection is still cut by headersTimeout, and the apps
+// time their own uploads out.
+server.requestTimeout = 0;
+server.headersTimeout = 60_000;
+server.listen(port, host, () => {
   console.log(`hourglass ${VERSION} on http://${host}:${port} (data ${dataDir}, owner ${owner || "none"}, accounts via ${maroUrl})`);
 });

@@ -92,12 +92,24 @@ import dev.marobotic.hourglass.data.Repo
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.io.File
+import java.util.Locale
 
-fun fmtBytes(n: Long): String = when {
-    n < 1024 -> "$n B"
-    n < 1024L * 1024 -> "%.0f KB".format(n / 1024.0)
-    n < 1024L * 1024 * 1024 -> "%.1f MB".format(n / 1048576.0)
-    else -> "%.1f GB".format(n / 1073741824.0)
+fun fmtBytes(value: Any?): String {
+    val bytes = when (value) {
+        is Number -> value.toLong()
+        is String -> value.toLongOrNull() ?: 0L
+        else -> 0L
+    }.coerceAtLeast(0)
+    if (bytes < 1024) return "$bytes B"
+    val units = listOf("KB", "MB", "GB", "TB", "PB", "EB")
+    var amount = bytes.toDouble()
+    var unit = -1
+    while (amount >= 1024 && unit < units.lastIndex) {
+        amount /= 1024
+        unit++
+    }
+    amount = amount.coerceAtMost(1023.9)
+    return String.format(Locale.US, "%.1f %s", amount, units[unit])
 }
 
 // Open a downloaded Drive file in whatever app handles it.
@@ -301,14 +313,17 @@ fun DriveScreen(nav: Nav, version: Int) {
         }
         // The server's disk, live.
         usage?.let { u ->
-            val total = u.optLong("total").coerceAtLeast(1)
-            val used = u.optLong("used")
+            val total = u.optLong("total").coerceAtLeast(0)
+            val free = u.optLong("free")
+            val used = if (u.has("used") && !u.isNull("used")) u.optLong("used") else total - free
             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp)) {
-                Box(Modifier.fillMaxWidth().height(4.dp).background(HColors.surface2)) {
-                    Box(Modifier.fillMaxWidth((used.toFloat() / total).coerceIn(0f, 1f)).height(4.dp).background(HColors.teal))
+                if (total > 0) {
+                    Box(Modifier.fillMaxWidth().height(4.dp).background(HColors.surface2)) {
+                        Box(Modifier.fillMaxWidth((used.toFloat() / total).coerceIn(0f, 1f)).height(4.dp).background(HColors.teal))
+                    }
                 }
                 Spacer(Modifier.height(4.dp))
-                T("${fmtBytes(u.optLong("mine"))} yours  ·  ${fmtBytes(u.optLong("free"))} free of ${fmtBytes(total)}  ·  hold a file to drag it", 11, HColors.muted)
+                T("${fmtBytes(used)} used of ${fmtBytes(total)}  ·  ${fmtBytes(free)} free  ·  your files ${fmtBytes(u.opt("mine"))}  ·  hold a file to drag it", 11, HColors.muted)
             }
         }
         (status ?: opener.busy)?.let { T(it, 12, HColors.gold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp)) }

@@ -39,6 +39,7 @@ export function compareTrees(local, remote, base, {
   pending = new Set(),
   pendingRemote = new Set(),
   maxDeletes = 20,
+  mode = "two-way",
 } = {}) {
   const localFiles = local.files || local;
   const remoteFiles = remote.files || remote;
@@ -51,6 +52,19 @@ export function compareTrees(local, remote, base, {
 
   // File ids identify remote moves. Hashes identify local moves.
   for (const [oldPath, entry] of Object.entries(baseFiles)) {
+    if (mode === "pull") {
+      // A pull pair follows remote moves, but local moves are user edits and
+      // must never be reflected back to Drive.
+      if (!localFiles[oldPath] && remoteFiles[oldPath]) {
+        const movedRemote = Object.entries(remoteFiles).find(([path, file]) => path !== oldPath && file.file_id === entry.file_id);
+        if (movedRemote) {
+          actions.push({ type: "remote_move", from: oldPath, path: movedRemote[0], remote: movedRemote[1] });
+          consumed.add(oldPath);
+          consumed.add(movedRemote[0]);
+        }
+      }
+      continue;
+    }
     if (!localFiles[oldPath]) {
       const movedLocal = Object.entries(localFiles).find(([path, file]) =>
         path !== oldPath && !baseFiles[path] && file.sha256 === entry.sha256 && stable.has(path));
@@ -80,14 +94,33 @@ export function compareTrees(local, remote, base, {
     ...Object.keys(baseFiles),
   ]);
 
+  // A remote file the server has not hashed yet is only "pending" for a
+  // two-way pair, which must wait for the hash to compare. A pull copy has
+  // nothing to compare against, so it downloads it now.
   for (const path of filePaths) {
-    if (consumed.has(path) || pending.has(path) || pendingRemote.has(path)) continue;
+    if (consumed.has(path) || pending.has(path) || (mode !== "pull" && pendingRemote.has(path))) continue;
 
     const localFile = localFiles[path];
     const remoteFile = remoteFiles[path];
     const baseFile = baseFiles[path];
 
     if (!baseFile) {
+      if (mode === "pull") {
+        if (!remoteFile) continue; // local-only: never uploaded, never deleted
+        if (!localFile) {
+          actions.push({ type: "download", path, remote: remoteFile });
+          continue;
+        }
+        // Both sides have it and nothing was recorded yet: hashes say whether
+        // they match, sizes are all there is until the server hashes its copy.
+        const known = !!remoteFile.sha256 && !!localFile.sha256;
+        const matching = known
+          ? localFile.sha256 === remoteFile.sha256
+          : Number(localFile.size) === Number(remoteFile.size);
+        if (matching) actions.push({ type: "record", path, local: localFile, remote: remoteFile });
+        else actions.push({ type: "pull_conflict", path, conflict: conflictName(path, device, now), local: localFile, remote: remoteFile, local_only: true });
+        continue;
+      }
       if (localFile && remoteFile) {
         if (same(localFile, remoteFile)) {
           actions.push({ type: "record", path, local: localFile, remote: remoteFile });
@@ -106,6 +139,24 @@ export function compareTrees(local, remote, base, {
     const remoteChanged = remoteFile && (remoteFile.sha256 !== baseFile.sha256 || remoteFile.file_id !== baseFile.file_id);
 
     if (localFile && remoteFile) {
+      if (mode === "pull") {
+        // Until the server has hashed its copy, size is the only signal: a file
+        // whose size still matches is unchanged, and one that changed is
+        // downloaded again.
+        const remoteChangedNow = remoteFile.file_id !== baseFile.file_id
+          || (remoteFile.sha256 && baseFile.sha256
+            ? remoteFile.sha256 !== baseFile.sha256
+            : Number(remoteFile.size) !== Number(baseFile.size));
+        const localChangedNow = baseFile.sha256 && localFile.sha256
+          ? localFile.sha256 !== baseFile.sha256 && stable.has(path)
+          : Number(localFile.size) !== Number(baseFile.size) && stable.has(path);
+        if (!localChangedNow && !remoteChangedNow) actions.push({ type: "record", path, local: localFile, remote: remoteFile });
+        else if (!localChangedNow && remoteChangedNow) actions.push({ type: "download", path, remote: remoteFile });
+        else if (localChangedNow && remoteChangedNow) {
+          actions.push({ type: "pull_conflict", path, conflict: conflictName(path, device, now), local: localFile, remote: remoteFile });
+        } else actions.push({ type: "record", path, local: localFile, remote: remoteFile });
+        continue;
+      }
       if (!localChanged && !remoteChanged) {
         actions.push({ type: "record", path, local: localFile, remote: remoteFile });
       } else if (localChanged && !remoteChanged) {
@@ -118,6 +169,17 @@ export function compareTrees(local, remote, base, {
         actions.push({ type: "conflict", path, conflict: conflictName(path, device, now), local: localFile, remote: remoteFile });
       }
     } else if (localFile && !remoteFile) {
+      if (mode === "pull") {
+        // A base entry means this was downloaded by the pair. Remote deletion
+        // removes that copy even if it was edited locally; local-only files
+        // have no base entry and were handled above.
+        if (baseFile.local_only) actions.push({ type: "forget", path });
+        else {
+          actions.push({ type: "delete_local", path, file_id: baseFile.file_id, local: localFile });
+          deleteLocal++;
+        }
+        continue;
+      }
       if (localChanged) {
         actions.push({ type: "upload", path, local: localFile });
       } else {
@@ -158,8 +220,10 @@ export function compareTrees(local, remote, base, {
     if (hasNewOrChanged) continue;
 
     if (!localHas) {
-      actions.push({ type: "delete_remote_folder", path, folder_id: remoteFolders[path] });
-      deleteRemote++;
+      if (mode !== "pull") {
+        actions.push({ type: "delete_remote_folder", path, folder_id: remoteFolders[path] });
+        deleteRemote++;
+      }
     } else {
       actions.push({ type: "delete_local_folder", path, folder_id: baseFolders[path] });
       deleteLocal++;
@@ -167,10 +231,10 @@ export function compareTrees(local, remote, base, {
   }
 
   const baseCount = Math.max(Object.keys(baseFiles).length, 1);
-  const massDelete = deleteLocal > maxDeletes
+  const massDelete = mode !== "pull" && (deleteLocal > maxDeletes
     || deleteRemote > maxDeletes
     || (deleteLocal >= 5 && deleteLocal / baseCount > 0.25)
-    || (deleteRemote >= 5 && deleteRemote / baseCount > 0.25);
+    || (deleteRemote >= 5 && deleteRemote / baseCount > 0.25));
 
   return {
     actions: massDelete ? actions.filter((action) => !action.type.startsWith("delete_")) : actions,
@@ -210,6 +274,8 @@ export function createFolderSync({
       for (const pair of JSON.parse(readFileSync(file, "utf8"))) {
         pairs.set(pair.id, {
           ...pair,
+          mode: pair.mode === "pull" ? "pull" : "two-way",
+          course_id: pair.course_id || null,
           errors: [],
           state: pair.paused ? "paused" : "idle",
           last_sync: pair.last_sync || null,
@@ -227,6 +293,8 @@ export function createFolderSync({
 
   function folderPath(id) {
     const rows = getRows().folders || [];
+    const course = (getRows().courses || []).find((row) => row.id === id);
+    if (course) return `Drive/${course.name}`;
     const names = [];
     const seen = new Set();
     let folder = rows.find((row) => row.id === id);
@@ -250,12 +318,19 @@ export function createFolderSync({
       id: pair.id,
       local: pair.local,
       folder_id: pair.folder_id,
+      mode: pair.mode || "two-way",
+      course_id: pair.course_id || null,
       folder_path: folderPath(pair.folder_id),
       state: pair.state,
       reason: pair.reason || null,
       last_sync: pair.last_sync,
       pending: pair.pending || 0,
       errors: pair.errors || [],
+      paused: !!pair.paused,
+      files_done: pair.files_done || 0,
+      files_total: pair.files_total || 0,
+      bytes_done: pair.bytes_done || 0,
+      bytes_total: pair.bytes_total || 0,
       delete_count: deleteRemote + deleteLocal,
       delete_side: fromPC && fromDrive ? "this PC and Drive" : fromDrive ? "Drive" : "this PC",
     };
@@ -361,13 +436,40 @@ export function createFolderSync({
     return { files, folders, pending };
   }
 
-  function remoteTree(folderId) {
+  function remoteTree(folderId, courseId = null) {
     const rows = getRows();
     const folders = {};
     const files = {};
     const pending = [];
     const allFolders = rows.folders || [];
     const allFiles = rows.files || [];
+
+    // Course files are stored with course_id rather than a folder_id. They
+    // still use the same planner and local tree as ordinary folder pairs.
+    const courseFiles = courseId && allFiles.some((item) => item.course_id === courseId)
+      ? allFiles.filter((item) => item.course_id === courseId && !item.deleted)
+      : null;
+    if (courseFiles) {
+      for (const row of courseFiles) {
+        let parent = row.folder_id;
+        const parts = [row.name];
+        const seen = new Set();
+        const chain = [];
+        while (parent && !seen.has(parent)) {
+          seen.add(parent);
+          const folder = allFolders.find((item) => item.id === parent && !item.deleted);
+          if (!folder) break;
+          chain.unshift(folder);
+          parent = folder.parent_id;
+        }
+        for (let i = 0; i < chain.length; i++) folders[chain.slice(0, i + 1).map((item) => item.name).join("/")] = chain[i].id;
+        if (chain.length) parts.unshift(...chain.map((item) => item.name));
+        const path = parts.join("/");
+        if (!row.sha256) pending.push(path);
+        files[path] = { file_id: row.id, sha256: row.sha256 || "", size: row.size, updated_at: row.updated_at, folder_id: row.folder_id, name: row.name };
+      }
+      return { files, folders, pending };
+    }
 
     function descend(parentId, prefix) {
       for (const folder of allFolders.filter((row) =>
@@ -422,11 +524,21 @@ export function createFolderSync({
     return parent;
   }
 
+  // The server's limit changes only when it is redeployed, and a pull copy asks
+  // once per file: keep the answer for a minute instead of a request per file.
+  let maxFileCache = { at: 0, value: Infinity };
+  async function currentMaxFile() {
+    if (Date.now() - maxFileCache.at < 60_000) return maxFileCache.value;
+    const value = await maxFile();
+    maxFileCache = { at: Date.now(), value: Number.isFinite(value) ? value : Infinity };
+    return maxFileCache.value;
+  }
+
   async function uploadAction(pair, action) {
     const path = action.path;
     const item = action.local;
     const size = (await stat(item.path)).size;
-    const max = await maxFile();
+    const max = await currentMaxFile();
     if (size > max) {
       pair.errors.push({ path, error: `File is over the ${Math.round(max / 1048576)} MB upload limit.` });
       return null;
@@ -442,6 +554,11 @@ export function createFolderSync({
   }
 
   async function downloadAction(pair, action, local) {
+    const max = await currentMaxFile();
+    if (Number.isFinite(max) && Number(action.remote.size) > max) {
+      pair.errors.push({ path: action.path, error: `File is over the ${Math.round(max / 1048576)} MB download limit.` });
+      return null;
+    }
     const target = join(pair.local, ...action.path.split("/"));
     await mkdir(dirname(target), { recursive: true });
     const part = target + ".part";
@@ -522,13 +639,13 @@ export function createFolderSync({
 
     for (const action of folders) {
       if (action.type === "delete_remote_folder") {
-        const currentPath = remoteTree(pair.folder_id).folders[action.path];
+        const currentPath = remoteTree(pair.folder_id, pair.mode === "pull" ? pair.course_id : null).folders[action.path];
         if (currentPath !== action.folder_id || remoteFolderHasContent(currentPath)) continue;
         getRows().removeFolder?.(currentPath);
         continue;
       }
 
-      if (remoteTree(pair.folder_id).folders[action.path]) continue;
+      if (remoteTree(pair.folder_id, pair.mode === "pull" ? pair.course_id : null).folders[action.path]) continue;
       if (await localFolderWillBeEmpty(pair, action.path, new Set(localFileDeletes), localFolderDeletes)) {
         recycle.push(join(pair.local, ...action.path.split("/")));
       }
@@ -561,12 +678,16 @@ export function createFolderSync({
         pair.state = "idle";
         return;
       }
-      if (!(getRows().folders || []).some((folder) => folder.id === pair.folder_id && !folder.deleted)) {
+      const courseExists = pair.mode === "pull" && pair.course_id
+        && (getRows().courses || []).some((course) => course.id === pair.course_id && !course.archived);
+      const folderExists = (getRows().folders || []).some((folder) => folder.id === pair.folder_id && !folder.deleted);
+      if (!(courseExists || folderExists)) {
         throw Object.assign(new Error("The paired Drive folder is missing."), { pause: "drive_folder_missing" });
       }
 
       const local = await scan(pair.local, pair.base || {});
-      let remote = remoteTree(pair.folder_id);
+      const remoteForPair = () => remoteTree(pair.folder_id, pair.mode === "pull" ? pair.course_id : null);
+      let remote = remoteForPair();
       // Folders made on Drive come down; one deleted here since the last pass
       // is left out, so it can be deleted on Drive instead of coming back.
       for (const folder of Object.keys(remote.folders)) {
@@ -580,6 +701,7 @@ export function createFolderSync({
         stable,
         pending: new Set(local.pending),
         pendingRemote: new Set(remote.pending),
+        mode: pair.mode || "two-way",
       });
       if (plan.massDelete) {
         pair.pending = plan.allActions.length;
@@ -589,54 +711,84 @@ export function createFolderSync({
       }
 
       pair.pending = plan.actions.length;
+      pair.files_done = 0;
+      pair.files_total = plan.actions.filter((a) => ["download", "pull_conflict", "upload", "delete_local"].includes(a.type)).length;
+      pair.bytes_done = 0;
+      pair.bytes_total = plan.actions.filter((a) => a.type === "download" || a.type === "pull_conflict")
+        .reduce((n, a) => n + (Number(a.remote?.size) || 0), 0);
       const localFileDeletes = [];
       for (const action of plan.actions) {
-        if (!pairs.has(id)) return;
-        if (action.type === "download") {
-          await downloadAction(pair, action, local);
-        } else if (action.type === "upload") {
-          await uploadAction(pair, action);
-        } else if (action.type === "remote_move") {
-          const from = join(pair.local, ...action.from.split("/"));
-          const to = join(pair.local, ...action.path.split("/"));
-          await mkdir(dirname(to), { recursive: true });
-          await rename(from, to);
-          const baseFile = pair.base.files?.[action.from];
-          if (baseFile) {
-            delete pair.base.files[action.from];
-            pair.base.files[action.path] = baseFile;
-            save();
+        if (!pairs.has(id) || pair.paused) return;
+        // One file the server refuses, or a connection that drops mid-upload,
+        // must not hold back everything after it: note it, go on, retry next
+        // pass. Only a missing or unreadable root pauses the whole pair.
+        try {
+          if (action.type === "download") {
+            const downloaded = await downloadAction(pair, action, local);
+            if (downloaded) pair.bytes_done += Number(action.remote?.size) || 0;
+          } else if (action.type === "pull_conflict") {
+            const conflict = join(dirname(join(pair.local, ...action.path.split("/"))), action.conflict);
+            await mkdir(dirname(conflict), { recursive: true });
+            const downloaded = await downloadAction(pair, { ...action, path: relative(pair.local, conflict).split(sep).join("/") }, { files: {} });
+            if (downloaded) {
+              const localVersion = await stat(join(pair.local, ...action.path.split("/")));
+              pair.base.files ||= {};
+              pair.base.files[action.path] = {
+                file_id: action.remote.file_id, sha256: action.remote.sha256,
+                mtime: localVersion.mtimeMs, size: localVersion.size,
+                ...(action.local_only || pair.base.files[action.path]?.local_only ? { local_only: true } : {}),
+              };
+              pair.bytes_done += Number(action.remote?.size) || 0;
+            }
+          } else if (action.type === "upload") {
+            await uploadAction(pair, action);
+          } else if (action.type === "remote_move") {
+            const from = join(pair.local, ...action.from.split("/"));
+            const to = join(pair.local, ...action.path.split("/"));
+            await mkdir(dirname(to), { recursive: true });
+            await rename(from, to);
+            const baseFile = pair.base.files?.[action.from];
+            if (baseFile) {
+              delete pair.base.files[action.from];
+              pair.base.files[action.path] = baseFile;
+              save();
+            }
+          } else if (action.type === "local_move") {
+            const folderId = await ensureFolders(pair, action.path);
+            const row = (getRows().files || []).find((file) => file.id === action.file_id);
+            if (row) getRows().moveFile?.(row.id, basename(action.path), folderId);
+          } else if (action.type === "conflict") {
+            const from = local.files[action.path].path;
+            const to = join(dirname(from), action.conflict);
+            await rename(from, to);
+            if (pair.base.files?.[action.path]) {
+              delete pair.base.files[action.path];
+              save();
+            }
+            const conflictPath = relative(pair.local, to).split(sep).join("/");
+            await uploadAction(pair, {
+              path: conflictPath,
+              local: { ...local.files[action.path], path: to },
+            });
+            await downloadAction(pair, { path: action.path, remote: action.remote }, { files: {} });
+          } else if (action.type === "delete_remote") {
+            const row = (getRows().files || []).find((item) => item.id === action.file_id);
+            if (row) getRows().removeFile?.(row.id);
+          } else if (action.type === "delete_local") {
+            localFileDeletes.push(action.path);
           }
-        } else if (action.type === "local_move") {
-          const folderId = await ensureFolders(pair, action.path);
-          const row = (getRows().files || []).find((file) => file.id === action.file_id);
-          if (row) getRows().moveFile?.(row.id, basename(action.path), folderId);
-        } else if (action.type === "conflict") {
-          const from = local.files[action.path].path;
-          const to = join(dirname(from), action.conflict);
-          await rename(from, to);
-          if (pair.base.files?.[action.path]) {
-            delete pair.base.files[action.path];
-            save();
-          }
-          const conflictPath = relative(pair.local, to).split(sep).join("/");
-          await uploadAction(pair, {
-            path: conflictPath,
-            local: { ...local.files[action.path], path: to },
-          });
-          await downloadAction(pair, { path: action.path, remote: action.remote }, { files: {} });
-        } else if (action.type === "delete_remote") {
-          const row = (getRows().files || []).find((item) => item.id === action.file_id);
-          if (row) getRows().removeFile?.(row.id);
-        } else if (action.type === "delete_local") {
-          localFileDeletes.push(action.path);
+        } catch (error) {
+          pair.errors.push({ path: action.path, error: error.message });
         }
         pair.pending--;
+        if (["download", "pull_conflict", "delete_local", "upload"].includes(action.type)) pair.files_done++;
+        emit(pair);
       }
 
       if (!pairs.has(id)) return;
       // Make new empty local directories on Drive after file changes are applied.
       for (const folder of Object.keys(local.folders)) {
+        if (pair.mode === "pull") break;
         if (!folder || pair.base.folders?.[folder] || remote.folders[folder]) continue;
         await ensureFolders(pair, `${folder}/_folder`);
       }
@@ -645,11 +797,19 @@ export function createFolderSync({
       await syncOnce();
 
       const afterLocal = await scan(pair.local, pair.base || {});
-      remote = remoteTree(pair.folder_id);
+      remote = remoteForPair();
       const base = { files: {}, folders: { ...remote.folders } };
       for (const [path, localFile] of Object.entries(afterLocal.files)) {
         const remoteFile = remote.files[path];
-        if (remoteFile && !remoteFile.sha256) continue;
+        // A pull copy has to download files the server has not hashed yet (it
+        // backfills them over time). Remember the pair by size until then, or
+        // every pass would download them again.
+        if (remoteFile && !remoteFile.sha256) {
+          if (pair.mode === "pull" && Number(remoteFile.size) === Number(localFile.size)) {
+            base.files[path] = { file_id: remoteFile.file_id, sha256: localFile.sha256 || "", mtime: localFile.mtime, size: localFile.size };
+          }
+          continue;
+        }
         if (remoteFile && localFile.sha256 === remoteFile.sha256) {
           base.files[path] = {
             file_id: remoteFile.file_id,
@@ -744,12 +904,29 @@ export function createFolderSync({
       state: "idle",
       errors: [],
       last_sync: null,
+      mode: "two-way",
+      course_id: null,
     };
     pairs.set(pair.id, pair);
     save();
     startWatch(pair);
     if (running.size) schedule(pair, 2000);
     else run(pair.id);
+    return view(pair);
+  }
+
+  function addPull(folderId, localRoot, courseId = folderId) {
+    const existing = [...pairs.values()].find((pair) => pair.mode === "pull" && pair.course_id === courseId);
+    if (existing) return view(existing);
+    const pair = {
+      id: randomUUID(), local: resolve(localRoot), folder_id: folderId, course_id: courseId,
+      mode: "pull", paused: false, base: { files: {}, folders: {} }, state: "idle", errors: [], last_sync: null,
+    };
+    pairs.set(pair.id, pair);
+    mkdirSync(pair.local, { recursive: true });
+    save();
+    startWatch(pair);
+    if (running.size) schedule(pair, 2000); else run(pair.id);
     return view(pair);
   }
 
@@ -803,6 +980,7 @@ export function createFolderSync({
   return {
     list: () => [...pairs.values()].map(view),
     add,
+    addPull,
     command,
     remove,
     run,

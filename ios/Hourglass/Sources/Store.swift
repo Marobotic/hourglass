@@ -344,7 +344,11 @@ final class Store: ObservableObject {
         guard let (d, r) = try? await URLSession.shared.data(for: request(base.appendingPathComponent("api/drive/usage"))),
               (r as? HTTPURLResponse)?.statusCode == 200,
               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
-        return o.compactMapValues { ($0 as? NSNumber)?.int64Value }
+        return o.compactMapValues { value in
+            if let number = value as? NSNumber { return number.int64Value }
+            if let string = value as? String { return Int64(string) }
+            return nil
+        }
     }
 
     // The folder note attachments go to when the note has no course.
@@ -1203,9 +1207,20 @@ func mimeOf(_ name: String) -> String {
     return m[ext] ?? "application/octet-stream"
 }
 
-func fmtBytes(_ n: Int64) -> String {
-    if n < 1024 { return "\(n) B" }
-    if n < 1_048_576 { return String(format: "%.0f KB", Double(n) / 1024) }
-    if n < 1_073_741_824 { return String(format: "%.1f MB", Double(n) / 1_048_576) }
-    return String(format: "%.1f GB", Double(n) / 1_073_741_824)
+func fmtBytes(_ value: Any?) -> String {
+    let bytes: Int64
+    if let number = value as? NSNumber { bytes = number.int64Value }
+    else if let string = value as? String { bytes = Int64(string) ?? 0 }
+    else { bytes = 0 }
+    let count = max(0, bytes)
+    if count < 1024 { return "\(count) B" }
+    let units = ["KB", "MB", "GB", "TB", "PB", "EB"]
+    var amount = Double(count)
+    var unit = -1
+    while amount >= 1024 && unit < units.count - 1 {
+        amount /= 1024
+        unit += 1
+    }
+    amount = min(amount, 1023.9)
+    return String(format: "%.1f %@", locale: Locale(identifier: "en_US_POSIX"), amount, units[unit])
 }

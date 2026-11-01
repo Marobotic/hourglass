@@ -32,12 +32,14 @@ Item {
     property var shares: ({}) // file or folder id -> its link
     property var allFolders: [] // every folder, for "Move to…"
     property var syncFolders: [] // folders synced between this PC and Drive
+    property var localCopies: [] // course folders kept on this PC
     property alias driveFolderPicker: driveFolderPicker
     property alias stopSyncDlg: stopSyncDlg
     property alias localFolderPicker: localFolderPicker
     property var syncCommands: ({})
     property var expandedSyncErrors: ({})
     property bool loadingSyncFolders: false
+    property bool loadingLocalCopies: false
     readonly property bool syncVisible: visible && Util.shown(app)
 
     function loadSyncFolders() {
@@ -46,13 +48,82 @@ Item {
         Api.request("GET", "/api/syncfolders", null, (list, err) => {
             loadingSyncFolders = false;
             if (!list) return;
-            page.syncFolders = list;
+            page.syncFolders = list.filter(p => p.mode !== "pull");
             const commands = Object.assign({}, syncCommands);
             for (const id of Object.keys(commands)) {
                 const pair = list.find(p => p.id === id);
                 if (!pair || (commands[id] === "waiting" && pair.state !== "paused")) delete commands[id];
             }
             syncCommands = commands;
+        }, true);
+    }
+    function loadLocalCopies() {
+        if (!syncVisible || loadingLocalCopies) return;
+        loadingLocalCopies = true;
+        Api.request("GET", "/api/localcopies", null, (list, err) => {
+            loadingLocalCopies = false;
+            if (list) page.localCopies = list;
+        }, true);
+    }
+    function courseFor(it) {
+        if (it.courseCard) return { id: it.row.id, name: it.row.name };
+        if (it.table !== "folders") return null;
+        let id = page.course;
+        if (!id) {
+            const path = page.drive.path || [];
+            for (let i = path.length - 1; i >= 0; i--) {
+                if (path[i].course) { id = path[i].id; break; }
+            }
+        }
+        if (!id) {
+            const courses = page.app && page.app.courses ? page.app.courses : [];
+            const folders = page.allFolders || [];
+            let parentId = it.row.parent_id || page.folder;
+            for (let i = 0; parentId && i < 20; i++) {
+                const course = courses.find(c => c.id === parentId);
+                if (course) { id = course.id; break; }
+                const parent = folders.find(folder => folder.id === parentId);
+                parentId = parent ? parent.parent_id : "";
+            }
+        }
+        if (!id) return null;
+        const courses = page.app && page.app.courses ? page.app.courses : [];
+        const course = courses.find(c => c.id === id);
+        const pathCourse = (page.drive.path || []).find(p => p.course && p.id === id);
+        return { id: id, name: course ? course.name : pathCourse ? pathCourse.name : it.row.name };
+    }
+    function localCopyFor(courseId) {
+        return page.localCopies.find(copy => copy.course_id === courseId) || null;
+    }
+    function localCopyStatus(copy) {
+        if (!copy) return "";
+        if (copy.state === "error" || copy.error || copy.last_error || (copy.errors && copy.errors.length)) return "Error";
+        if (copy.paused || copy.state === "paused") return "Paused";
+        if (copy.state === "syncing") {
+            const done = Number(copy.files_done) || 0, total = Number(copy.files_total) || 0;
+            const pct = total ? Math.max(0, Math.min(100, Math.round(done * 100 / total))) : 0;
+            return "Downloading " + done + " of " + total + " · " + pct + "%";
+        }
+        return "Saved on this PC";
+    }
+    function localCopyError(copy) {
+        if (!copy) return "";
+        if (copy.error || copy.last_error) return copy.error || copy.last_error;
+        if (copy.errors && copy.errors.length) return copy.errors[copy.errors.length - 1].error || "Local copy failed";
+        if (copy.state === "error") return "Local copy failed";
+        return "";
+    }
+    function startLocalCopy(course) {
+        Api.request("POST", "/api/localcopies", { course_id: course.id, name: course.name }, function(copy, err) {
+            if (err) page.problem = err;
+            else page.app.showToast("Keeping " + course.name + " on this PC");
+            page.loadLocalCopies();
+        }, true);
+    }
+    function localCopyCommand(copy, action) {
+        Api.request("POST", "/api/localcopies/" + copy.id + "/" + action, {}, function(result, err) {
+            if (err) page.problem = err;
+            page.loadLocalCopies();
         }, true);
     }
     function isFolderSynced(folderId) {
@@ -153,23 +224,28 @@ Item {
     }
     function loadUsage() { Api.get("/api/drive/usage", d => { if (d) page.usage = d; }); loadShares(); }
     function go(f, c) { page.folder = f || ""; page.course = c || ""; load(); }
-    Component.onCompleted: { load(); loadUsage(); loadSyncFolders(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
-    onVisibleChanged: if (visible) { load(); loadUsage(); loadSyncFolders(); }
-    onSyncVisibleChanged: if (syncVisible) loadSyncFolders()
-    Connections { target: Api; function onChanged() { if (page.visible) { page.load(); page.loadSyncFolders(); } } }
+    Component.onCompleted: { load(); loadUsage(); loadSyncFolders(); loadLocalCopies(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
+    onVisibleChanged: if (visible) { load(); loadUsage(); loadSyncFolders(); loadLocalCopies(); }
+    onSyncVisibleChanged: if (syncVisible) { loadSyncFolders(); loadLocalCopies(); }
+    Connections { target: Api; function onChanged() { if (page.visible) { page.load(); page.loadSyncFolders(); page.loadLocalCopies(); } } }
     // Real time: the list is read again every few seconds while you look (an
     // edited file's new size, files from other devices); the server's disk, which
     // barely moves, every minute and after each upload or delete.
-    Timer { interval: 3000; running: page.syncVisible; repeat: true; onTriggered: page.loadSyncFolders() }
+    Timer { interval: 3000; running: page.syncVisible; repeat: true; onTriggered: { page.loadSyncFolders(); page.loadLocalCopies(); } }
     Timer { interval: 5000; running: page.syncVisible; repeat: true; onTriggered: page.load() }
     Timer { interval: 60000; running: page.syncVisible; repeat: true; onTriggered: page.loadUsage() }
 
+    // One unit family everywhere: bytes as they are, KB to GB with one decimal,
+    // TB and up with two, so 5.0 and 5.002 TB never both read "5.0 TB".
     function size(n) {
         if (n === undefined || n === null) return "";
-        const u = ["B", "KB", "MB", "GB", "TB"];
-        let i = 0;
+        n = Number(n);
+        if (!isFinite(n) || n < 0) return "";
+        if (n < 1024) return Math.round(n) + " B";
+        const u = ["KB", "MB", "GB", "TB", "PB"];
+        let i = -1;
         while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-        return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + " " + u[i];
+        return n.toFixed(i >= 3 ? 2 : 1) + " " + u[i];
     }
     function isImage(f) { return /^image\//.test(f.mime) && !/svg/.test(f.mime); }
     function isVideo(f) { return /^video\//.test(f.mime) || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name); }
@@ -455,6 +531,25 @@ Item {
         }
     }
 
+    ConfirmDialog {
+        id: removeLocalCopyDlg
+        property var copy: null
+        function askRemove(pair, courseName) {
+            copy = pair;
+            ask("Remove local copy of " + courseName + "?",
+                "The downloaded course folder will be removed from this PC. The files on Drive will stay.",
+                "Remove local copy",
+                function() {
+                    Api.request("DELETE", "/api/localcopies/" + copy.id, null, function(d, err) {
+                        if (err) page.problem = err;
+                        else page.app.showToast("Removed local copy");
+                        page.loadLocalCopies();
+                    }, true);
+                }
+            );
+        }
+    }
+
     // New folder / rename
     Modal {
         id: nameDlg
@@ -479,14 +574,24 @@ Item {
         const p = area.mapToItem(page, mx, my);
         const f = it.row;
         if (it.table === "folders") {
-            menu.show(p.x, p.y, f.name, [
+            const course = page.courseFor(it);
+            const copy = course ? page.localCopyFor(course.id) : null;
+            const localItems = course ? (copy ? [
+                { key: "localcopy:" + (copy.paused || copy.state === "paused" ? "resume" : "pause"), label: copy.paused || copy.state === "paused" ? "Resume local copy" : "Pause local copy" },
+                { key: "localcopy:now", label: "Sync now" },
+                { key: "localcopy:remove", label: "Remove local copy", danger: true },
+            ] : [{ key: "localcopy:add", label: "Keep on this PC" }]) : [];
+            const folderItems = it.courseCard ? [] : [
                 { key: "open", label: "Open folder" },
                 { key: "share", label: page.shares[f.id] ? "Shared · link…" : "Share…" },
                 { key: "move", label: "Move to…", sub: page.folderChoices(it) },
                 { key: "rename", label: "Rename" },
+                ...(course ? [{ separator: true }] : []),
+                ...localItems,
                 { separator: true },
                 { key: "delete", label: "Delete folder", danger: true },
-            ]);
+            ];
+            menu.show(p.x, p.y, f.name, it.courseCard ? localItems : folderItems);
             return;
         }
         const media = page.isImage(f) || page.isVideo(f);
@@ -511,6 +616,15 @@ Item {
         onPicked: key => {
             const it = page.menuItem, f = it.row;
             if (key === "open") it.table === "folders" ? page.go(f.id, "") : page.openFile(f);
+            else if (key === "localcopy:add") page.startLocalCopy(page.courseFor(it));
+            else if (key === "localcopy:pause" || key === "localcopy:resume" || key === "localcopy:now") {
+                const course = page.courseFor(it), copy = course ? page.localCopyFor(course.id) : null;
+                if (copy) page.localCopyCommand(copy, key.slice("localcopy:".length));
+            }
+            else if (key === "localcopy:remove") {
+                const course = page.courseFor(it), copy = course ? page.localCopyFor(course.id) : null;
+                if (copy) removeLocalCopyDlg.askRemove(copy, course.name);
+            }
             else if (key === "preview") preview.show(f);
             else if (key === "download") page.download(f);
             else if (key === "reveal") page.reveal(f);
@@ -710,18 +824,19 @@ Item {
                         color: Theme.surface2
                         Rectangle {
                             height: parent.height
-                            width: page.usage ? parent.width * Math.min(1, page.usage.used / page.usage.total) : 0
-                            color: page.usage && page.usage.free / page.usage.total < 0.1 ? Theme.accent : Theme.muted
+                            width: page.usage && page.usage.total > 0 ? parent.width * Math.min(1, Math.max(0, page.usage.used / page.usage.total)) : 0
+                            color: page.usage && page.usage.total > 0 && page.usage.free / page.usage.total < 0.1 ? Theme.accent : Theme.muted
                         }
                         Rectangle {
                             height: parent.height
-                            width: page.usage ? Math.max(2, parent.width * page.usage.mine / page.usage.total) : 0
+                            width: page.usage && page.usage.total > 0 ? Math.max(2, parent.width * Math.min(1, page.usage.mine / page.usage.total)) : 0
                             color: Theme.accent
                         }
                     }
                     Text {
                         text: !page.usage ? "Reading the server's storage…"
-                            : page.size(page.usage.free) + " free of " + page.size(page.usage.total) + " on the server  ·  your files " + page.size(page.usage.mine)
+                            : page.size(page.usage.used) + " used of " + page.size(page.usage.total) + " on the server"
+                              + "  ·  " + page.size(page.usage.free) + " free  ·  your files " + page.size(page.usage.mine)
                               + "  ·  up to " + page.size(Math.min(page.usage.usable, page.usage.max_file)) + " per upload"
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
@@ -1061,9 +1176,27 @@ Item {
                                     Icon { name: "folder"; size: 14; color: ct.modelData.color }
                                     Text { Layout.fillWidth: true; text: ct.modelData.name; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14; font.weight: Font.Bold }
                                 }
-                                Text { text: ct.modelData.items + (ct.modelData.items === 1 ? " file" : " files"); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                                Text {
+                                    readonly property var localCopy: page.localCopyFor(ct.modelData.id)
+                                    text: ct.modelData.items + (ct.modelData.items === 1 ? " file" : " files") + (localCopy ? "  ·  " + page.localCopyStatus(localCopy) : "")
+                                    color: !localCopy ? Theme.muted : page.localCopyStatus(localCopy) === "Error" ? Theme.accent : localCopy.paused || localCopy.state === "paused" ? Theme.gold : Theme.teal
+                                    font.family: Theme.mono; font.pixelSize: 12
+                                    ToolTip.visible: courseCopyHover.hovered && localCopy && page.localCopyStatus(localCopy) === "Error"
+                                    ToolTip.text: page.localCopyError(localCopy)
+                                    HoverHandler { id: courseCopyHover }
+                                }
                             }
-                            MouseArea { id: ctm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.go("", ct.modelData.id) }
+                            MouseArea {
+                                id: ctm
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: e => {
+                                    if (e.button === Qt.RightButton) page.openMenu({ table: "folders", row: ct.modelData, courseCard: true }, ctm, e.x, e.y);
+                                    else page.go("", ct.modelData.id);
+                                }
+                            }
                             DropArea {
                                 id: courseDrop
                                 anchors.fill: parent
@@ -1134,6 +1267,8 @@ Item {
                         required property var modelData
                         readonly property bool isFolder: modelData.table === "folders"
                         readonly property var f: modelData.row
+                        readonly property var courseInfo: isFolder ? page.courseFor(modelData) : null
+                        readonly property var localCopy: courseInfo ? page.localCopyFor(courseInfo.id) : null
                         readonly property bool isBreak: modelData.table === "break"
                         readonly property bool media: !isFolder && !isBreak && (page.isImage(f) || page.isVideo(f))
                         clip: isBreak
@@ -1194,6 +1329,15 @@ Item {
                             }
                             Text { Layout.fillWidth: true; text: item.f.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 14 }
                             Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); name: "sync"; size: 13; color: Theme.teal; ToolTip.visible: syncHover.hovered; ToolTip.text: "Synced to this PC"; HoverHandler { id: syncHover } }
+                            Text {
+                                visible: item.isFolder && !!item.localCopy
+                                text: page.localCopyStatus(item.localCopy)
+                                color: page.localCopyStatus(item.localCopy) === "Error" ? Theme.accent : item.localCopy.paused || item.localCopy.state === "paused" ? Theme.gold : Theme.teal
+                                font.family: Theme.mono; font.pixelSize: 11
+                                ToolTip.visible: localCopyHover.hovered && page.localCopyStatus(item.localCopy) === "Error"
+                                ToolTip.text: page.localCopyError(item.localCopy)
+                                HoverHandler { id: localCopyHover }
+                            }
                             Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 13; color: Theme.teal; ToolTip.visible: shareHover.hovered; ToolTip.text: item.shareTip; HoverHandler { id: shareHover } }
                             Text { Layout.preferredWidth: 190; text: item.when; color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
                             Text { Layout.preferredWidth: 110; text: page.typeOf(item.f, item.isFolder); color: Theme.muted; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 13 }
@@ -1232,6 +1376,18 @@ Item {
                                 }
                                 // A video's picture says it plays.
                                 Icon { anchors.centerIn: parent; visible: !item.isFolder && page.isVideo(item.f) && iconImg.status === Image.Ready; name: "play"; size: 18; color: "white"; style: Text.Outline; styleColor: "#80000000" }
+                            }
+                            Text {
+                                visible: item.isFolder && !!item.localCopy
+                                anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 5; rightMargin: 5; bottomMargin: 3 }
+                                text: page.localCopyStatus(item.localCopy)
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                color: page.localCopyStatus(item.localCopy) === "Error" ? Theme.accent : item.localCopy.paused || item.localCopy.state === "paused" ? Theme.gold : Theme.teal
+                                font.family: Theme.mono; font.pixelSize: 9
+                                ToolTip.visible: localCopyHoverI.hovered && page.localCopyStatus(item.localCopy) === "Error"
+                                ToolTip.text: page.localCopyError(item.localCopy)
+                                HoverHandler { id: localCopyHoverI }
                             }
                             Text {
                                 anchors { left: parent.left; right: parent.right; top: iconBox.bottom; topMargin: 8; leftMargin: 8; rightMargin: 8 }
@@ -1283,6 +1439,16 @@ Item {
                                 spacing: 8
                                 Icon { visible: item.isFolder; name: "folder"; size: 16; color: Theme.accent }
                                 Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); name: "sync"; size: 12; color: Theme.teal; ToolTip.visible: syncHoverG.hovered; ToolTip.text: "Synced to this PC"; HoverHandler { id: syncHoverG } }
+                                Text {
+                                    visible: item.isFolder && !!item.localCopy
+                                    text: page.localCopyStatus(item.localCopy)
+                                    color: page.localCopyStatus(item.localCopy) === "Error" ? Theme.accent : item.localCopy.paused || item.localCopy.state === "paused" ? Theme.gold : Theme.teal
+                                    font.family: Theme.mono; font.pixelSize: 9
+                                    elide: Text.ElideRight
+                                    ToolTip.visible: localCopyHoverG.hovered && page.localCopyStatus(item.localCopy) === "Error"
+                                    ToolTip.text: page.localCopyError(item.localCopy)
+                                    HoverHandler { id: localCopyHoverG }
+                                }
                                 Icon { visible: !!page.shares[item.f.id]; name: "link"; size: 12; color: Theme.teal }
                                 Text { Layout.fillWidth: true; text: item.f.name; elide: Text.ElideMiddle; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13 }
                                 Btn { id: moreG; compact: true; kind: "subtle"; text: "⋯"; tip: "More"; onClicked: page.openMenu(item.modelData, moreG, 0, moreG.height) }

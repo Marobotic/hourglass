@@ -1166,6 +1166,7 @@ const folderSync = createFolderSync({
   dataDir: DATA_DIR,
   driveDir: DRIVE_DIR,
   getRows: () => ({
+    courses: store.all("courses"),
     folders: store.all("folders"),
     files: store.all("files"),
     createFolder: (name, parent_id) => store.upsert("folders", { name, parent_id }),
@@ -1254,6 +1255,74 @@ async function syncFolderRoutes(req, res, path) {
     return folderSync.remove(del[1])
       ? (json(res, 200, { ok: true }), true)
       : (json(res, 404, { error: "Sync folder not found." }), true);
+  }
+  return false;
+}
+
+const COURSES_DIR = join(process.env.USERPROFILE || HOME, "Hourglass", "Courses");
+const safeCourseName = (value) => {
+  const name = String(value || "").trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "");
+  return name && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) ? name : "";
+};
+
+async function localCopyRoutes(req, res, path) {
+  const m = req.method;
+  if (path === "/api/localcopies" && m === "GET") {
+    const values = folderSync.list().filter((pair) => pair.mode === "pull").map((pair) => ({
+      id: pair.id, course_id: pair.course_id, local_path: pair.local, state: pair.state,
+      paused: pair.paused, files_done: pair.files_done, files_total: pair.files_total,
+      bytes_done: pair.bytes_done, bytes_total: pair.bytes_total, errors: pair.errors,
+      last_error: pair.errors.at(-1)?.error || null, last_synced_at: pair.last_sync,
+    }));
+    return json(res, 200, values), true;
+  }
+  if (path === "/api/localcopies" && m === "POST") {
+    const b = await readBody(req);
+    const courseId = String(b.course_id || "");
+    const course = store.all("courses").find((item) => item.id === courseId && !item.archived);
+    const name = safeCourseName(b.name);
+    if (!course || !name) return json(res, 400, { error: "Choose a course and a valid course name." }), true;
+    const existing = folderSync.list().find((pair) => pair.mode === "pull" && pair.course_id === courseId);
+    if (existing) return json(res, 200, existing), true;
+    mkdirSync(COURSES_DIR, { recursive: true });
+    const local = resolve(COURSES_DIR, name);
+    const coursesRoot = resolve(COURSES_DIR);
+    if (!withinPath(coursesRoot, local) || withinPath(DRIVE_DIR, local)) return json(res, 400, { error: "Invalid course folder." }), true;
+    if (folderSync.list().some((pair) => pathsOverlap(pair.local, local))) return json(res, 409, { error: "This folder overlaps another synced folder." }), true;
+    mkdirSync(local, { recursive: true });
+    const realCoursesRoot = realpathSync(COURSES_DIR);
+    const realLocal = realpathSync(local);
+    if (!withinPath(realCoursesRoot, realLocal) || withinPath(DRIVE_DIR, realLocal)) return json(res, 400, { error: "Invalid course folder." }), true;
+    return json(res, 201, folderSync.addPull(courseId, local, courseId)), true;
+  }
+
+  const op = /^\/api\/localcopies\/([0-9a-f-]+)\/(pause|resume|now)$/.exec(path);
+  if (op && m === "POST") {
+    const pair = folderSync.list().find((item) => item.id === op[1] && item.mode === "pull");
+    if (!pair) return json(res, 404, { error: "Local copy not found." }), true;
+    return json(res, 200, folderSync.command(op[1], op[2])), true;
+  }
+  const del = /^\/api\/localcopies\/([0-9a-f-]+)$/.exec(path);
+  if (del && m === "DELETE") {
+    const pair = folderSync.list().find((item) => item.id === del[1] && item.mode === "pull");
+    if (!pair) return json(res, 404, { error: "Local copy not found." }), true;
+    const coursesRoot = resolve(COURSES_DIR);
+    const local = resolve(pair.local);
+    if (!pair.course_id || !withinPath(coursesRoot, local) || local === coursesRoot || withinPath(DRIVE_DIR, local)) {
+      return json(res, 400, { error: "The local copy path is outside the courses folder." }), true;
+    }
+    try {
+      const realCoursesRoot = realpathSync(COURSES_DIR);
+      const realLocal = realpathSync(local);
+      if (!withinPath(realCoursesRoot, realLocal) || realLocal === realCoursesRoot || withinPath(DRIVE_DIR, realLocal)) {
+        return json(res, 400, { error: "The local copy path is outside the courses folder." }), true;
+      }
+    } catch {
+      return json(res, 400, { error: "The local copy folder is unavailable." }), true;
+    }
+    folderSync.remove(pair.id);
+    rmSync(local, { recursive: true, force: true });
+    return json(res, 200, { ok: true }), true;
   }
   return false;
 }
@@ -1394,6 +1463,7 @@ async function extra(req, res, url, path) {
   if (!windowRequest) await credentialsReady;
 
   if (await syncFolderRoutes(req, res, path)) return true;
+  if (await localCopyRoutes(req, res, path)) return true;
   if (await driveRoutes(req, res, url, path)) return true;
   if (WIN && path === "/api/window" && req.method === "GET") {
     if (url.searchParams.has("since")) await waitForShow(Number(url.searchParams.get("since")));

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -20,7 +21,7 @@ async function waitFor(check, timeout = 4000) {
   assert.ok(check(), "condition did not become true before timeout");
 }
 
-async function savedPair({ temp, root, id = "pair-1", folderId = "folder-root", base = {}, paused = false, pendingDeletes }) {
+async function savedPair({ temp, root, id = "pair-1", folderId = "folder-root", base = {}, paused = false, pendingDeletes, mode, courseId }) {
   const data = join(temp, "data");
   await mkdir(data, { recursive: true });
   const pair = {
@@ -29,6 +30,8 @@ async function savedPair({ temp, root, id = "pair-1", folderId = "folder-root", 
     folder_id: folderId,
     paused,
     base,
+    ...(mode ? { mode } : {}),
+    ...(courseId ? { course_id: courseId } : {}),
     ...(pendingDeletes ? { pendingDeletes } : {}),
   };
   await writeFile(join(data, "syncfolders.json"), JSON.stringify([pair]));
@@ -109,6 +112,150 @@ test("changed local uploads and changed remote downloads", () => {
   );
   assert.equal(local.actions[0].type, "upload");
   assert.equal(remote.actions[0].type, "download");
+});
+
+test("pull mode turns a simultaneous local and remote edit into a download conflict", () => {
+  const plan = compareTrees(
+    { files: { lesson: file("local-edit") } },
+    { files: { lesson: file("remote-edit", { file_id: "remote" }) } },
+    { files: { lesson: { file_id: "remote", sha256: "base" } } },
+    { mode: "pull", stable: new Set(["lesson"]) },
+  );
+  assert.equal(plan.actions[0].type, "pull_conflict");
+  assert.equal(plan.actions.some((action) => action.type === "upload"), false);
+});
+
+test("pull mode ignores local-only files and downloads remote new files", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-pull-new-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  await writeFile(join(root, "personal.txt"), "keep me");
+  const state = { courses: [{ id: "course-1", name: "Course" }], folders: [], files: [
+    { id: "remote-a", name: "lesson.txt", course_id: "course-1", folder_id: null, sha256: createHash("sha256").update("lesson").digest("hex"), size: 6 },
+  ] };
+  const engine = createFolderSync({
+    dataDir: join(temp, "data"), driveDir: join(temp, "drive"), getRows: () => state,
+    syncOnce: async () => {}, upload: async () => assert.fail("pull pair must not upload"),
+    download: async (_id, target) => writeFile(target, "lesson"), removeLocal: async (paths) => Promise.all(paths.map((p) => rm(p, { force: true }))),
+    watchFactory: fakeWatch,
+  });
+  try {
+    const pair = engine.addPull("folder-root", root, "course-1");
+    await waitFor(() => engine.list()[0].last_sync !== null);
+    assert.equal(await readFile(join(root, "personal.txt"), "utf8"), "keep me");
+    assert.equal(await readFile(join(root, "lesson.txt"), "utf8"), "lesson");
+    assert.equal(pair.mode, "pull");
+    assert.equal(JSON.parse(await readFile(join(temp, "data", "syncfolders.json"), "utf8"))[0].course_id, "course-1");
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("pull mode downloads a file the server has not hashed yet, and only once", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-pull-nosha-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  let downloads = 0;
+  const state = { folders: [{ id: "folder-root", name: "Course" }], files: [
+    { id: "remote-a", name: "lecture.mp4", course_id: "course-1", folder_id: null, sha256: null, size: 5 },
+  ] };
+  const engine = createFolderSync({
+    dataDir: join(temp, "data"), driveDir: join(temp, "drive"), getRows: () => state,
+    syncOnce: async () => {}, upload: async () => assert.fail("pull pair must not upload"),
+    download: async (_id, target) => { downloads++; await writeFile(target, "hello"); },
+    removeLocal: async (paths) => Promise.all(paths.map((p) => rm(p, { force: true }))),
+    watchFactory: fakeWatch,
+  });
+  try {
+    const pair = engine.addPull("folder-root", root, "course-1");
+    await waitFor(() => engine.list()[0].last_sync !== null);
+    assert.equal(await readFile(join(root, "lecture.mp4"), "utf8"), "hello");
+    // The freshly written file settles on the next pass, which also records it.
+    await engine.run(pair.id);
+    const saved = JSON.parse(await readFile(join(temp, "data", "syncfolders.json"), "utf8"))[0];
+    assert.equal(saved.base.files["lecture.mp4"].file_id, "remote-a");
+    await engine.run(pair.id);
+    assert.equal(downloads, 1, "an unhashed file that is already here must not be fetched again");
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("pull mode deletes a locally tracked copy when Drive deletes it", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-pull-delete-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  await writeFile(join(root, "gone.txt"), "downloaded");
+  const before = await stat(join(root, "gone.txt"));
+  const sha = createHash("sha256").update("downloaded").digest("hex");
+  const { data } = await savedPair({ temp, root, mode: "pull", courseId: "course-1", base: { files: { "gone.txt": { file_id: "old", sha256: sha, mtime: before.mtimeMs, size: before.size } } } });
+  const state = { folders: [{ id: "folder-root", name: "Course" }], files: [] };
+  const engine = createFolderSync({ dataDir: data, driveDir: join(temp, "drive"), getRows: () => state,
+    syncOnce: async () => {}, upload: async () => assert.fail("pull pair must not upload"), download: async () => {},
+    removeLocal: async (paths) => Promise.all(paths.map((p) => rm(p, { force: true }))), watchFactory: fakeWatch });
+  try {
+    const pair = engine.list()[0];
+    await engine.run(pair.id);
+    assert.equal(existsSync(join(root, "gone.txt")), false);
+    engine.stop();
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("pull mode reports an oversized remote file and finishes the pass", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-pull-limit-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  const state = { folders: [{ id: "folder-root", name: "Course" }], files: [
+    { id: "big", name: "big.bin", folder_id: "folder-root", sha256: "hash", size: 100 },
+  ] };
+  const engine = createFolderSync({ dataDir: join(temp, "data"), driveDir: join(temp, "drive"), getRows: () => state,
+    syncOnce: async () => {}, upload: async () => assert.fail("pull pair must not upload"),
+    download: async () => assert.fail("oversized file must not download"), removeLocal: async () => {},
+    maxFile: async () => 10, watchFactory: fakeWatch });
+  try {
+    const pair = engine.addPull("folder-root", root, "course-1");
+    await waitFor(() => engine.list()[0].last_sync !== null);
+    assert.equal(engine.list()[0].state, "error");
+    assert.match(engine.list()[0].errors[0].error, /download limit/);
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("pausing a pull pair mid-pass leaves remaining local files untouched", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-pull-pause-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  const state = { courses: [{ id: "course-1", name: "Course" }], folders: [], files: ["a.txt", "b.txt"].map((name) => ({
+    id: name, name, course_id: "course-1", folder_id: null, sha256: createHash("sha256").update(name).digest("hex"), size: 5,
+  })) };
+  let began;
+  const started = new Promise((resolve) => { began = resolve; });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let count = 0;
+  const engine = createFolderSync({ dataDir: join(temp, "data"), driveDir: join(temp, "drive"), getRows: () => state,
+    syncOnce: async () => {}, upload: async () => assert.fail("pull pair must not upload"),
+    download: async (id, target) => { count++; if (count === 1) { began(); await gate; } await writeFile(target, id); },
+    removeLocal: async () => {}, watchFactory: fakeWatch });
+  try {
+    const pair = engine.addPull("folder-root", root, "course-1");
+    await started;
+    engine.command(pair.id, "pause");
+    release();
+    await pause(50);
+    assert.equal(engine.list()[0].paused, true);
+    assert.equal(count, 1);
+    assert.equal(existsSync(join(root, "b.txt")), false);
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test("simultaneous and first-pair differing files get a timestamped conflict name", () => {
@@ -817,6 +964,50 @@ test("mass-delete status describes files and their source without counting other
     assert.equal(engine.list()[0].delete_count, 2);
     assert.equal(engine.list()[0].delete_side, "this PC and Drive");
   } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("a failed upload is noted while the rest of the pass goes on", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-upload-fail-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  await writeFile(join(root, "bad.txt"), "bad");
+  await writeFile(join(root, "good.txt"), "good");
+  const sha = async (name) => createHash("sha256").update(await readFile(join(root, name))).digest("hex");
+  const state = { folders: [{ id: "folder-root", name: "Drive" }], files: [] };
+  const uploaded = [];
+  const engine = createFolderSync({
+    dataDir: join(temp, "data"),
+    driveDir: join(temp, "drive"),
+    getRows: () => state,
+    syncOnce: async () => {},
+    upload: async (path, options) => {
+      // A connection that drops mid-upload throws here in the real sidecar.
+      if (options.name === "bad.txt") throw new Error("The upload stopped: the connection to the server dropped.");
+      uploaded.push(options.name);
+      state.files.push({ id: `id-${options.name}`, name: options.name, folder_id: options.folder_id, sha256: await sha(options.name) });
+    },
+    download: async () => {},
+    removeLocal: async () => {},
+    signedIn: () => true,
+    watchFactory: fakeWatch,
+  });
+
+  try {
+    const pair = engine.add(root, "folder-root");
+    await waitFor(() => engine.list()[0].errors.length === 1, 8000);
+    assert.deepEqual(uploaded, ["good.txt"]);
+    assert.equal(engine.list()[0].state, "error");
+    assert.match(engine.list()[0].errors[0].path, /bad\.txt$/);
+
+    // The pass still saved what it did, so the next one only retries the failure.
+    await engine.run(pair.id);
+    assert.deepEqual(uploaded, ["good.txt"]);
+    assert.equal(engine.list()[0].errors[0].path.endsWith("bad.txt"), true);
+  } finally {
+    engine.remove("pair-1");
     engine.stop();
     await rm(temp, { recursive: true, force: true });
   }
