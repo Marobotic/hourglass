@@ -45,6 +45,8 @@ test("health and window show stay responsive while a DPAPI read is in flight", {
         ...process.env,
         HOURGLASS_CONFIG: configDir,
         HOURGLASS_DATA: dataDir,
+        HOURGLASS_COURSES_DIR: join(temp, "courses"),
+        USERPROFILE: join(temp, "profile"),
         HOURGLASS_PORT: String(port),
         HOURGLASS_TEST_KEYRING_DELAY_MS: "2500",
         HOURGLASS_TEST_KEYRING_STARTED: marker,

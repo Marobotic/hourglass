@@ -16,6 +16,7 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { createFolderSync } from "./foldersync.js";
+import { legacyCoursesDirectory, migrateLegacyCoursePairs, resolveCoursesDirectory } from "./courses-paths.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, snoozeTimerId } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
@@ -1181,7 +1182,28 @@ const folderSync = createFolderSync({
   deviceName: () => decodeURIComponent(deviceName()),
   signedIn: () => !!config().token && sync.state === "synced",
   maxFile: async () => (await remote("/api/drive/usage")).max_file || Infinity,
+  deferStart: true,
 });
+
+let COURSES_DIR = resolve(process.env.HOURGLASS_COURSES_DIR || join(process.env.USERPROFILE || HOME, "Documents", "Courses"));
+const coursesReady = (async () => {
+  try {
+    COURSES_DIR = await resolveCoursesDirectory();
+    await migrateLegacyCoursePairs({
+      pairs: folderSync.list(),
+      oldRoot: legacyCoursesDirectory(),
+      newRoot: COURSES_DIR,
+      updatePair: (id, local) => folderSync.relocatePull(id, local),
+      log,
+    });
+    log("course sync folder", COURSES_DIR);
+  } catch (error) {
+    log("could not resolve course sync folder:", error.message);
+  } finally {
+    folderSync.start();
+  }
+  return COURSES_DIR;
+})();
 
 store.onChange((table) => {
   if (table !== "files" && table !== "folders") return;
@@ -1259,13 +1281,13 @@ async function syncFolderRoutes(req, res, path) {
   return false;
 }
 
-const COURSES_DIR = join(process.env.USERPROFILE || HOME, "Hourglass", "Courses");
 const safeCourseName = (value) => {
   const name = String(value || "").trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "");
   return name && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) ? name : "";
 };
 
 async function localCopyRoutes(req, res, path) {
+  await coursesReady;
   const m = req.method;
   if (path === "/api/localcopies" && m === "GET") {
     const values = folderSync.list().filter((pair) => pair.mode === "pull").map((pair) => ({
@@ -1625,6 +1647,7 @@ createServer((req, res) => {
   }
   service.ensureHomeClock();
   await adoptMusicSession();
+  await coursesReady;
   scheduleSync(0);
 });
 

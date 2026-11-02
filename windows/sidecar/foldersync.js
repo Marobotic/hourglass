@@ -259,6 +259,7 @@ export function createFolderSync({
   onState = () => {},
   watchFactory = watch,
   clock = () => Date.now(),
+  deferStart = false,
 }) {
   mkdirSync(dataDir, { recursive: true });
   const file = join(dataDir, "syncfolders.json");
@@ -268,6 +269,7 @@ export function createFolderSync({
   const running = new Set();
   const settling = new Map();
   let stopped = false;
+  let started = false;
 
   function load() {
     try {
@@ -365,12 +367,13 @@ export function createFolderSync({
   }
 
   function schedule(pair, delay = 2000) {
-    if (stopped) return;
+    if (stopped || !started) return;
     clearTimeout(timers.get(pair.id));
     timers.set(pair.id, setTimeout(() => run(pair.id), delay));
   }
 
   function startWatch(pair) {
+    if (!started || stopped) return;
     try {
       watchers.get(pair.id)?.close();
       const watcher = watchFactory(pair.local, { recursive: true }, () => schedule(pair, 2000));
@@ -671,7 +674,7 @@ export function createFolderSync({
 
   async function run(id) {
     const pair = pairs.get(id);
-    if (stopped || !pair || pair.paused || running.has(id)) return;
+    if (stopped || !started || !pair || pair.paused || running.has(id)) return;
     if (running.size) {
       schedule(pair, 250);
       return;
@@ -983,10 +986,29 @@ export function createFolderSync({
     return true;
   }
 
-  load();
-  for (const pair of pairs.values()) {
-    if (!pair.paused) startWatch(pair);
+  function relocatePull(id, localRoot) {
+    const pair = pairs.get(id);
+    if (!pair || pair.mode !== "pull") return false;
+    watchers.get(id)?.close();
+    watchers.delete(id);
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+    pair.local = resolve(localRoot);
+    save();
+    if (started && !pair.paused) startWatch(pair);
+    return true;
   }
+
+  function start() {
+    if (stopped || started) return;
+    started = true;
+    for (const pair of pairs.values()) {
+      if (!pair.paused) startWatch(pair);
+    }
+  }
+
+  load();
+  if (!deferStart) start();
 
   const interval = setInterval(() => {
     for (const pair of pairs.values()) schedule(pair, 0);
@@ -1004,6 +1026,8 @@ export function createFolderSync({
       const pair = pairs.get(id);
       if (pair) schedule(pair, delay);
     },
+    relocatePull,
+    start,
     stop: () => {
       stopped = true;
       clearInterval(interval);
