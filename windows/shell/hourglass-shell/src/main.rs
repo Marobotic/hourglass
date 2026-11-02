@@ -16,6 +16,9 @@ enum Command {
         path: String,
         json: String,
     },
+    Pin {
+        path: String,
+    },
     List,
 }
 
@@ -23,6 +26,8 @@ enum Command {
 struct StatusList {
     in_sync: Vec<String>,
     not_in_sync: Vec<String>,
+    #[serde(default)]
+    errors: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +42,8 @@ struct ResultJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     updated: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    states: Option<Vec<ItemState>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     errors: Option<Vec<String>>,
 }
 
@@ -45,6 +52,13 @@ struct RootJson {
     id: String,
     path: String,
     display_name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ItemState {
+    path: String,
+    in_sync: bool,
+    pin_state: i32,
 }
 
 fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -75,6 +89,9 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             path: value("--path")?,
             json: value("--json")?,
         }),
+        "pin" => Ok(Command::Pin {
+            path: value("--path")?,
+        }),
         "list" => Ok(Command::List),
         _ => Err(format!("unknown command: {command}")),
     }
@@ -83,7 +100,12 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
 fn parse_status(json: &str) -> Result<StatusList, String> {
     let list: StatusList = serde_json::from_str(json.trim_start_matches('\u{feff}'))
         .map_err(|error| error.to_string())?;
-    for path in list.in_sync.iter().chain(&list.not_in_sync) {
+    for path in list
+        .in_sync
+        .iter()
+        .chain(&list.not_in_sync)
+        .chain(&list.errors)
+    {
         let path = std::path::Path::new(path);
         if path.is_absolute()
             || path.to_string_lossy().contains(':')
@@ -111,16 +133,19 @@ mod cloud_files {
     use windows::Storage::Provider::{
         StorageProviderHardlinkPolicy, StorageProviderHydrationPolicy,
         StorageProviderHydrationPolicyModifier, StorageProviderInSyncPolicy,
-        StorageProviderPopulationPolicy, StorageProviderSyncRootInfo,
-        StorageProviderSyncRootManager,
+        StorageProviderItemProperties, StorageProviderItemProperty,
+        StorageProviderItemPropertyDefinition, StorageProviderPopulationPolicy,
+        StorageProviderSyncRootInfo, StorageProviderSyncRootManager,
     };
-    use windows::Storage::StorageFolder;
+    use windows::Storage::{StorageFile, StorageFolder};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
     use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
     use windows::Win32::Storage::CloudFilters::{
         CF_CONVERT_FLAG_MARK_IN_SYNC, CF_IN_SYNC_STATE_IN_SYNC, CF_IN_SYNC_STATE_NOT_IN_SYNC,
-        CfConvertToPlaceholder, CfSetInSyncState,
+        CF_PIN_STATE_PINNED, CF_PLACEHOLDER_BASIC_INFO, CF_PLACEHOLDER_INFO_BASIC,
+        CF_SET_PIN_FLAG_RECURSE, CfConvertToPlaceholder, CfGetPlaceholderInfo, CfSetInSyncState,
+        CfSetPinState,
     };
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
@@ -128,7 +153,9 @@ mod cloud_files {
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize};
+    use windows::Win32::UI::Shell::{SHCNE_UPDATEITEM, SHCNF_PATHW, SHChangeNotify};
     use windows::core::{HSTRING, Interface, PCWSTR, PWSTR};
+    use windows_collections::IVectorView;
 
     struct RoApartment;
     impl RoApartment {
@@ -253,7 +280,114 @@ mod cloud_files {
                 )
             })?;
         }
+        drop(handle);
+        let wide = winpath(path);
+        unsafe {
+            SHChangeNotify(
+                SHCNE_UPDATEITEM,
+                SHCNF_PATHW,
+                Some(wide.as_ptr().cast()),
+                None,
+            );
+        }
         Ok(true)
+    }
+
+    fn read_item_state(path: &Path) -> windows::core::Result<ItemState> {
+        let meta =
+            std::fs::symlink_metadata(path).map_err(|_| windows::core::Error::from_thread())?;
+        let handle = open_item(path, meta.is_dir())?;
+        let mut info = CF_PLACEHOLDER_BASIC_INFO::default();
+        unsafe {
+            CfGetPlaceholderInfo(
+                handle.0,
+                CF_PLACEHOLDER_INFO_BASIC,
+                (&mut info as *mut CF_PLACEHOLDER_BASIC_INFO).cast(),
+                std::mem::size_of::<CF_PLACEHOLDER_BASIC_INFO>() as u32,
+                None,
+            )?;
+        }
+        Ok(ItemState {
+            path: path.to_string_lossy().into_owned(),
+            in_sync: info.InSyncState == CF_IN_SYNC_STATE_IN_SYNC,
+            pin_state: info.PinState.0,
+        })
+    }
+
+    fn pin_root(path: &str) -> windows::core::Result<ResultJson> {
+        let root = std::fs::canonicalize(path).map_err(|_| windows::core::Error::from_thread())?;
+        let handle = open_item(&root, true)?;
+        unsafe {
+            CfSetPinState(handle.0, CF_PIN_STATE_PINNED, CF_SET_PIN_FLAG_RECURSE, None)?;
+        }
+        drop(handle);
+        let wide = winpath(&root);
+        unsafe {
+            SHChangeNotify(
+                SHCNE_UPDATEITEM,
+                SHCNF_PATHW,
+                Some(wide.as_ptr().cast()),
+                None,
+            );
+        }
+        Ok(ResultJson {
+            ok: true,
+            id: None,
+            path: Some(root.to_string_lossy().into_owned()),
+            roots: None,
+            updated: None,
+            states: None,
+            errors: None,
+        })
+    }
+
+    fn set_error_property(path: &Path, failed: bool) -> windows::core::Result<()> {
+        let full = path.to_string_lossy();
+        let winrt_path = full.strip_prefix("\\\\?\\").unwrap_or(&full);
+        let is_dir = std::fs::metadata(path)
+            .map_err(|_| windows::core::Error::from_thread())?
+            .is_dir();
+        let item = if is_dir {
+            let operation = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(winrt_path))?;
+            while operation.Status()?.0 == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            operation
+                .GetResults()?
+                .cast::<windows::Storage::IStorageItem>()?
+        } else {
+            let operation = StorageFile::GetFileFromPathAsync(&HSTRING::from(winrt_path))?;
+            while operation.Status()?.0 == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            operation
+                .GetResults()?
+                .cast::<windows::Storage::IStorageItem>()?
+        };
+        let properties: IVectorView<StorageProviderItemProperty> = if failed {
+            let property = StorageProviderItemProperty::new()?;
+            property.SetId(1)?;
+            property.SetValue(&HSTRING::from("Sync error"))?;
+            property.SetIconResource(&HSTRING::from("C:\\Windows\\System32\\imageres.dll,-100"))?;
+            vec![Some(property)].into()
+        } else {
+            Vec::<Option<StorageProviderItemProperty>>::new().into()
+        };
+        let action = StorageProviderItemProperties::SetAsync(&item, &properties)?;
+        while action.Status()?.0 == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        action.GetResults()?;
+        let wide = winpath(path);
+        unsafe {
+            SHChangeNotify(
+                SHCNE_UPDATEITEM,
+                SHCNF_PATHW,
+                Some(wide.as_ptr().cast()),
+                None,
+            );
+        }
+        Ok(())
     }
 
     fn register(
@@ -278,13 +412,16 @@ mod cloud_files {
         {
             let existing_folder: StorageFolder = existing.Path()?.cast()?;
             let existing_path = existing_folder.Path()?.to_string_lossy();
-            if std::fs::canonicalize(&existing_path).ok().as_ref() == Some(&root_path) {
+            if std::fs::canonicalize(&existing_path).ok().as_ref() == Some(&root_path)
+                && existing.Version()?.to_string() == "2.0"
+            {
                 return Ok(ResultJson {
                     ok: true,
                     id: Some(id),
                     path: Some(root_path.to_string_lossy().into_owned()),
                     roots: None,
                     updated: None,
+                    states: None,
                     errors: None,
                 });
             }
@@ -303,7 +440,12 @@ mod cloud_files {
                 | StorageProviderInSyncPolicy::DirectoryLastWriteTime,
         )?;
         info.SetHardlinkPolicy(StorageProviderHardlinkPolicy::None)?;
-        info.SetVersion(&HSTRING::from("1.0"))?;
+        info.SetVersion(&HSTRING::from("2.0"))?;
+        let definition = StorageProviderItemPropertyDefinition::new()?;
+        definition.SetId(1)?;
+        definition.SetDisplayNameResource(&HSTRING::from("Sync error"))?;
+        info.StorageProviderItemPropertyDefinitions()?
+            .Append(&definition)?;
         StorageProviderSyncRootManager::Register(&info)?;
         Ok(ResultJson {
             ok: true,
@@ -311,6 +453,7 @@ mod cloud_files {
             path: Some(root_path.to_string_lossy().into_owned()),
             roots: None,
             updated: None,
+            states: None,
             errors: None,
         })
     }
@@ -385,6 +528,7 @@ mod cloud_files {
             path: None,
             roots: None,
             updated: None,
+            states: None,
             errors: (!errors.is_empty()).then_some(errors),
         })
     }
@@ -395,6 +539,8 @@ mod cloud_files {
         let body = std::fs::read_to_string(json_path).map_err(|error| error.to_string())?;
         let list = parse_status(&body)?;
         let id = root_id(pair).map_err(|error| error.to_string())?;
+        let error_paths: std::collections::HashSet<String> =
+            list.errors.iter().map(|path| path.to_lowercase()).collect();
         let mut items = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (value, in_sync) in list
@@ -412,14 +558,27 @@ mod cloud_files {
             if !target.starts_with(&root) {
                 return Err(format!("status path escapes sync root: {value}"));
             }
-            items.push((target, in_sync));
+            items.push((target, in_sync, value.to_lowercase()));
         }
-        items.sort_by_key(|(path, _)| path.components().count());
+        items.sort_by_key(|(path, _, _)| path.components().count());
         let mut converted = 0usize;
         let mut errors = Vec::new();
-        for (target, in_sync) in items {
+        let mut states = Vec::new();
+        for (target, in_sync, relative) in items {
             match set_item(&target, in_sync) {
-                Ok(true) => converted += 1,
+                Ok(true) => {
+                    converted += 1;
+                    if let Err(error) = set_error_property(&target, error_paths.contains(&relative))
+                    {
+                        errors.push(format!("{}: update error icon: {error}", target.display()));
+                    }
+                    match read_item_state(&target) {
+                        Ok(state) => states.push(state),
+                        Err(error) => {
+                            errors.push(format!("{}: read state: {error}", target.display()))
+                        }
+                    }
+                }
                 Ok(false) => errors.push(format!(
                     "{}: skipped symbolic link or another provider's reparse point",
                     target.display()
@@ -433,6 +592,7 @@ mod cloud_files {
             path: Some(root.to_string_lossy().into_owned()),
             roots: None,
             updated: Some(converted),
+            states: Some(states),
             errors: (!errors.is_empty()).then_some(errors),
         })
     }
@@ -449,6 +609,7 @@ mod cloud_files {
                 unregister(pair.as_deref()).map_err(|error| error.to_string())
             }
             Command::Status { pair, path, json } => status(&pair, &path, &json),
+            Command::Pin { path } => pin_root(&path).map_err(|error| error.to_string()),
             Command::List => list_roots()
                 .map(|roots| ResultJson {
                     ok: true,
@@ -456,6 +617,7 @@ mod cloud_files {
                     path: None,
                     roots: Some(roots),
                     updated: None,
+                    states: None,
                     errors: None,
                 })
                 .map_err(|error| error.to_string()),
@@ -537,14 +699,23 @@ mod tests {
             Command::Unregister { pair: None }
         );
         assert!(parse_args(&args(&["register", "--pair", "p1"])).is_err());
+        assert_eq!(
+            parse_args(&args(&["pin", "--path", "C:\\sync"])).unwrap(),
+            Command::Pin {
+                path: "C:\\sync".into()
+            }
+        );
     }
 
     #[test]
     fn parses_status_json_and_rejects_paths_outside_root() {
-        let list =
-            parse_status(r#"{"in_sync":["file.txt","docs"],"not_in_sync":["new.txt"]}"#).unwrap();
+        let list = parse_status(
+            r#"{"in_sync":["file.txt","docs"],"not_in_sync":["new.txt"],"errors":["file.txt"]}"#,
+        )
+        .unwrap();
         assert_eq!(list.in_sync, ["file.txt", "docs"]);
         assert_eq!(list.not_in_sync, ["new.txt"]);
+        assert_eq!(list.errors, ["file.txt"]);
         assert!(parse_status(r#"{"in_sync":["../outside"],"not_in_sync":[]}"#).is_err());
         assert!(parse_status("not json").is_err());
     }

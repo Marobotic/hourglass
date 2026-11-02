@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const here = fileURLToPath(new URL(".", import.meta.url));
 
 export function explorerStatusEnabled(env = process.env, platform = process.platform) {
-  return platform === "win32" && String(env.HOURGLASS_EXPLORER_STATUS || "on").toLowerCase() !== "off";
+  return platform === "win32" && String(env.HOURGLASS_EXPLORER_STATUS || "off").toLowerCase() === "on";
 }
 
 export async function makeStatusListing(pair) {
@@ -15,7 +15,8 @@ export async function makeStatusListing(pair) {
     ...(pair.syncedFilePaths?.keys?.() || []),
     ...(pair.syncedFolderPaths?.keys?.() || []),
   ].map((path) => path.replaceAll("\\", "/")));
-  const in_sync = [], not_in_sync = [];
+  const in_sync = [], not_in_sync = [], errors = [];
+  const failed = new Set((pair.errors || []).map((item) => String(item.path || "").replaceAll("\\", "/").replace(/^\//, "").toLowerCase()));
   async function walk(dir, prefix = "") {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) continue;
@@ -24,12 +25,13 @@ export async function makeStatusListing(pair) {
       if (entry.isDirectory()) await walk(full, rel);
       else if (entry.isFile()) {
         (synced.has(rel) ? in_sync : not_in_sync).push(rel);
+        if (failed.has(rel.toLowerCase())) errors.push(rel);
       }
     }
     if (prefix) (synced.has(prefix) ? in_sync : not_in_sync).push(prefix);
   }
   await walk(pair.local);
-  return { in_sync, not_in_sync };
+  return { in_sync, not_in_sync, ...(errors.length ? { errors } : {}) };
 }
 
 export function createExplorerStatus({ dataDir, sidecarDir = here, env = process.env, platform = process.platform, spawnImpl = spawn, logger = () => {} }) {

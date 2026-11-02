@@ -7,7 +7,8 @@ import { spawn } from "node:child_process";
 import { createExplorerStatus, explorerStatusEnabled, makeStatusListing } from "./explorer-status.js";
 
 test("Explorer status is opt-in on Windows and the off switch disables it", () => {
-  assert.equal(explorerStatusEnabled({}, "win32"), true);
+  assert.equal(explorerStatusEnabled({}, "win32"), false);
+  assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "on" }, "win32"), true);
   assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "off" }, "win32"), false);
   assert.equal(explorerStatusEnabled({}, "linux"), false);
 });
@@ -18,8 +19,8 @@ test("status listing classifies synced files and folders from the pair maps", as
     await mkdir(join(root, "synced-dir"));
     await writeFile(join(root, "synced-dir", "a.txt"), "a");
     await writeFile(join(root, "new.txt"), "new");
-    const listing = await makeStatusListing({ local: root, syncedFilePaths: new Map([["synced-dir/a.txt", "f1"]]), syncedFolderPaths: new Map([["synced-dir", "d1"]]) });
-    assert.deepEqual(listing, { in_sync: ["synced-dir/a.txt", "synced-dir"], not_in_sync: ["new.txt"] });
+    const listing = await makeStatusListing({ local: root, syncedFilePaths: new Map([["synced-dir/a.txt", "f1"]]), syncedFolderPaths: new Map([["synced-dir", "d1"]]), errors: [{ path: "synced-dir/a.txt" }] });
+    assert.deepEqual(listing, { in_sync: ["synced-dir/a.txt", "synced-dir"], not_in_sync: ["new.txt"], errors: ["synced-dir/a.txt"] });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -33,7 +34,7 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
   await writeFile(join(folder, "pending.txt"), "pending");
   await writeFile(fake, `import { appendFileSync, readFileSync } from 'node:fs'; const args=process.argv.slice(2); const i=args.indexOf('--json'); const input=i<0?null:JSON.parse(readFileSync(args[i+1],'utf8')); appendFileSync(${JSON.stringify(calls)}, JSON.stringify({args,input})+'\\n'); console.log(JSON.stringify({ok:true}));`);
   try {
-    const helper = createExplorerStatus({ dataDir: root, sidecarDir: root, platform: "win32", env: {}, spawnImpl: (_exe, args, options) => spawn(process.execPath, [fake, ...args], options) });
+    const helper = createExplorerStatus({ dataDir: root, sidecarDir: root, platform: "win32", env: { HOURGLASS_EXPLORER_STATUS: "on" }, spawnImpl: (_exe, args, options) => spawn(process.execPath, [fake, ...args], options) });
     const pair = { id: "pair-1", local: folder, syncedFilePaths: new Map([["ok.txt", "file-1"]]), syncedFolderPaths: new Map() };
     await helper.register(pair);
     await helper.status(pair);
