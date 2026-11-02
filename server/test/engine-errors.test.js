@@ -58,3 +58,12 @@ test("OpenCode shared free quota maps to a clear quota message and only uses an 
   assert.match(withReset.message, /It resets at 05:00\./);
   assert.doesNotMatch(withReset.message, /UTC/);
 });
+
+test("provider reset wording uses the account zone and falls back to UTC", () => {
+  const error = { name: "AI_APICallError", data: { message: "AI_APICallError: Free usage limit reached", reset_at: "2026-11-01T20:00:00Z" } };
+  const cairo = normalizeEngineError(error, { provider: "free", timeZone: "Africa/Cairo" });
+  assert.equal(cairo.message, "The free models have hit their limit. Try again later, or add your own key in Assistant settings. It resets at 22:00.");
+  const utc = normalizeEngineError(error, { provider: "free" });
+  assert.equal(utc.message, "The free models have hit their limit. Try again later, or add your own key in Assistant settings. It resets at 20:00.");
+  assert.doesNotMatch(utc.message, /UTC/);
+});

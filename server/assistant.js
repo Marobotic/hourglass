@@ -46,7 +46,7 @@ import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
 import { INSTRUCTIONS } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
-import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listOpenAIModels, runDirect, systemPrompt } from "./engines.js";
+import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, runDirect, systemPrompt } from "./engines.js";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
@@ -212,10 +212,29 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   const guide = loadGuide(rootDir);
   const sandboxIds = runner === "systemd" ? userIds(SANDBOX_USER) : null;
   const settings = createSettings(process.env.HOURGLASS_DATA || accountsDir);
+  const claudeModelCache = new Map(); // account email -> { at, keyHash, models }
   const system = systemPrompt({ guide, instructions: INSTRUCTIONS });
   const claudeBin = process.env.HOURGLASS_CLAUDE_BIN || "/usr/local/bin/claude";
   const usage = new Map();   // email -> [timestamps]
   const running = new Map(); // email -> { child, unit, chat, message }
+
+  async function claudeModelsFor(t, cfg = settings.get(t)) {
+    const key = cfg.keys.anthropic;
+    if (!key) return { models: CLAUDE_MODELS.map((m) => ({ ...m })), source: "fallback" };
+    const cached = claudeModelCache.get(t.email);
+    const keyHash = sha(key);
+    if (cached?.keyHash === keyHash && Date.now() - cached.at < 60 * 60_000) return { models: cached.models, source: "live" };
+    try {
+      const models = await listAnthropicModels({ key, ...(process.env.HOURGLASS_TEST_HTTP_API === "1" && process.env.ANTHROPIC_BASE_URL ? { base_url: process.env.ANTHROPIC_BASE_URL } : {}) });
+      if (!models.length) throw new Error("Anthropic returned an empty model list");
+      claudeModelCache.set(t.email, { at: Date.now(), keyHash, models });
+      return { models, source: "live" };
+    } catch (e) {
+      log(`assistant (${t.email || "owner"}, Claude models): ${e.message}`);
+      if (cached?.models?.length) return { models: cached.models, source: "cached" };
+      return { models: CLAUDE_MODELS.map((m) => ({ ...m })), source: "fallback" };
+    }
+  }
 
   /** The account's assistant key: opens its MCP endpoint, like an AI link the user never sees. */
   function keyOf(t) {
@@ -593,7 +612,8 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (entry) entry.abort = abort;
       try {
         step(message, `Asking ${modelName(cfg)}…`);
-        const usedModel = await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x), onError: (e) => log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`), timeZone: timeZoneOf(t) });
+        const claudeModels = cfg.engine === "anthropic" ? (await claudeModelsFor(t, cfg)).models : CLAUDE_MODELS;
+        const usedModel = await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x), onError: (e) => log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`), timeZone: timeZoneOf(t), claudeModels });
         step(message, "Done");
         message.model = usedModel || modelName(cfg);
       } catch (e) {
@@ -612,7 +632,8 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     }
     if (cfg.engine === "claude") {
       const configured = cfg.model || CLAUDE_MODELS[0].id;
-      const ids = CLAUDE_MODELS.map((m) => m.id);
+      const discovered = await claudeModelsFor(t, cfg);
+      const ids = discovered.models.map((m) => m.id);
       const index = ids.indexOf(configured);
       const order = [configured, ...ids.slice(index >= 0 ? index + 1 : 0).filter((id) => id !== configured)];
       let failed = null;
@@ -916,7 +937,8 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const freeList = discovery.status === "discovered"
         ? discovery.list.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "discovered" }))
         : models.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "configured" }));
-      return send(res, 200, { ...settings.view(t), engines: ENGINES, claude_models: CLAUDE_MODELS, free_models: freeList, free_model_discovery: { status: discovery.status, configured: models }, presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
+      const claude = await claudeModelsFor(t);
+      return send(res, 200, { ...settings.view(t), engines: ENGINES, claude_models: claude.models, claude_model_source: claude.source, free_models: freeList, free_model_discovery: { status: discovery.status, configured: models }, presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
     }
     if (path === "/api/assistant/settings" && (m === "PUT" || m === "POST")) {
       const b = await readJson(req);
@@ -938,7 +960,12 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const discovery = listFreeModels();
       const availableFreeModels = discovery.status === "discovered" ? discovery.list : models;
       if (model && engine === "free" && !availableFreeModels.includes(model)) return send(res, 400, { error: "That free model isn't available." }), true;
-      if (model && (engine === "anthropic" || engine === "claude") && !CLAUDE_MODELS.some((x) => x.id === model)) return send(res, 400, { error: "Unknown Claude model." }), true;
+      if (model && (engine === "anthropic" || engine === "claude")) {
+        const cfg = settings.get(t);
+        if (key && engine === "anthropic") cfg.keys.anthropic = key;
+        const available = await claudeModelsFor(t, cfg);
+        if (!available.models.some((x) => x.id === model)) return send(res, 400, { error: "Unknown Claude model." }), true;
+      }
       return send(res, 200, settings.save(t, { engine, model, base_url, key })), true;
     }
     // Sign in with Claude in the browser: the server runs Claude Code's own sign-in

@@ -37,6 +37,25 @@ export const CLAUDE_MODELS = [
   { id: "claude-haiku-5-5", name: "Claude Haiku 5.5", note: "fastest" },
 ];
 
+/** Claude's model catalogue does not currently promise context or price fields. */
+export async function listAnthropicModels({ key, base_url = "https://api.anthropic.com" }) {
+  const root = base_url.replace(/\/+$/, "");
+  const res = await fetch(`${root}/v1/models?limit=1000`, {
+    headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "anthropic" });
+  return (body.data || []).filter((m) => m?.id).map((m) => ({
+    id: String(m.id),
+    name: String(m.display_name || m.name || m.id),
+    note: "",
+    context_window: Number.isFinite(m.context_window) ? m.context_window : null,
+    pricing: m.pricing && Number.isFinite(Number(m.pricing.input)) && Number.isFinite(Number(m.pricing.output))
+      ? { input: Number(m.pricing.input), output: Number(m.pricing.output) } : null,
+  })).sort((a, b) => a.id.localeCompare(b.id));
+}
+
 export const OPENAI_PRESETS = [
   { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1" },
   { id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1" },
@@ -271,18 +290,25 @@ export async function listOpenAIModels({ key, base_url }) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "openai" });
-  return (body.data || []).map((m) => ({ id: String(m.id).replace(/^models\//, ""), name: m.name || m.display_name || String(m.id).replace(/^models\//, "") })).sort((a, b) => a.id.localeCompare(b.id));
+  return (body.data || []).map((m) => {
+    const id = String(m.id).replace(/^models\//, "");
+    const context = Number(m.context_length);
+    const input = Number(m.pricing?.prompt);
+    const output = Number(m.pricing?.completion);
+    return {
+      id,
+      name: String(m.name || m.display_name || id),
+      context_window: Number.isFinite(context) && context > 0 ? context : null,
+      pricing: Number.isFinite(input) && Number.isFinite(output) ? { input, output } : null,
+    };
+  }).sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** Checks a key before saving it: true, or throws with what is wrong. */
 export async function checkKey({ engine, key, base_url }) {
   if (engine === "anthropic") {
-    const client = new Anthropic({ apiKey: key, timeout: 15000, maxRetries: 0 });
-    try {
-      await client.models.retrieve(CLAUDE_MODELS[0].id);
-    } catch (e) {
-      throw e;
-    }
+    const models = await listAnthropicModels({ key, ...(process.env.HOURGLASS_TEST_HTTP_API === "1" && process.env.ANTHROPIC_BASE_URL ? { base_url: process.env.ANTHROPIC_BASE_URL } : {}) });
+    if (!models.length) throw new Error("Anthropic returned no models for this key.");
     return true;
   }
   if (engine === "openai") {
@@ -300,7 +326,7 @@ export async function checkKey({ engine, key, base_url }) {
  * One reply on a direct engine (anthropic or openai): message.text, .tools and
  * .cards fill in as it works. Throws on a failure the user should see.
  */
-export async function runDirect({ settings, system, chat, userText, images, service, message, signal, onProgress = () => {}, onStep = () => {}, onError = () => {}, timeZone = "UTC" }) {
+export async function runDirect({ settings, system, chat, userText, images, service, message, signal, onProgress = () => {}, onStep = () => {}, onError = () => {}, timeZone = "UTC", claudeModels = CLAUDE_MODELS }) {
   const history = historyTurns(chat, chat.messages.length - 2);
   const key = settings.keys[settings.engine === "openai" ? `openai:${settings.base_url || ""}` : settings.engine];
   if (!key) throw new Error("Add your key in the assistant's settings first.");
@@ -335,7 +361,7 @@ export async function runDirect({ settings, system, chat, userText, images, serv
     lastError = failure;
     let alternatives = [];
     if (provider === "anthropic") {
-      const ids = CLAUDE_MODELS.map((m) => m.id);
+      const ids = claudeModels.map((m) => m.id);
       const index = ids.indexOf(model);
       alternatives = [...ids.slice(index + 1), ...ids.slice(0, Math.max(0, index))];
     } else {

@@ -49,7 +49,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
     var engine by remember { mutableStateOf("free") }
     var model by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
-    var apiModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var apiModels by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var key by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var signin by remember { mutableStateOf("") } // "", starting, waiting, finishing
@@ -62,7 +62,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
     fun loadModels() {
         apiModels = emptyList()
         repo.assistant("GET", "/models?base_url=" + Uri.encode(baseUrl)) { d, _ ->
-            apiModels = d?.optJSONArray("models").objects().map { it.optString("id") }
+            apiModels = d?.optJSONArray("models").objects()
             d?.optString("error")?.takeIf { it.isNotBlank() && hasKey() }?.let { note = it }
         }
     }
@@ -80,8 +80,16 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
         val d = s ?: return emptyList()
         return when (engine) {
             "free" -> d.optJSONArray("free_models").objects().map { it.optString("name") to it.optString("id") }
-            "anthropic", "claude" -> d.optJSONArray("claude_models").objects().map { "${it.optString("name")}  · ${it.optString("note")}" to it.optString("id") }
-            else -> apiModels.map { it to it }
+            "anthropic", "claude" -> d.optJSONArray("claude_models").objects().map { modelLabel(it) to it.optString("id") }
+            else -> apiModels.map { modelLabel(it) to it.optString("id") }
+        }
+    }
+    fun modelLabel(m: JSONObject): String = buildString {
+        append(m.optString("name").ifBlank { m.optString("id") })
+        m.optString("note").takeIf { it.isNotBlank() }?.let { append("  · ").append(it) }
+        m.optLong("context_window").takeIf { it > 0 }?.let { n -> append("  · ").append(if (n >= 1_000_000) "${n / 1_000_000}M" else "${n / 1000}k") }
+        m.optJSONObject("pricing")?.let { p ->
+            if (!p.isNull("input") && !p.isNull("output")) append("  · $").append("%.3g".format(p.optDouble("input") * 1_000_000)).append("/$").append("%.3g".format(p.optDouble("output") * 1_000_000)).append(" per 1M")
         }
     }
 
@@ -94,6 +102,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
         title = { Column { T("Assistant AI", 17, bold = true); T("Pick who answers. Keys are stored encrypted on your account.", 12, HColors.muted) } },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if ((engine == "claude" || engine == "anthropic") && s?.optString("claude_model_source") == "fallback") T("Using the default Claude model list.", 11, HColors.muted)
                 for (e in s?.optJSONArray("engines").objects()) {
                     val on = engine == e.optString("id")
                     Row(

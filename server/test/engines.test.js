@@ -26,7 +26,11 @@ function startFake() {
       const send = (status, obj, headers = {}) => { res.writeHead(status, { "content-type": "application/json", ...headers }); res.end(JSON.stringify(obj)); };
       const key = req.headers["x-api-key"] || (req.headers.authorization || "").replace(/^Bearer /, "");
       if (key !== GOOD_KEY) return send(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
-      if (req.url.startsWith("/v1/models")) return send(200, { type: "model", id: "claude-opus-5-5", display_name: "Claude Opus 5.5", created_at: "2026-01-01T00:00:00Z" });
+      if (req.url.startsWith("/v1/models")) return send(200, { data: [
+        { type: "model", id: "claude-opus-5-5", display_name: "Claude Opus 5.5", created_at: "2026-01-01T00:00:00Z", context_window: 200000, pricing: { input: 0.000005, output: 0.000025 } },
+        { type: "model", id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5", created_at: "2026-01-01T00:00:00Z" },
+        { type: "model", id: "claude-live-custom", display_name: "Claude Live Custom", created_at: "2026-01-01T00:00:00Z" },
+      ], has_more: false });
       if (req.url.startsWith("/v1/messages")) {
         const done = json.messages.some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result"));
         const usage = { input_tokens: 10, output_tokens: 5 };
@@ -34,7 +38,7 @@ function startFake() {
           content: [{ type: "tool_use", id: "tu_1", name: "set_alarm", input: { label: "Gym", time: "07:30", days: ["Mon", "Wed"] } }] });
         return send(200, { id: "msg_2", type: "message", role: "assistant", model: json.model, stop_reason: "end_turn", usage, content: [{ type: "text", text: "Done." }] });
       }
-      if (req.url === "/openai/models") return send(200, { data: ["gpt-test", "gpt-other", "gpt-rate", "gpt-alt", "gpt-partial"].map((id) => ({ id })) });
+      if (req.url === "/openai/models") return send(200, { data: ["gpt-test", "gpt-other", "gpt-rate", "gpt-alt", "gpt-partial"].map((id) => ({ id, name: `Display ${id}`, context_length: id === "gpt-test" ? 128000 : undefined, pricing: id === "gpt-test" ? { prompt: "0.000002", completion: "0.000008" } : undefined })) });
       if (req.url === "/openai/chat/completions") {
         const done = json.messages.some((m) => m.role === "tool");
         if (json.model === "gpt-rate") return send(429, { error: { code: "rate_limit_exceeded", message: "provider private rate limit detail" } }, { "retry-after": "3" });
@@ -102,6 +106,7 @@ test("settings: free by default, a bad key is refused, a good one is kept but ne
   assert.equal(s.body.engine, "free");
   assert.ok(s.body.engines.some((e) => e.id === "anthropic"));
   assert.ok(s.body.claude_models.length >= 3);
+  assert.equal(s.body.claude_model_source, "fallback");
   const bad = await call("POST", "/api/assistant/settings", { engine: "anthropic", key: "sk-wrong" });
   assert.equal(bad.status, 400);
   assert.match(bad.body.error, /rejected.*Assistant settings/);
@@ -113,6 +118,14 @@ test("settings: free by default, a bad key is refused, a good one is kept but ne
   const file = readdirSync(data, { recursive: true }).find((f) => String(f).endsWith("assistant_settings.json"));
   const stored = readFileSync(join(data, String(file)), "utf8");
   assert.equal(stored.includes(GOOD_KEY), false, "the key is stored encrypted");
+  const live = await call("GET", "/api/assistant/settings");
+  assert.equal(live.body.claude_model_source, "live");
+  assert.equal(live.body.claude_models.find((m) => m.id === "claude-opus-5-5").name, "Claude Opus 5.5");
+  assert.equal(live.body.claude_models.find((m) => m.id === "claude-opus-5-5").context_window, 200000);
+  assert.deepEqual(live.body.claude_models.find((m) => m.id === "claude-opus-5-5").pricing, { input: 0.000005, output: 0.000025 });
+  const unknownMeta = live.body.claude_models.find((m) => m.id === "claude-live-custom");
+  assert.equal(unknownMeta.context_window, null);
+  assert.equal(unknownMeta.pricing, null);
 });
 
 test("Claude with a key: the tool call sets the alarm, and the reply has an alarm card", async () => {
@@ -136,11 +149,22 @@ test("Claude with a key: the tool call sets the alarm, and the reply has an alar
   assert.match(req.system[0].text, /Never ask for confirmation/);
 });
 
+test("Claude settings accept a model id from the live API list", async () => {
+  const set = await call("POST", "/api/assistant/settings", { engine: "anthropic", model: "claude-live-custom" });
+  assert.equal(set.status, 200);
+});
+
 test("another API with a key: models are listed, and its tool calls run too", async () => {
   const set = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, key: GOOD_KEY, model: "gpt-test" });
   assert.equal(set.status, 200);
   const models = await call("GET", `/api/assistant/models?base_url=${encodeURIComponent(fakeUrl + "/openai")}`);
   assert.deepEqual(models.body.models.map((m) => m.id), ["gpt-alt", "gpt-other", "gpt-partial", "gpt-rate", "gpt-test"]);
+  const rich = models.body.models.find((m) => m.id === "gpt-test");
+  assert.equal(rich.name, "Display gpt-test");
+  assert.equal(rich.context_window, 128000);
+  assert.deepEqual(rich.pricing, { input: 0.000002, output: 0.000008 });
+  assert.equal(models.body.models.find((m) => m.id === "gpt-other").context_window, null);
+  assert.equal(models.body.models.find((m) => m.id === "gpt-other").pricing, null);
   assert.equal((await call("POST", "/api/assistant/message", { text: "focus timer please, 25 min" })).status, 202);
   const reply = (await waitIdle()).messages.at(-1);
   assert.equal(reply.error, null);

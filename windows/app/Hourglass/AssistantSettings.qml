@@ -47,8 +47,16 @@ Modal {
     function modelOptions() {
         if (!s) return [];
         if (engine === "free") return s.free_models.map(m => ({ label: m.name, value: m.id }));
-        if (engine === "anthropic" || engine === "claude") return s.claude_models.map(m => ({ label: m.name + "  · " + m.note, value: m.id }));
-        return apiModels.map(m => ({ label: m.id, value: m.id }));
+        if (engine === "anthropic" || engine === "claude") return s.claude_models.map(m => ({ label: modelLabel(m), value: m.id }));
+        return apiModels.map(m => ({ label: modelLabel(m), value: m.id }));
+    }
+    function modelLabel(m) {
+        let label = m.name || m.id;
+        if (m.note) label += "  · " + m.note;
+        if (m.context_window) label += "  · " + (m.context_window >= 1000000 ? (m.context_window / 1000000).toFixed(1).replace(/\.0$/, "") + "M" : Math.round(m.context_window / 1000) + "k");
+        if (m.pricing && m.pricing.input !== undefined && m.pricing.output !== undefined)
+            label += "  · $" + (m.pricing.input * 1000000).toPrecision(3).replace(/\.?0+$/, "") + "/$" + (m.pricing.output * 1000000).toPrecision(3).replace(/\.?0+$/, "") + " per 1M";
+        return label;
     }
     function save() {
         error = ""; saving = true;
@@ -110,6 +118,16 @@ Modal {
                 }
             }
         }
+    }
+
+    Text {
+        visible: dlg.s && dlg.s.claude_model_source === "fallback" && (dlg.engine === "claude" || dlg.engine === "anthropic")
+        text: "Using the default Claude model list."
+        color: Theme.muted
+        font.family: Theme.mono
+        font.pixelSize: 11
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
     }
 
     // An OpenAI-compatible API: which one.

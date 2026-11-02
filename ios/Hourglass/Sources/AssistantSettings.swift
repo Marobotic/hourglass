@@ -13,7 +13,7 @@ struct AssistantSettingsSheet: View {
     @State private var engine = "free"
     @State private var model = ""
     @State private var baseUrl = ""
-    @State private var apiModels: [String] = []
+    @State private var apiModels: [[String: Any]] = []
     @State private var key = ""
     @State private var code = ""
     @State private var signin = "" // "", starting, waiting, finishing
@@ -28,9 +28,18 @@ struct AssistantSettingsSheet: View {
     private var options: [(String, String)] {
         switch engine {
         case "free": return list("free_models").map { ($0["name"] as? String ?? "", $0["id"] as? String ?? "") }
-        case "anthropic", "claude": return list("claude_models").map { ("\($0["name"] as? String ?? "")  · \($0["note"] as? String ?? "")", $0["id"] as? String ?? "") }
-        default: return apiModels.map { ($0, $0) }
+        case "anthropic", "claude": return list("claude_models").map { (modelLabel($0), $0["id"] as? String ?? "") }
+        default: return apiModels.map { (modelLabel($0), $0["id"] as? String ?? "") }
         }
+    }
+    private func modelLabel(_ m: [String: Any]) -> String {
+        var label = m["name"] as? String ?? m["id"] as? String ?? ""
+        if let note = m["note"] as? String, !note.isEmpty { label += "  · " + note }
+        if let context = m["context_window"] as? Int, context > 0 { label += context >= 1_000_000 ? "  · \(context / 1_000_000)M" : "  · \(context / 1000)k" }
+        if let pricing = m["pricing"] as? [String: Double], let input = pricing["input"], let output = pricing["output"] {
+            label += String(format: "  · $%.3g/$%.3g per 1M", input * 1_000_000, output * 1_000_000)
+        }
+        return label
     }
     private var current: String { model.isEmpty ? (options.first?.1 ?? "") : model }
 
@@ -48,7 +57,7 @@ struct AssistantSettingsSheet: View {
         apiModels = []
         let enc = baseUrl.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
         if let d = try? await store.assistant("GET", "/models?base_url=" + enc) {
-            apiModels = (d["models"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+            apiModels = d["models"] as? [[String: Any]] ?? []
             if let e = d["error"] as? String, !e.isEmpty, hasKey { note = e }
         }
     }
@@ -58,6 +67,7 @@ struct AssistantSettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     T("Pick who answers. Keys are stored encrypted on your account.", 12, H.muted)
+                    if (engine == "claude" || engine == "anthropic") && (s?["claude_model_source"] as? String) == "fallback" { T("Using the default Claude model list.", 11, H.muted) }
                     ForEach(Array(list("engines").enumerated()), id: \.offset) { _, e in
                         let id = e["id"] as? String ?? ""
                         let on = engine == id
