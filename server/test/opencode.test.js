@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "../opencode.js";
+import { opencodeAccountDirectories, opencodeAccountOwnedPaths, opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "../opencode.js";
 
 const captured = readFileSync(join(import.meta.dirname, "fixtures", "opencode-models-opencode.txt"), "utf8");
 
@@ -27,6 +27,18 @@ test("child env keeps safe host values and redirects account and temp state into
     XDG_STATE_HOME: "/acct/state", XDG_CACHE_HOME: "/acct/cache", TMPDIR: "/acct/temp", TMP: "/acct/temp", TEMP: "/acct/temp",
     OPENCODE_CONFIG: join("/acct/work", "opencode.json"),
   });
+});
+
+test("account XDG paths preserve OpenCode session locations and every created path is chowned", () => {
+  const dirs = opencodeAccountDirectories("/accounts/alice");
+  assert.equal(dirs.config, join(dirs.home, ".config"));
+  assert.equal(dirs.data, join(dirs.home, ".local", "share"));
+  assert.equal(dirs.state, join(dirs.home, ".local", "state"));
+  assert.equal(dirs.cache, join(dirs.home, ".cache"));
+  assert.equal(dirs.temp, join(dirs.home, ".tmp"));
+  const chowned = opencodeAccountOwnedPaths(dirs, join(dirs.work, "opencode.json"));
+  for (const path of Object.values(dirs)) assert.ok(chowned.includes(path), `${path} is chowned`);
+  assert.ok(chowned.includes(join(dirs.work, "opencode.json")));
 });
 
 test("run args use stock supported options and keep sessions and attachments", () => {

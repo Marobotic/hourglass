@@ -40,7 +40,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "./opencode.js";
+import { opencodeAccountDirectories, opencodeAccountOwnedPaths, opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "./opencode.js";
 import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
 import { INSTRUCTIONS } from "./tools.js";
@@ -228,23 +228,17 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   /** The account's folder: opencode's home and a work folder whose config adds only the Hourglass MCP server. */
   function accountDir(t) {
     const dir = join(accountsDir, sha(t.email || "owner").slice(0, 24));
-    const home = join(dir, "home");
-    const work = join(dir, "work");
-    const configDir = join(dir, "config");
-    const data = join(dir, "data");
-    const state = join(dir, "state");
-    const cache = join(dir, "cache");
-    const temp = join(dir, "temp");
-    for (const d of [dir, home, work, configDir, data, state, cache, temp]) mkdirSync(d, { recursive: true, mode: 0o700 });
+    const dirs = opencodeAccountDirectories(dir);
+    for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true, mode: 0o700 });
     const config = JSON.stringify({
       $schema: "https://opencode.ai/config.json",
       mcp: { hourglass: { type: "remote", url: `${mcpBase}/mcp/${keyOf(t)}`, enabled: true } },
     }, null, 2);
-    const file = join(work, "opencode.json");
+    const file = join(dirs.work, "opencode.json");
     if (!existsSync(file) || readFileSync(file, "utf8") !== config) writeFileSync(file, config, { mode: 0o600 });
     // The sandbox runs as hourglass-ai: it owns its account folder and nothing else.
-    if (sandboxIds) for (const p of [dir, home, work, file]) chownSync(p, sandboxIds.uid, sandboxIds.gid);
-    return { dir, home, work, config: configDir, data, state, cache, temp };
+    if (sandboxIds) for (const p of opencodeAccountOwnedPaths(dirs, file)) chownSync(p, sandboxIds.uid, sandboxIds.gid);
+    return dirs;
   }
 
   // --- the conversation, kept in the account's own data (the sandbox cannot read it) ---

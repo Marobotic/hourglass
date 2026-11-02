@@ -3,6 +3,20 @@ import { join } from "node:path";
 
 const SAFE_HOST_ENV = ["PATH", "LANG", "LC_ALL", "NO_COLOR", "TZ"];
 
+export function opencodeAccountDirectories(dir) {
+  const home = join(dir, "home");
+  const local = join(home, ".local");
+  return {
+    dir, home, work: join(dir, "work"),
+    config: join(home, ".config"), data: join(local, "share"), state: join(local, "state"),
+    cache: join(home, ".cache"), temp: join(home, ".tmp"), local,
+  };
+}
+
+export function opencodeAccountOwnedPaths(dirs, configFile) {
+  return [...Object.values(dirs), configFile];
+}
+
 export function opencodeProfileEnv(dirs, host = process.env) {
   const env = Object.fromEntries(SAFE_HOST_ENV.filter((key) => host[key] !== undefined).map((key) => [key, host[key]]));
   Object.assign(env, {

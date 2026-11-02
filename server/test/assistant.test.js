@@ -155,12 +155,12 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.equal(c[0].env.DATABASE_URL, undefined);
   assert.equal(c[0].env.HOURGLASS_TOKEN, undefined);
   assert.equal(c[0].env.HOME, join(accountDir(), "home"));
-  assert.equal(c[0].env.XDG_CONFIG_HOME, join(accountDir(), "config"));
-  assert.equal(c[0].env.XDG_DATA_HOME, join(accountDir(), "data"));
-  assert.equal(c[0].env.XDG_STATE_HOME, join(accountDir(), "state"));
-  assert.equal(c[0].env.XDG_CACHE_HOME, join(accountDir(), "cache"));
-  assert.equal(c[0].env.TMPDIR, join(accountDir(), "temp"));
-  assert.equal(c[0].env.TEMP, join(accountDir(), "temp"));
+  assert.equal(c[0].env.XDG_CONFIG_HOME, join(accountDir(), "home", ".config"));
+  assert.equal(c[0].env.XDG_DATA_HOME, join(accountDir(), "home", ".local", "share"));
+  assert.equal(c[0].env.XDG_STATE_HOME, join(accountDir(), "home", ".local", "state"));
+  assert.equal(c[0].env.XDG_CACHE_HOME, join(accountDir(), "home", ".cache"));
+  assert.equal(c[0].env.TMPDIR, join(accountDir(), "home", ".tmp"));
+  assert.equal(c[0].env.TEMP, join(accountDir(), "home", ".tmp"));
   assert.equal(c[0].env.OPENCODE_CONFIG, join(accountDir(), "work", "opencode.json"));
 });
 
