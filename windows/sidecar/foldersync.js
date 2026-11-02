@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { watch, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rename, stat } from "node:fs/promises";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const ignored = (name) => name === "desktop.ini"
   || name === "Thumbs.db"
@@ -245,6 +245,48 @@ export function compareTrees(local, remote, base, {
   };
 }
 
+export function fullySyncedIds(pair, local, remote) {
+  const fileIds = new Set();
+  const folderIds = new Set();
+  const localPending = new Set(local.pending || []);
+  const remotePending = new Set(remote.pending || []);
+  const errorPaths = new Set();
+  for (const error of pair.errors || []) {
+    const value = String(error.path || "").replace(/\\/g, "/");
+    if (!value) continue;
+    const rel = isAbsolute(value) ? relative(resolve(pair.local), resolve(value)) : value;
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) errorPaths.add("");
+    else errorPaths.add(rel.split(sep).join("/").replace(/^\.\//, ""));
+  }
+
+  for (const [path, remoteFile] of Object.entries(remote.files || {})) {
+    const localFile = local.files?.[path];
+    if (!remoteFile.file_id || !remoteFile.sha256 || !localFile?.sha256
+      || localFile.sha256 !== remoteFile.sha256
+      || localPending.has(path) || remotePending.has(path) || errorPaths.has("") || errorPaths.has(path)) continue;
+    fileIds.add(remoteFile.file_id);
+  }
+
+  const folderIsSynced = (folderPath) => {
+    const within = (path) => !folderPath || path.startsWith(`${folderPath}/`);
+    if ([...localPending, ...remotePending, ...errorPaths].some((path) => !path || within(path))) return false;
+    const paths = new Set([
+      ...Object.keys(local.files || {}).filter(within),
+      ...Object.keys(remote.files || {}).filter(within),
+    ]);
+    for (const path of paths) {
+      if (!fileIds.has(remote.files?.[path]?.file_id)) return false;
+    }
+    return true;
+  };
+
+  for (const [path, id] of Object.entries(remote.folders || {})) {
+    if (folderIsSynced(path)) folderIds.add(id);
+  }
+  if (pair.folder_id && folderIsSynced("")) folderIds.add(pair.folder_id);
+  return { fileIds, folderIds };
+}
+
 export function createFolderSync({
   dataDir,
   driveDir,
@@ -270,6 +312,18 @@ export function createFolderSync({
   const settling = new Map();
   let stopped = false;
   let started = false;
+  let syncStateCache = { file_ids: [], folder_ids: [] };
+
+  function rebuildSyncStateCache() {
+    const fileIds = new Set();
+    const folderIds = new Set();
+    for (const pair of pairs.values()) {
+      if (pair.paused || pair.state === "syncing") continue;
+      for (const id of pair.syncedFileIds || []) fileIds.add(id);
+      for (const id of pair.syncedFolderIds || []) folderIds.add(id);
+    }
+    syncStateCache = { file_ids: [...fileIds], folder_ids: [...folderIds] };
+  }
 
   function load() {
     try {
@@ -288,7 +342,7 @@ export function createFolderSync({
 
   function save() {
     const tmp = file + ".part";
-    const saved = [...pairs.values()].map(({ errors, state, pending, ...pair }) => pair);
+    const saved = [...pairs.values()].map(({ errors, state, pending, syncedFileIds, syncedFolderIds, ...pair }) => pair);
     writeFileSync(tmp, JSON.stringify(saved, null, 2) + "\n");
     renameSync(tmp, file);
   }
@@ -376,7 +430,12 @@ export function createFolderSync({
     if (!started || stopped) return;
     try {
       watchers.get(pair.id)?.close();
-      const watcher = watchFactory(pair.local, { recursive: true }, () => schedule(pair, 2000));
+      const watcher = watchFactory(pair.local, { recursive: true }, () => {
+        pair.syncedFileIds = new Set();
+        pair.syncedFolderIds = new Set();
+        rebuildSyncStateCache();
+        schedule(pair, 2000);
+      });
       watcher.on("error", (error) => pause(pair, "root_unreadable", error.message));
       watchers.set(pair.id, watcher);
     } catch (error) {
@@ -393,6 +452,7 @@ export function createFolderSync({
     watchers.delete(pair.id);
     save();
     emit(pair);
+    rebuildSyncStateCache();
   }
 
   async function scan(root, prior = {}) {
@@ -680,8 +740,11 @@ export function createFolderSync({
       return;
     }
     running.add(id);
-    folderPaths.delete(pair.folder_id);
+    pair.syncedFileIds = new Set();
+    pair.syncedFolderIds = new Set();
     pair.state = "syncing";
+    rebuildSyncStateCache();
+    folderPaths.delete(pair.folder_id);
     pair.errors = [];
     pair.pending = 0;
     emit(pair);
@@ -841,10 +904,14 @@ export function createFolderSync({
         }
       }
       pair.base = base;
+      const synced = fullySyncedIds(pair, afterLocal, remote);
+      pair.syncedFileIds = synced.fileIds;
+      pair.syncedFolderIds = synced.folderIds;
       pair.last_sync = clock();
       pair.state = pair.errors.length ? "error" : "idle";
       pair.reason = null;
       save();
+      rebuildSyncStateCache();
       if (local.pending.length || afterLocal.pending.length) schedule(pair, 2000);
     } catch (error) {
       pair.pending = 0;
@@ -857,6 +924,7 @@ export function createFolderSync({
         pair.state = "error";
         pair.errors = [{ path: pair.local, error: error.message }];
         emit(pair);
+        rebuildSyncStateCache();
       }
     } finally {
       running.delete(id);
@@ -983,6 +1051,7 @@ export function createFolderSync({
     clearTimeout(timers.get(id));
     pairs.delete(id);
     save();
+    rebuildSyncStateCache();
     return true;
   }
 
@@ -994,8 +1063,11 @@ export function createFolderSync({
     clearTimeout(timers.get(id));
     timers.delete(id);
     pair.local = resolve(localRoot);
+    pair.syncedFileIds = new Set();
+    pair.syncedFolderIds = new Set();
     save();
     if (started && !pair.paused) startWatch(pair);
+    rebuildSyncStateCache();
     return true;
   }
 
@@ -1005,6 +1077,18 @@ export function createFolderSync({
     for (const pair of pairs.values()) {
       if (!pair.paused) startWatch(pair);
     }
+  }
+
+  function syncState() {
+    return syncStateCache;
+  }
+
+  function invalidateSynced() {
+    for (const pair of pairs.values()) {
+      pair.syncedFileIds = new Set();
+      pair.syncedFolderIds = new Set();
+    }
+    rebuildSyncStateCache();
   }
 
   load();
@@ -1027,6 +1111,8 @@ export function createFolderSync({
       if (pair) schedule(pair, delay);
     },
     relocatePull,
+    syncState,
+    invalidateSynced,
     start,
     stop: () => {
       stopped = true;

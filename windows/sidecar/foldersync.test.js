@@ -6,11 +6,57 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { compareTrees, createFolderSync } from "./foldersync.js";
+import { compareTrees, createFolderSync, fullySyncedIds } from "./foldersync.js";
 
 const file = (sha256, extra = {}) => ({ sha256, size: 10, mtime: 1, ...extra });
 const fakeWatch = () => Object.assign(new EventEmitter(), { close() {} });
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("sync-state IDs include only matching files and folders with complete descendants", () => {
+  const local = {
+    files: {
+      "complete.txt": file("same"),
+      "clean/good.txt": file("good"),
+      "nested/complete.txt": file("nested"),
+      "nested/error.txt": file("same"),
+      "pending.txt": file("pending"),
+      "different.txt": file("local"),
+      "untracked.txt": file("local-only"),
+    },
+    pending: ["pending.txt"],
+  };
+  const remote = {
+    files: {
+      "complete.txt": { file_id: "id-complete", sha256: "same" },
+      "clean/good.txt": { file_id: "id-good", sha256: "good" },
+      "nested/complete.txt": { file_id: "id-nested", sha256: "nested" },
+      "nested/error.txt": { file_id: "id-error", sha256: "same" },
+      "pending.txt": { file_id: "id-pending", sha256: "pending" },
+      "different.txt": { file_id: "id-different", sha256: "remote" },
+      "remote-pending.txt": { file_id: "id-remote-pending", sha256: "" },
+    },
+    folders: { clean: "folder-clean", nested: "folder-nested" },
+    pending: ["remote-pending.txt"],
+  };
+  const state = fullySyncedIds({
+    folder_id: "folder-root",
+    local: "C:\\Courses\\Physics",
+    errors: [{ path: "nested/error.txt", error: "download failed" }],
+  }, local, remote);
+  assert.deepEqual([...state.fileIds].sort(), ["id-complete", "id-good", "id-nested"]);
+  assert.deepEqual([...state.folderIds], ["folder-clean"]);
+
+  const complete = fullySyncedIds(
+    { folder_id: "folder-root", local: "C:\\Courses\\Physics", errors: [] },
+    { files: { "nested/a.txt": file("same") }, pending: [] },
+    {
+      files: { "nested/a.txt": { file_id: "id-a", sha256: "same" } },
+      folders: { nested: "folder-nested" },
+      pending: [],
+    },
+  );
+  assert.deepEqual([...complete.folderIds].sort(), ["folder-nested", "folder-root"]);
+});
 
 async function waitFor(check, timeout = 4000) {
   const until = Date.now() + timeout;
@@ -1099,6 +1145,9 @@ test("a failed upload is noted while the rest of the pass goes on", async () => 
     assert.deepEqual(uploaded, ["good.txt"]);
     assert.equal(engine.list()[0].state, "error");
     assert.match(engine.list()[0].errors[0].path, /bad\.txt$/);
+    assert.deepEqual(engine.syncState().file_ids, ["id-good.txt"]);
+    engine.invalidateSynced();
+    assert.deepEqual(engine.syncState(), { file_ids: [], folder_ids: [] });
 
     // The pass still saved what it did, so the next one only retries the failure.
     await engine.run(pair.id);

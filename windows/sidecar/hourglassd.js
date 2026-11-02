@@ -1206,7 +1206,9 @@ const coursesReady = (async () => {
 })();
 
 store.onChange((table) => {
-  if (table !== "files" && table !== "folders") return;
+  if (table !== "files" && table !== "folders" && table !== "courses") return;
+  folderSync.invalidateSynced();
+  if (table === "courses") return;
   for (const pair of folderSync.list()) {
     if (pair.state !== "paused") folderSync.schedule(pair.id, 2000);
   }
@@ -1214,6 +1216,9 @@ store.onChange((table) => {
 
 async function syncFolderRoutes(req, res, path) {
   const m = req.method;
+  if (path === "/api/syncstate" && m === "GET") {
+    return json(res, 200, folderSync.syncState()), true;
+  }
   if (path === "/api/syncfolders" && m === "GET") {
     return json(res, 200, folderSync.list()), true;
   }
