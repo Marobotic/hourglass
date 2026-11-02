@@ -104,19 +104,19 @@ Item {
             const pct = total ? Math.max(0, Math.min(100, Math.round(done * 100 / total))) : 0;
             return "Downloading " + done + " of " + total + " · " + pct + "%";
         }
-        return "Saved on this PC";
+        return "Synced to this PC";
     }
     function localCopyError(copy) {
         if (!copy) return "";
         if (copy.error || copy.last_error) return copy.error || copy.last_error;
-        if (copy.errors && copy.errors.length) return copy.errors[copy.errors.length - 1].error || "Local copy failed";
-        if (copy.state === "error") return "Local copy failed";
+        if (copy.errors && copy.errors.length) return copy.errors[copy.errors.length - 1].error || "Sync failed";
+        if (copy.state === "error") return "Sync failed";
         return "";
     }
     function startLocalCopy(course) {
         Api.request("POST", "/api/localcopies", { course_id: course.id, name: course.name }, function(copy, err) {
             if (err) page.problem = err;
-            else page.app.showToast("Keeping " + course.name + " on this PC");
+            else page.app.showToast("Syncing " + course.name + " to this PC");
             page.loadLocalCopies();
         }, true);
     }
@@ -536,13 +536,13 @@ Item {
         property var copy: null
         function askRemove(pair, courseName) {
             copy = pair;
-            ask("Remove local copy of " + courseName + "?",
-                "The downloaded course folder will be removed from this PC. The files on Drive will stay.",
-                "Remove local copy",
+            ask("Stop syncing " + courseName + "?",
+                "The synced course folder will be removed from this PC. The files on Drive will stay.",
+                "Stop syncing",
                 function() {
                     Api.request("DELETE", "/api/localcopies/" + copy.id, null, function(d, err) {
                         if (err) page.problem = err;
-                        else page.app.showToast("Removed local copy");
+                        else page.app.showToast("Stopped syncing");
                         page.loadLocalCopies();
                     }, true);
                 }
@@ -577,10 +577,10 @@ Item {
             const course = page.courseFor(it);
             const copy = course ? page.localCopyFor(course.id) : null;
             const localItems = course ? (copy ? [
-                { key: "localcopy:" + (copy.paused || copy.state === "paused" ? "resume" : "pause"), label: copy.paused || copy.state === "paused" ? "Resume local copy" : "Pause local copy" },
+                { key: "localcopy:" + (copy.paused || copy.state === "paused" ? "resume" : "pause"), label: copy.paused || copy.state === "paused" ? "Resume sync" : "Pause sync" },
                 { key: "localcopy:now", label: "Sync now" },
-                { key: "localcopy:remove", label: "Remove local copy", danger: true },
-            ] : [{ key: "localcopy:add", label: "Keep on this PC" }]) : [];
+                { key: "localcopy:remove", label: "Stop syncing", danger: true },
+            ] : [{ key: "localcopy:add", label: "Sync folder" }]) : [];
             const folderItems = it.courseCard ? [] : [
                 { key: "open", label: "Open folder" },
                 { key: "share", label: page.shares[f.id] ? "Shared · link…" : "Share…" },
@@ -809,7 +809,7 @@ Item {
                             Btn { required property var modelData; compact: true; icon: modelData.icon; tip: modelData.tip; active: look.view === modelData.key; onClicked: look.view = modelData.key }
                         }
                     }
-                    Btn { id: syncFolderButton; icon: "sync"; text: "Sync a folder…"; onClicked: localFolderPicker.open() }
+                    Btn { id: syncFolderButton; icon: "sync"; text: "Sync folder"; onClicked: localFolderPicker.open() }
                     Btn { id: newFolderButton; visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
                     Btn { id: uploadButton; kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
                 }
@@ -834,10 +834,10 @@ Item {
                         }
                     }
                     Text {
-                        text: !page.usage ? "Reading the server's storage…"
-                            : page.size(page.usage.used) + " used of " + page.size(page.usage.total) + " on the server"
-                              + "  ·  " + page.size(page.usage.free) + " free  ·  your files " + page.size(page.usage.mine)
-                              + "  ·  up to " + page.size(Math.min(page.usage.usable, page.usage.max_file)) + " per upload"
+                        text: !page.usage ? "Reading storage…"
+                            : page.size(page.usage.mine) + " used  ·  " + page.size(page.usage.free) + " free"
+                              + (Math.min(page.usage.usable, page.usage.max_file) < page.usage.free
+                                  ? "  ·  max " + page.size(Math.min(page.usage.usable, page.usage.max_file)) + " per file" : "")
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13

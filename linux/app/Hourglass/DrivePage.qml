@@ -405,10 +405,10 @@ Item {
                         }
                     }
                     Text {
-                        text: !page.usage ? "Reading the server's storage…"
-                            : page.size(page.usage.used) + " used of " + page.size(page.usage.total) + " on the server"
-                              + "  ·  " + page.size(page.usage.free) + " free  ·  your files " + page.size(page.usage.mine)
-                              + "  ·  up to " + page.size(Math.min(page.usage.usable, page.usage.max_file)) + " per upload"
+                        text: !page.usage ? "Reading storage…"
+                            : page.size(page.usage.mine) + " used  ·  " + page.size(page.usage.free) + " free"
+                              + (Math.min(page.usage.usable, page.usage.max_file) < page.usage.free
+                                  ? "  ·  max " + page.size(Math.min(page.usage.usable, page.usage.max_file)) + " per file" : "")
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13
