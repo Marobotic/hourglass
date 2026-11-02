@@ -124,7 +124,7 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.ok(settings.body.free_models.some((m) => m.id === "opencode/beam-free"));
   assert.ok(settings.body.free_models.every((m) => m.source === "discovered"));
   const empty = await call("GET", "/api/assistant");
-  assert.deepEqual(empty.body, { enabled: true, engine: "free", model: "fake/down", busy: false, messages: [] });
+  assert.deepEqual(empty.body, { enabled: true, engine: "free", model: "fake/down", mode: "auto", busy: false, messages: [] });
 
   assert.equal((await call("POST", "/api/assistant/message", { text: "Buy eggs and milk" })).status, 202);
   const chat = await waitIdle();
@@ -163,6 +163,7 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.equal(c[0].env.TEMP, join(accountDir(), "home", ".tmp"));
   assert.equal(c[0].env.OPENCODE_CONFIG, join(accountDir(), "work", "opencode.json"));
 });
+
 
 test("the account folder's config is stock opencode plus the Hourglass MCP server", async () => {
   const config = JSON.parse(readFileSync(join(accountDir(), "work", "opencode.json"), "utf8"));
@@ -265,4 +266,51 @@ test("the shared OpenCode free quota stops model fallback after the first model"
   assert.equal(reply.error_kind, "quota");
   assert.equal(reply.error, "The free models have hit their limit. Try again later, or add your own key in Assistant settings.");
   assert.deepEqual(calls().slice(start).map((entry) => entry.model), ["opencode/big-pickle"]);
+});
+
+test("permission modes create MCP proposals and Apply or Skip updates their state", async () => {
+  assert.equal((await call("POST", "/api/assistant/settings", { engine: "free", model: "" })).status, 200);
+  assert.deepEqual((await call("GET", "/api/assistant")).body.mode, "auto");
+  assert.deepEqual((await call("POST", "/api/assistant/mode", { mode: "ask" })).body, { mode: "ask" });
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Propose a note" })).status, 202);
+  const reply = (await waitIdle()).messages.at(-1);
+  assert.equal(reply.pending_actions.length, 1, JSON.stringify(reply));
+  assert.match(reply.text, /waiting for your approval/i);
+  const first = reply.pending_actions[0];
+  assert.equal(first.tool, "add_note");
+  assert.equal(first.status, "pending");
+  assert.equal((await call("POST", `/api/assistant/actions/${first.id}/apply`, {})).body.status, "applied");
+  assert.equal((await call("GET", "/api/assistant")).body.messages.at(-1).pending_actions[0].status, "applied");
+
+  await call("POST", "/api/assistant/new", {});
+  await call("POST", "/api/assistant/mode", { mode: "ask" });
+  await call("POST", "/api/assistant/message", { text: "Propose another note" });
+  const second = (await waitIdle()).messages.at(-1).pending_actions[0];
+  assert.ok(second);
+  assert.equal((await call("POST", `/api/assistant/actions/${second.id}/skip`, {})).body.status, "skipped");
+  assert.equal((await call("POST", `/api/assistant/actions/${second.id}/apply`, {})).status, 404);
+  await call("POST", "/api/assistant/new", {});
+  assert.equal((await call("GET", "/api/assistant")).body.mode, "auto");
+  assert.deepEqual((await call("GET", "/api/assistant")).body.messages, []);
+  await call("POST", "/api/assistant/mode", { mode: "auto" });
+});
+
+test("MCP calls enforce read, change and risky tools in ask, auto and dangerous modes", async () => {
+  assert.equal((await call("POST", "/api/assistant/settings", { engine: "free", model: "" })).status, 200);
+  const matrix = [
+    ["READ_MCP_TEST", [false, false, false]],
+    ["CHANGE_MCP_TEST", [true, false, false]],
+    ["RISK_MCP_TEST", [true, true, false]],
+  ];
+  for (const [marker, expected] of matrix) {
+    for (const [i, mode] of ["ask", "auto", "dangerous"].entries()) {
+      await call("POST", "/api/assistant/new", {});
+      await call("POST", "/api/assistant/mode", { mode });
+      assert.equal((await call("POST", "/api/assistant/message", { text: marker })).status, 202);
+      const message = (await waitIdle()).messages.at(-1);
+      assert.equal((message.pending_actions || []).some((a) => a.status === "pending"), expected[i], `${mode} ${marker}: ${JSON.stringify(message)}`);
+    }
+  }
+  await call("POST", "/api/assistant/new", {});
+  await call("POST", "/api/assistant/mode", { mode: "auto" });
 });

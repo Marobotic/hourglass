@@ -38,14 +38,16 @@ if (model === "fake/down") {
 }
 
 const said = prompt.split("The user says:\n")[1] || "";
+const selectedTool = said.includes("READ_MCP_TEST") ? "get_settings" : said.includes("RISK_MCP_TEST") ? "remove_alarm" : "add_note";
+const selectedArgs = selectedTool === "add_note" ? { title: "From assistant", body: said } : selectedTool === "remove_alarm" ? { alarm_id: "missing-mode-test-alarm" } : {};
 const config = JSON.parse(readFileSync("opencode.json", "utf8"));
 const client = new Client({ name: "fake-opencode", version: "1" });
 await client.connect(new StreamableHTTPClientTransport(new URL(config.mcp.hourglass.url)));
 emit({ type: "step_start" });
 emit({ type: "text", part: { text: "Let me add that." } });
-emit({ type: "tool_use", part: { id: "p1", callID: "c1", tool: "hourglass_add_note", state: { status: "running" } } });
-const r = await client.callTool({ name: "add_note", arguments: { title: "From assistant", body: said } });
-emit({ type: "tool_use", part: { id: "p1", callID: "c1", tool: "hourglass_add_note", state: { status: r.isError ? "error" : "completed" } } });
+emit({ type: "tool_use", part: { id: "p1", callID: "c1", tool: `hourglass_${selectedTool}`, state: { status: "running", input: selectedArgs } } });
+const r = await client.callTool({ name: selectedTool, arguments: selectedArgs });
+emit({ type: "tool_use", part: { id: "p1", callID: "c1", tool: `hourglass_${selectedTool}`, state: { status: r.isError ? "error" : "completed", input: selectedArgs, output: r } } });
 emit({ type: "step_start" });
 emit({ type: "text", part: { text: "Done." } });
 await client.close();

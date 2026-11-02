@@ -44,7 +44,7 @@ import { opencodeAccountDirectories, opencodeAccountOwnedPaths, opencodeProfileE
 import { isSharedFreeQuotaError, normalizeEngineError } from "./engine-errors.js";
 import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
-import { INSTRUCTIONS } from "./tools.js";
+import { INSTRUCTIONS, TOOLS, needsApproval, runTool } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
 import { deepSeekPriceState, isDeepSeekBaseUrl } from "./deepseek.js";
@@ -169,12 +169,11 @@ Work only through the hourglass tools (hourglass_*). They open this user's own d
 How to work, fast:
 - Every message ends with a snapshot of the user's data: the time and zone, what is on now and today, courses, alarms, timers, their own events (birthdays, appointments) with next dates, recent notes and Drive folders, with ids. When the snapshot answers the question, answer straight away with no tool at all. When you act, use the ids from it instead of looking them up.
 - Use as few tool calls as the task needs. To find something by name (a person, a birthday, a file, an event not in the snapshot) call hourglass_search once: it looks in the calendar first, then notes, Drive and alarms. Birthdays and appointments are calendar events, never look for them in notes first.
-- Do what the user asks with the tools, straight away. Do not describe what you would do; do it, then say what you did in one short sentence.
-- Never ask for confirmation before adding or changing alarms, timers, events, notes or settings. Fill gaps with the obvious choice (today or the next time it happens, the label from the user's words). Never argue or lecture; if the user corrects you, apply it.
+- Follow the permission mode stated in the prompt. When a tool call is held for approval, explain that it is waiting and do not say it is done. Otherwise do what the user asks with the tools, then say what you did in one short sentence.
+- Fill gaps with the obvious choice (today or the next time it happens, the label from the user's words). Never argue or lecture; if the user corrects you, apply it.
 - Never say something is done unless the tool call succeeded. If a tool returns an error, say plainly what went wrong.
 - Formatting or tidying a note: read it with hourglass_get_notes, then write the whole improved body back with hourglass_update_note. Keep everything the user wrote, including every <span style=...> and <u> tag; only change layout, headings, bullets, to-dos, emphasis and obvious typos.
 - An attached file the user wants kept somewhere: it is already in the Drive (its file id is given); move it with hourglass_move_file, or put it in a note as ![name](hgfile:<id>) for a picture or [name](hgfile:<id>) for a file, on a line of its own.
-- Ask before deleting a note, removing a course, or removing a whole recurring event. Removing one occurrence needs no confirmation.
 - Ask one short question only when there is no sensible guess at all (an alarm with no time).
 - When the user asks how to do something in the app, answer from the app guide below in one or two steps.
 - Reply in plain text with short sentences. No tables, no code blocks, no headings.
@@ -272,11 +271,31 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
 
   const chatFile = (t) => join(t.dir, "assistant_chat.json");
   function loadChat(t) {
-    try { return JSON.parse(readFileSync(chatFile(t), "utf8")); } catch { return { session: null, messages: [] }; }
+    try {
+      const chat = JSON.parse(readFileSync(chatFile(t), "utf8"));
+      if (!["ask", "auto", "dangerous"].includes(chat.mode)) chat.mode = "auto";
+      return chat;
+    } catch { return { session: null, mode: "auto", messages: [] }; }
   }
   function saveChat(t, chat) {
     chat.messages = chat.messages.slice(-KEEP_MESSAGES);
     writeFileSync(chatFile(t), JSON.stringify(chat), { mode: 0o600 });
+  }
+
+  function mcpTool(t, name, args) {
+    const live = running.get(t.email);
+    const chat = live?.chat || loadChat(t);
+    if (needsApproval(chat.mode || "auto", name)) {
+      const message = live?.message || chat.messages.filter((x) => x.role === "assistant").at(-1) || { id: `a${Date.now()}`, role: "assistant", time: Date.now(), text: "", tools: [], cards: [] };
+      if (!chat.messages.includes(message)) chat.messages.push(message);
+      const tool = TOOLS.find((x) => x.name === name);
+      const action = { id: randomBytes(12).toString("base64url"), tool: name, args: args ?? {}, summary: `${tool.title}: ${JSON.stringify(args ?? {})}`.slice(0, 500), risky: tool.permission === "risky", status: "pending" };
+      (message.pending_actions ||= []).push(action);
+      message.cards = trimCards([...(message.cards || []), { kind: "action", ...action }]);
+      saveChat(t, chat);
+      return { pending: true, ...action, message: `Waiting for the user to approve: ${action.summary}` };
+    }
+    return runTool(t.service, name, args);
   }
 
   /**
@@ -532,8 +551,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const mcp = JSON.stringify({ mcpServers: { hourglass: { type: "http", url: `${mcpBase}/mcp/${keyOf(t)}` } } });
     const history = historyTurns(chat, chat.messages.length - 2).map((m) => `${m.role === "user" ? "User" : "You"}: ${m.content}`).join("\n");
     const prompt = `${history ? `The conversation so far:\n${history}\n\n` : ""}${userTurn(t, text, files)}`;
+    const modeSystem = `${system}\n\nPermission mode for this chat: ${chat.mode || "auto"}. In ask mode, propose every change and wait for the user to Apply it. Never claim a proposed action was already done.`;
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--model", cfg.model || CLAUDE_MODELS[0].id,
-      "--system-prompt", system, "--mcp-config", mcp, "--strict-mcp-config", "--tools", "", "--allowedTools", "mcp__hourglass", "--permission-mode", "dontAsk"];
+      "--system-prompt", modeSystem, "--mcp-config", mcp, "--strict-mcp-config", "--tools", "", "--allowedTools", "mcp__hourglass", "--permission-mode", "dontAsk"];
     const env = { CLAUDE_CONFIG_DIR: join(dirs.home, ".claude-hourglass"), DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
     const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
     // A tiny shell reads the token into the environment, then becomes Claude Code.
@@ -627,7 +647,8 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       try {
         step(message, `Asking ${modelName(cfg)}…`);
         const claudeModels = cfg.engine === "anthropic" ? (await claudeModelsFor(t, cfg)).models : CLAUDE_MODELS;
-        const usedModel = await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x), onError: (e) => log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`), timeZone: timeZoneOf(t), claudeModels });
+        const modeSystem = `${system}\n\nPermission mode for this chat: ${chat.mode || "auto"}. In ask mode, propose every change and wait for the user to Apply it. Never claim a proposed action was already done.`;
+        const usedModel = await runDirect({ settings: cfg, system: modeSystem, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x), onError: (e) => log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`), timeZone: timeZoneOf(t), claudeModels });
         step(message, "Done");
         message.model = usedModel || modelName(cfg);
       } catch (e) {
@@ -639,6 +660,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         }
         if (!e.logged) log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`);
       }
+      if (message.pending_actions?.some((a) => a.status === "pending") && !/approval|apply/i.test(message.text || "")) message.text = `${message.text ? message.text.trim() + "\n\n" : ""}This reply has changes waiting for your approval.`;
       if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
       saveChat(t, chat);
       running.delete(t.email);
@@ -671,6 +693,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         message.error = failed.normalized.message;
         message.error_kind = failed.normalized.kind;
       }
+      if (message.pending_actions?.some((a) => a.status === "pending") && !/approval|apply/i.test(message.text || "")) message.text = `${message.text ? message.text.trim() + "\n\n" : ""}This reply has changes waiting for your approval.`;
       if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
       saveChat(t, chat);
       running.delete(t.email);
@@ -688,7 +711,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const attached = staged.length
       ? `\n\nThe user attached (already saved in their Drive's "${ASSISTANT_FOLDER}" folder):\n${staged.map((f) => `- ${f.name} (${f.mime}, file ${f.id}), readable at ./${f.path}${isPicture(f) ? " - also attached to this message, you can see it" : ""}`).join("\n")}`
       : "";
-    const promptFor = (isFresh) => `${isFresh ? briefing(skill, guide) + "\n\n" : REMINDER + "\n"}${context(t)}\n\n${direct}The user says:\n${text}${attached}`;
+    const promptFor = (isFresh) => `${isFresh ? briefing(skill, guide) + "\n\n" : REMINDER + "\n"}Permission mode: ${chat.mode || "auto"}. In ask mode, propose changes and wait for the user to Apply them; do not claim proposed actions are complete.\n\n${context(t)}\n\n${direct}The user says:\n${text}${attached}`;
     // Pictures go to the model itself, on a model that can see.
     const pictures = staged.filter(isPicture).map((f) => f.path);
     // The picked model first; the others only if it fails.
@@ -730,6 +753,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         message.error_kind = lastNormalized?.kind || "other";
       } else message.error = "No reply.";
     }
+    if (message.pending_actions?.some((a) => a.status === "pending") && !/approval|apply/i.test(message.text || "")) message.text = `${message.text ? message.text.trim() + "\n\n" : ""}This reply has changes waiting for your approval.`;
     if (errors.length) log(`assistant (${t.email || "owner"}): ${errors.join(" ; ").slice(0, 400)}`);
     saveChat(t, chat);
     running.delete(t.email);
@@ -910,7 +934,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     if (ids?.reminder_id) Object.assign(last, { reminder_id: ids.reminder_id, last: "reminder" });
   }
 
-  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, error_kind: m.error_kind || null, files: m.files || [], quick: !!m.quick, model: m.model || null, usage: m.usage || null });
+  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], pending_actions: m.pending_actions || [], steps: m.steps || [], error: m.error || null, error_kind: m.error_kind || null, files: m.files || [], quick: !!m.quick, model: m.model || null, usage: m.usage || null });
 
   /** The Drive folder attachments go to, made on first use. */
   function assistantFolder(t) {
@@ -941,7 +965,35 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const live = running.get(t.email);
       const chat = live ? live.chat : loadChat(t);
       const cfg = settings.view(t);
-      return send(res, 200, { enabled: true, engine: cfg.engine, model: modelName(cfg), busy: !!live, messages: chat.messages.map(view) }), true;
+      return send(res, 200, { enabled: true, engine: cfg.engine, model: modelName(cfg), mode: chat.mode || "auto", busy: !!live, messages: chat.messages.map(view) }), true;
+    }
+
+    if (path === "/api/assistant/mode" && m === "POST") {
+      const body = await readJson(req);
+      if (!["ask", "auto", "dangerous"].includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto or dangerous" }), true;
+      const chat = running.get(t.email)?.chat || loadChat(t); chat.mode = body.mode; saveChat(t, chat);
+      return send(res, 200, { mode: chat.mode }), true;
+    }
+
+    const actionRoute = /^\/api\/assistant\/actions\/([A-Za-z0-9_-]+)\/(apply|skip)$/.exec(path);
+    if (actionRoute && m === "POST") {
+      const chat = running.get(t.email)?.chat || loadChat(t);
+      const message = chat.messages.find((x) => (x.pending_actions || []).some((a) => a.id === actionRoute[1]));
+      const action = message?.pending_actions.find((x) => x.id === actionRoute[1]);
+      if (!action || action.status !== "pending") return send(res, 404, { error: "pending action not found" }), true;
+      if (actionRoute[2] === "skip") {
+        action.status = "skipped";
+        for (const card of message.cards || []) if (card.id === action.id) card.status = "skipped";
+        saveChat(t, chat); return send(res, 200, { ok: true, status: "skipped" }), true;
+      }
+      try {
+        const result = runTool(t.service, action.tool, action.args);
+        action.status = "applied";
+        const cards = cardsFor(t.service, action.tool, action.args, result);
+        for (const card of message.cards || []) if (card.id === action.id) card.status = "applied";
+        message.cards = trimCards([...(message.cards || []), ...cards]);
+        saveChat(t, chat); return send(res, 200, { ok: true, status: "applied", result, cards }), true;
+      } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
     }
 
     // Where the apps upload attachments before sending them (the Drive's "Assistant" folder).
@@ -961,11 +1013,16 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (text.length > MAX_TEXT) return send(res, 413, { error: `Keep it under ${MAX_TEXT} characters.` }), true;
       if (running.has(t.email)) return send(res, 409, { error: "Still working on the last message." }), true;
       if (!allow(t.email || "owner")) return send(res, 429, { error: "That's a lot of messages - try again in a while." }), true;
-      const chat = loadChat(t);
+      const chat = running.get(t.email)?.chat || loadChat(t);
+      if (body.mode !== undefined) {
+        if (!["ask", "auto", "dangerous"].includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto or dangerous" }), true;
+        chat.mode = body.mode;
+      }
       const now = Date.now();
       // The fast lane: done here at once, no model.
       // What this chat last touched, so "remove it" or "make it 9" knows what "it" is.
-      const quick = files.length ? null : quickAnswer(t.service, text, chat.last || {});
+      const riskyIntent = /\b(?:remove|delete|erase|cancel|discard|clear|forget|take off|throw away|get rid of)\b/i.test(text);
+      const quick = files.length || chat.mode === "ask" || (chat.mode === "auto" && riskyIntent) ? null : quickAnswer(t.service, text, chat.last || {});
       if (quick) {
         chat.messages.push({ id: `u${now}`, role: "user", time: now, text, tools: [] });
         chat.messages.push({ id: `a${now}`, role: "assistant", time: now, quick: true, text: quick.text, error: null, cards: quick.cards || [],
@@ -1110,7 +1167,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     // A fresh conversation: the history and opencode's session for it are dropped.
     if (path === "/api/assistant/new" && m === "POST") {
       stop(t);
-      saveChat(t, { session: null, messages: [] });
+      saveChat(t, { session: null, mode: "auto", messages: [] });
       return send(res, 200, { ok: true }), true;
     }
 
@@ -1121,5 +1178,5 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   else log("assistant: off (set HOURGLASS_ASSISTANT=on to offer it)");
   if (enabled && runner === "systemd" && !sandboxIds) log(`assistant: the ${SANDBOX_USER} user is missing - run server/assistant-setup.sh`);
 
-  return { routes, keyOf, enabled };
+  return { routes, keyOf, enabled, mcpTool };
 }

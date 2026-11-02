@@ -22,7 +22,7 @@ Start with whats_now for anything about "now", "today" or "next"; get_schedule f
 To adjust the schedule: get_schedule or list_courses to find event ids, then update_event / add_event / remove_event. Mark days with mark_session (attended, absent, off).
 Anything that comes back every year (a birthday, an anniversary) is ONE event with repeat {freq: "yearly"} and no until, starting on the next (or the original) date; never add one event per year. The same goes for monthly things (rent, a bill): one event with repeat {freq: "monthly"}.
 When removing a single lecture of a recurring series use remove_event with scope "occurrence" and the date; only use scope "series" when the user wants the whole thing gone.
-Confirm destructive actions (remove_event series, remove_course, delete_note) with the user first.`;
+Permission modes govern whether a tool runs immediately or waits for the user's Apply action.`;
 
 export const TOOLS = [
   {
@@ -523,6 +523,18 @@ export const TOOLS = [
   },
 ];
 
+// Permission class for every exposed operation. Keep this table beside the
+// definitions so adding a tool without an explicit policy fails the test.
+export const TOOL_CLASSES = {
+  whats_now: "read", get_schedule: "read", search: "read", find_events: "read", list_courses: "read",
+  add_course: "change", update_course: "change", remove_course: "risky", add_event: "change", update_event: "change", remove_event: "risky",
+  mark_session: "change", get_attendance: "read", get_notes: "read", search_notes: "read", add_note: "change", append_note: "change", update_note: "change", delete_note: "risky", note_versions: "read", restore_note_version: "change",
+  list_drive: "read", move_file: "change", add_folder: "change", remove_folder: "risky", move_folder: "change",
+  list_alarms: "read", set_alarm: "change", set_lecture_reminders: "change", remove_alarm: "risky", list_ringtones: "read", set_ringtone: "change", remove_ringtone: "risky", world_clock: "read", add_clock: "change", set_home_zone: "change", remove_clock: "risky",
+  list_reminders: "read", reminder_settings: "read", add_reminder: "change", update_reminder: "change", remove_reminder: "risky", set_reminder_settings: "change", list_timers: "read", start_timer: "change", save_timer: "change", update_timer: "change", stop_timers: "change", set_alarms_enabled: "change", upcoming_events: "read", add_birthday: "change", get_settings: "read", set_settings: "change",
+};
+for (const tool of TOOLS) tool.permission = TOOL_CLASSES[tool.name];
+
 export const toolByName = new Map(TOOLS.map((t) => [t.name, t]));
 
 // Validate and run a tool with the zod schema, for REST callers.
@@ -532,4 +544,10 @@ export function runTool(service, name, args = {}) {
   const parsed = z.object(tool.input).safeParse(args ?? {});
   if (!parsed.success) throw Object.assign(new Error(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")), { status: 400 });
   return tool.run(service, parsed.data);
+}
+
+export function needsApproval(mode, name) {
+  const classification = TOOL_CLASSES[name];
+  if (!classification) throw new Error(`tool has no permission classification: ${name}`);
+  return mode === "ask" ? classification !== "read" : mode !== "dangerous" && mode === "auto" && classification === "risky";
 }

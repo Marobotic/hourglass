@@ -56,15 +56,17 @@ function startFake() {
           return;
         }
         const done = json.messages.some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result"));
+        const promptText = JSON.stringify(json.messages.at(-1)?.content || "");
+        const toolName = promptText.includes("READ_MODE_TEST") ? "get_settings" : promptText.includes("RISK_MODE_TEST") ? "remove_alarm" : "set_alarm";
+        const toolInput = toolName === "set_alarm" ? { label: "Gym", time: "07:30", days: ["Mon", "Wed"] } : toolName === "remove_alarm" ? { alarm_id: "mode-test-alarm" } : {};
         const id = done ? "msg_2" : "msg_1";
         const start = { type: "message_start", message: { id, type: "message", role: "assistant", model: json.model, content: [], usage: { input_tokens: 10, cache_read_input_tokens: 2 } } };
         if (!done) return sendSse(res, [start,
           { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
           { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "I'll set that." } },
           { type: "content_block_stop", index: 0 },
-          { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu_1", name: "set_alarm", input: {} } },
-          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"label":"Gym",' } },
-          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '"time":"07:30","days":["Mon","Wed"]}' } },
+          { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu_1", name: toolName, input: {} } },
+          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: JSON.stringify(toolInput) } },
           { type: "content_block_stop", index: 1 },
           { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 3 } }, { type: "message_stop" }]);
         return sendSse(res, [start,
@@ -82,6 +84,9 @@ function startFake() {
       ] });
       if (req.url === "/openai/chat/completions") {
         const done = json.messages.some((m) => m.role === "tool");
+        const promptText = JSON.stringify(json.messages.at(-1)?.content || "");
+        const toolName = promptText.includes("READ_MODE_TEST") ? "get_settings" : promptText.includes("RISK_MODE_TEST") ? "remove_alarm" : "start_timer";
+        const toolInput = toolName === "start_timer" ? { minutes: 25, label: "Focus" } : toolName === "remove_alarm" ? { alarm_id: "mode-test-alarm" } : {};
         if (json.model === "gpt-rate") return send(429, { error: { code: "rate_limit_exceeded", message: "provider private rate limit detail" } }, { "retry-after": "3" });
         if (json.model === "gpt-partial" && done) return send(429, { error: { code: "rate_limit_exceeded", message: "provider private late limit detail" } }, { "retry-after": "3" });
         if (json.model === "zz-abort") {
@@ -97,8 +102,7 @@ function startFake() {
         ], 100);
         if (!done) return sendSse(res, [
           { choices: [{ delta: { content: "I'll set that." } }] },
-          { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "start_timer", arguments: '{"minutes":' } }] } }] },
-          { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '25,"label":"Focus"}' } }] } }] },
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: toolName, arguments: JSON.stringify(toolInput) } }] } }] },
           { choices: [], usage: { prompt_tokens: 16, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 4 } } },
         ]);
         return sendSse(res, [
@@ -222,7 +226,7 @@ test("Claude with a key: the tool call sets the alarm, and the reply has an alar
   assert.equal(req.model, "claude-haiku-5-5");
   assert.equal(req.output_config.effort, "low");
   assert.ok(req.tools.some((t) => t.name === "add_birthday"));
-  assert.match(req.system[0].text, /Never ask for confirmation/);
+  assert.match(req.system[0].text, /Follow the permission mode/);
 });
 
 test("Claude settings accept a model id from the live API list", async () => {
@@ -344,6 +348,30 @@ test("DeepSeek 402 stops model fallback; 429 remains a transient rate limit", as
   assert.equal(reply.error_kind, "rate_limit");
   assert.equal(reply.error, "DeepSeek is rate limited. Try again shortly.");
   assert.ok(seen.slice(start).filter((r) => r.path === "/deepseek/chat/completions").length > 1);
+});
+
+test("in-process Anthropic and OpenAI tools obey all permission classes and modes", async () => {
+  const cases = [
+    ["READ_MODE_TEST", "read", [false, false, false]],
+    ["CHANGE_MODE_TEST", "change", [true, false, false]],
+    ["RISK_MODE_TEST", "risky", [true, true, false]],
+  ];
+  for (const engine of ["anthropic", "openai"]) {
+    const model = engine === "anthropic" ? "claude-haiku-5-5" : "gpt-test";
+    const settings = engine === "anthropic"
+      ? { engine, model, key: GOOD_KEY }
+      : { engine, base_url: `${fakeUrl}/openai`, key: GOOD_KEY, model };
+    assert.equal((await call("POST", "/api/assistant/settings", settings)).status, 200);
+    for (const [marker, _classification, expected] of cases) {
+      for (const [index, mode] of ["ask", "auto", "dangerous"].entries()) {
+        assert.equal((await call("POST", "/api/assistant/mode", { mode })).status, 200);
+        assert.equal((await call("POST", "/api/assistant/message", { text: marker })).status, 202);
+        const reply = (await waitIdle()).messages.at(-1);
+        assert.equal(reply.pending_actions?.filter((a) => a.status === "pending").length > 0, expected[index], `${engine} ${mode} ${_classification}`);
+      }
+    }
+  }
+  await call("POST", "/api/assistant/mode", { mode: "auto" });
 });
 
 test("rate limits fall back to the next model of the same engine before any output", async () => {

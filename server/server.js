@@ -118,6 +118,7 @@ function tenant(email) {
   const ak = existsSync(join(dir, "assistant_key")) ? readFileSync(join(dir, "assistant_key"), "utf8").trim() : "";
   if (ak) { t.assistantKey = ak; aiKeys.set(ak, key || owner); }
   t.handler = createHandler({ store, service, token: null, icalToken: t.icalKey, publicUrl: process.env.HOURGLASS_URL, guard: t.ringGuard,
+    onMcpTool: (name, args) => assistant.mcpTool(t, name, args),
     extra: async (req, res, url, path) => (await t.ringRoute(req, res, url, path)) || (await driveRoutes(t, req, res, url, path)) || (await shares.routes(t, req, res, url, path)) || ringtoneRoutes(t, req, res, url, path) });
   shares.load(t);
   tenants.set(key, t);

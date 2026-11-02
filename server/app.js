@@ -49,7 +49,7 @@ function tokenOk(req, url, expected) {
 }
 
 // A fresh MCP server per request: stateless streamable HTTP.
-function mcpServer(service) {
+function mcpServer(service, onTool) {
   const server = new McpServer({ name: "hourglass", title: "Hourglass", version: VERSION }, { instructions: INSTRUCTIONS });
   for (const t of TOOLS) {
     server.registerTool(
@@ -62,7 +62,7 @@ function mcpServer(service) {
       },
       async (args) => {
         try {
-          const out = t.run(service, args);
+          const out = onTool ? await onTool(t.name, args) : t.run(service, args);
           return { content: [{ type: "text", text: JSON.stringify(out ?? { ok: true }, null, 1) }] };
         } catch (e) {
           return { isError: true, content: [{ type: "text", text: e.message }] };
@@ -120,7 +120,7 @@ function ics(service) {
 }
 
 // options: { store, service, token, icalToken, publicUrl, extra(req, res, url) -> handled? }
-export function createHandler({ store, service, token, icalToken, publicUrl = "", extra, guard }) {
+export function createHandler({ store, service, token, icalToken, publicUrl = "", extra, guard, onMcpTool }) {
   return async (req, res) => {
     const url = new URL(req.url, "http://local");
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -137,7 +137,7 @@ export function createHandler({ store, service, token, icalToken, publicUrl = ""
       if (path === "/mcp") {
         if (req.method !== "POST") return send(res, 405, { error: "stateless server: POST only" }, { allow: "POST" });
         const body = await readJson(req);
-        const server = mcpServer(service);
+        const server = mcpServer(service, onMcpTool);
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
         res.on("close", () => {
           transport.close();

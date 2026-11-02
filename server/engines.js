@@ -19,7 +19,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { TOOLS, runTool } from "./tools.js";
+import { TOOLS, runTool, needsApproval } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { normalizeEngineError } from "./engine-errors.js";
 import { deepSeekCost, deepSeekModelPricing, deepSeekModelSupportsTools, isDeepSeekBaseUrl } from "./deepseek.js";
@@ -146,8 +146,15 @@ function jsonSchema(input) {
 const TOOL_SCHEMAS = TOOLS.map((t) => ({ name: t.name, description: t.description, schema: jsonSchema(t.input) }));
 
 /** Runs one tool for the model: its result (as text for the model), and the cards it makes. */
-function callTool(service, name, args) {
+function callTool(service, name, args, mode = "auto", message = null) {
   try {
+    if (needsApproval(mode, name)) {
+      const tool = TOOLS.find((t) => t.name === name);
+      const action = { id: randomBytes(12).toString("base64url"), tool: name, args: args ?? {}, summary: `${tool.title}: ${JSON.stringify(args ?? {})}`.slice(0, 500), risky: tool.permission === "risky", status: "pending" };
+      (message.pending_actions ||= []).push(action);
+      const card = { kind: "action", ...action };
+      return { ok: true, text: `Waiting for the user to approve: ${action.summary}`, cards: [card] };
+    }
     const result = runTool(service, name, args ?? {});
     return { ok: true, text: JSON.stringify(result ?? { ok: true }).slice(0, 12000), cards: cardsFor(service, name, args ?? {}, result) };
   } catch (e) {
@@ -163,8 +170,7 @@ export function systemPrompt({ guide, instructions }) {
 
 How to answer:
 - Do what is asked, at once, with the tools. "Set my alarm in 1 hour", "tell me Sara's birthday", "add a lecture on Monday at 9": do it, then reply in one short sentence. The app draws a card for every alarm, timer, event and note you touch, so do not repeat the details the card shows.
-- Never ask for confirmation before adding or changing alarms, timers, events, notes, clocks or settings. Fill gaps with the obvious choice: today or the next time it happens, an hour long, the label from the user's own words. Ask only when there is no sensible guess at all, and then ask one short question.
-- Ask first only before deleting a note, removing a course, or removing a whole recurring series.
+- Follow the permission mode stated for this chat. If a tool result says an action is waiting for approval, explain that plainly and do not say it is done. Fill gaps with the obvious choice: today or the next time it happens, an hour long, the label from the user's own words. Ask only when there is no sensible guess at all, and then ask one short question.
 - Never argue, lecture or explain what you are about to do. If the user corrects you, apply the correction and say it is done.
 - Never say something is done unless the tool succeeded. If a tool fails, say what went wrong in one sentence and what you will try or need.
 - The message ends with a snapshot of the user's data with ids: when it answers the question, answer from it without a tool, and use its ids instead of looking them up.
@@ -224,7 +230,7 @@ export function recordAssistantUsage(message, usage, metadata) {
   }
 }
 
-async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata }) {
+async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata, mode = "auto" }) {
   const client = new Anthropic({ apiKey: key, timeout: TURN_SECONDS * 1000, maxRetries: 1 });
   const id = model || CLAUDE_MODELS[0].id;
   const tools = TOOL_SCHEMAS.map((t, i) => ({ name: t.name, description: t.description, input_schema: t.schema, ...(i === TOOL_SCHEMAS.length - 1 ? { cache_control: { type: "ephemeral" } } : {}) }));
@@ -308,7 +314,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
       if (!message.tools.includes(entry)) message.tools.push(entry);
       entry.tool = u.name;
       onProgress();
-      const r = callTool(service, u.name, u.input);
+      const r = callTool(service, u.name, u.input, mode, message);
       if (!r.ok) onStep(`${u.name} failed: ${r.text.slice(0, 160)}`);
       entry.status = r.ok ? "completed" : "error";
       message.cards = trimCards([...(message.cards || []), ...r.cards]);
@@ -321,7 +327,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
 
 // --- any OpenAI-compatible API ----------------------------------------------------------
 
-async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata }) {
+async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata, mode = "auto" }) {
   if (!model) throw Object.assign(new Error("pick a model in Settings first"), { status: 400 });
   const url = `${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/chat/completions`;
   const tools = metadata?.supports_tools === false ? [] : TOOL_SCHEMAS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
@@ -420,7 +426,7 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
       onProgress();
       let args = {};
       try { args = JSON.parse(c.function?.arguments || "{}"); } catch {}
-      const r = callTool(service, c.function?.name, args);
+      const r = callTool(service, c.function?.name, args, mode, message);
       entry.status = r.ok ? "completed" : "error";
       message.cards = trimCards([...(message.cards || []), ...r.cards]);
       messages.push({ role: "tool", tool_call_id: c.id, content: r.text });
@@ -486,7 +492,7 @@ export async function runDirect({ settings, system, chat, userText, images, serv
   const history = historyTurns(chat, chat.messages.length - 2);
   const key = settings.keys[settings.engine === "openai" ? `openai:${settings.base_url || ""}` : settings.engine];
   if (!key) throw new Error("Add your key in the assistant's settings first.");
-  const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep };
+  const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep, mode: chat.mode || "auto" };
   const deepseek = settings.engine === "openai" && isDeepSeekBaseUrl(settings.base_url);
   const provider = deepseek ? "deepseek" : settings.engine;
   let openaiModels = [];
