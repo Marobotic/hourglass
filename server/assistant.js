@@ -46,7 +46,7 @@ import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
 import { INSTRUCTIONS } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
-import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, runDirect, systemPrompt } from "./engines.js";
+import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
@@ -443,6 +443,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         } else if (ev.type === "error") {
           failure = ev.error || ev;
           error = ev.error?.data?.message || ev.error?.name || "something went wrong";
+        } else if (ev.type === "step_finish" && part.tokens) {
+          const tokens = part.tokens;
+          recordAssistantUsage(message, { input_tokens: tokens.input, output_tokens: tokens.output, cache_read_input_tokens: tokens.cache?.read, cache_creation_input_tokens: tokens.cache?.write });
         }
       };
 
@@ -577,7 +580,16 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
           step(message, `Claude Code started (${Math.round((Date.now() - began) / 100) / 10} s)${(ev.mcp_servers || []).some((m) => m.status !== "connected") ? ", Hourglass tools not connected" : ""}`);
         } else if (ev.type === "result") {
           if (ev.is_error) { failure = ev; error = String(ev.result || ev.subtype || "Claude could not answer"); }
-          else if (ev.result) message.text = String(ev.result).trim();
+          else {
+            if (ev.result) message.text = String(ev.result).trim();
+            const source = ev.usage || ev.modelUsage?.[cfg.model] || (ev.modelUsage && Object.values(ev.modelUsage)[0]);
+            if (source) recordAssistantUsage(message, {
+              input_tokens: source.input_tokens ?? source.inputTokens,
+              output_tokens: source.output_tokens ?? source.outputTokens,
+              cache_read_input_tokens: source.cache_read_input_tokens ?? source.cacheReadInputTokens,
+              cache_creation_input_tokens: source.cache_creation_input_tokens ?? source.cacheCreationInputTokens,
+            }, cfg.metadata);
+          }
         }
       };
       child.stdout.on("data", (d) => {
@@ -641,7 +653,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         let r;
         let normalized;
         for (let attempt = 0; attempt < 2; attempt++) {
-          r = await runClaude(t, chat, message, text, files, { ...cfg, model });
+          r = await runClaude(t, chat, message, text, files, { ...cfg, model, metadata: discovered.models.find((item) => item.id === model) });
           if (!r.error) break;
           log(`assistant (${t.email || "owner"}, claude): ${rawErrorText(r.rawError || r.failure || r.error).slice(0, 500)}`);
           normalized = normalizeEngineError(r.failure || r.error, { provider: "claude", timeZone: timeZoneOf(t) });
@@ -846,7 +858,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     if (ids?.reminder_id) Object.assign(last, { reminder_id: ids.reminder_id, last: "reminder" });
   }
 
-  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, error_kind: m.error_kind || null, files: m.files || [], quick: !!m.quick, model: m.model || null });
+  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, error_kind: m.error_kind || null, files: m.files || [], quick: !!m.quick, model: m.model || null, usage: m.usage || null });
 
   /** The Drive folder attachments go to, made on first use. */
   function assistantFolder(t) {

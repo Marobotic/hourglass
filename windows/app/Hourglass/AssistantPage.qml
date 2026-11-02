@@ -137,6 +137,15 @@ Item {
         if (page.chat.engine === "openai") return "API · " + (m || "pick a model");
         return "Free · " + (shortName || "auto");
     }
+    function usageCaption(u) {
+        if (!u) return "";
+        const parts = [];
+        if (u.input_tokens !== null || u.output_tokens !== null) parts.push((u.input_tokens || 0) + " in · " + (u.output_tokens || 0) + " out");
+        if ((u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) > 0) parts.push(((u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)) + " cached");
+        if (u.cost !== null && u.cost !== undefined) parts.push("$" + Number(u.cost).toFixed(4));
+        if (u.context_percent !== null && u.context_percent !== undefined) parts.push(Number(u.context_percent).toFixed(1).replace(/\.0$/, "") + "% context");
+        return parts.join("  ·  ");
+    }
     function newChat() {
         Api.request("POST", "/api/assistant/new", {}, () => { page.pending = ""; page.load(); }, true);
     }
@@ -394,6 +403,15 @@ Item {
                                 font.pixelSize: 14
                                 lineHeight: 1.15
                                 onLinkActivated: link => Qt.openUrlExternally(link)
+                            }
+                            Text {
+                                visible: !row.mine && !!row.modelData.usage && (row.modelData.usage.input_tokens !== null || row.modelData.usage.output_tokens !== null || row.modelData.usage.cost !== null || row.modelData.usage.context_percent !== null)
+                                width: body.width
+                                text: page.usageCaption(row.modelData.usage)
+                                color: Theme.faint
+                                font.family: Theme.mono
+                                font.pixelSize: 10
+                                wrapMode: Text.Wrap
                             }
                             Text {
                                 visible: !!row.modelData.error

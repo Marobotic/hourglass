@@ -15,7 +15,7 @@
 // Keys are stored per account, encrypted with the server's own key
 // (assistant.key in HOURGLASS_DATA), and never sent back to the apps.
 import Anthropic from "@anthropic-ai/sdk";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -51,7 +51,7 @@ export async function listAnthropicModels({ key, base_url = "https://api.anthrop
     name: String(m.display_name || m.name || m.id),
     note: "",
     context_window: Number.isFinite(m.context_window) ? m.context_window : null,
-    pricing: m.pricing && Number.isFinite(Number(m.pricing.input)) && Number.isFinite(Number(m.pricing.output))
+    pricing: m.pricing && m.pricing.input != null && m.pricing.output != null && Number.isFinite(Number(m.pricing.input)) && Number.isFinite(Number(m.pricing.output))
       ? { input: Number(m.pricing.input), output: Number(m.pricing.output) } : null,
   })).sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -62,6 +62,8 @@ export const OPENAI_PRESETS = [
   { id: "gemini", name: "Google Gemini", base_url: "https://generativelanguage.googleapis.com/v1beta/openai" },
   { id: "groq", name: "Groq", base_url: "https://api.groq.com/openai/v1" },
 ];
+
+const openaiModelCache = new Map();
 
 const TURN_SECONDS = 120;
 const MAX_STEPS = 12; // model calls in one reply (each may run several tools)
@@ -190,7 +192,26 @@ export function historyTurns(chat, upTo) {
 
 // --- Claude with an API key -------------------------------------------------------------
 
-async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress, onStep }) {
+export function recordAssistantUsage(message, usage, metadata) {
+  const has = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].some((k) => usage?.[k] != null && Number.isFinite(Number(usage[k])));
+  if (!has) return;
+  const u = message.usage ||= { input_tokens: null, output_tokens: null, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cost: null, context_window: null, context_percent: null };
+  for (const [target, source] of [["input_tokens", "input_tokens"], ["output_tokens", "output_tokens"], ["cache_read_input_tokens", "cache_read_input_tokens"], ["cache_creation_input_tokens", "cache_creation_input_tokens"]]) {
+    if (usage?.[source] != null && Number.isFinite(Number(usage[source]))) u[target] = (u[target] || 0) + Number(usage[source]);
+  }
+  const input = usage.input_tokens != null && Number.isFinite(Number(usage.input_tokens)) ? Number(usage.input_tokens) : 0;
+  const cachedRead = usage.cache_read_input_tokens != null && Number.isFinite(Number(usage.cache_read_input_tokens)) ? Number(usage.cache_read_input_tokens) : 0;
+  const cachedWrite = usage.cache_creation_input_tokens != null && Number.isFinite(Number(usage.cache_creation_input_tokens)) ? Number(usage.cache_creation_input_tokens) : 0;
+  const contextInput = usage.context_input_tokens != null && Number.isFinite(Number(usage.context_input_tokens)) ? Number(usage.context_input_tokens) : input + cachedRead + cachedWrite;
+  u.context_window = Number.isFinite(metadata?.context_window) && metadata.context_window > 0 ? metadata.context_window : null;
+  u.context_percent = u.context_window && contextInput ? Math.round(contextInput / u.context_window * 1000) / 10 : null;
+  if (metadata?.pricing && Number.isFinite(u.input_tokens) && Number.isFinite(u.output_tokens)) {
+    const billedInput = usage.cost_input_tokens != null && Number.isFinite(Number(usage.cost_input_tokens)) ? Number(usage.cost_input_tokens) : u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens;
+    u.cost = billedInput * metadata.pricing.input + u.output_tokens * metadata.pricing.output;
+  }
+}
+
+async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata }) {
   const client = new Anthropic({ apiKey: key, timeout: TURN_SECONDS * 1000, maxRetries: 1 });
   const id = model || CLAUDE_MODELS[0].id;
   const tools = TOOL_SCHEMAS.map((t, i) => ({ name: t.name, description: t.description, input_schema: t.schema, ...(i === TOOL_SCHEMAS.length - 1 ? { cache_control: { type: "ephemeral" } } : {}) }));
@@ -210,26 +231,63 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
       thinking: { type: "adaptive", display: "summarized" },
     };
     const sent = Date.now();
-    const response = fallback
-      ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }, { signal })
-      : await client.messages.create(params, { signal });
+    const stream = fallback
+      ? await client.beta.messages.stream({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }, { signal })
+      : await client.messages.stream(params, { signal });
+    let response = null;
+    let block = null;
+    let stopReason = null;
+    let usage = {};
+    for await (const ev of stream) {
+      if (ev.type === "message_start") {
+        usage = { ...usage, ...(ev.message?.usage || {}) };
+        response = ev.message;
+      } else if (ev.type === "content_block_start") {
+        block = ev.content_block ? { ...ev.content_block } : null;
+        if (block?.type === "tool_use") {
+          block.input = "";
+          message.tools.push({ call_id: block.id, tool: block.name, status: "running" });
+          onStep(`Using ${block.name}`);
+          onProgress();
+        }
+        if (block?.type === "text") block.text = "";
+        if (block?.type === "thinking" && block.thinking?.trim()) onStep(`Thinking: ${block.thinking.trim().replace(/\s+/g, " ").slice(0, 240)}`);
+      } else if (ev.type === "content_block_delta") {
+        if (ev.delta?.type === "text_delta") {
+          if (block?.type === "text") block.text += ev.delta.text || "";
+          message.text = (message.text || "") + (ev.delta.text || "");
+          onProgress();
+        } else if (ev.delta?.type === "input_json_delta" && block) block.input += ev.delta.partial_json || "";
+        else if (ev.delta?.type === "thinking_delta" && ev.delta.thinking?.trim()) onStep(`Thinking: ${ev.delta.thinking.trim().replace(/\s+/g, " ").slice(0, 240)}`);
+      } else if (ev.type === "content_block_stop" && block) {
+        if (block.type === "tool_use") {
+          try { block.input = JSON.parse(block.input || "{}"); } catch { block.input = {}; }
+        }
+        const content = (response ||= { content: [] }).content;
+        if (!content[ev.index]) content[ev.index] = block;
+        block = null;
+      } else if (ev.type === "message_delta") {
+        stopReason = ev.delta?.stop_reason || stopReason;
+        usage = { ...usage, ...(ev.usage || {}) };
+      }
+    }
+    if (!response) response = { content: [] };
+    recordAssistantUsage(message, usage, metadata);
+    onProgress();
     onStep(`Claude answered (${Math.round((Date.now() - sent) / 100) / 10} s)`);
-    for (const b of response.content) if (b.type === "thinking" && (b.thinking || "").trim()) onStep(`Thinking: ${b.thinking.trim().replace(/\s+/g, " ").slice(0, 240)}`);
-    const text = response.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-    if (text) message.text = text;
-    if (response.stop_reason === "refusal") {
+    if (stopReason === "refusal") {
       message.text ||= "I can't help with that one.";
       return;
     }
     const uses = response.content.filter((b) => b.type === "tool_use");
-    if (!uses.length || response.stop_reason === "end_turn") return;
-    if (response.stop_reason === "max_tokens") throw new Error("the reply was cut off");
+    if (!uses.length || stopReason === "end_turn") return;
+    if (stopReason === "max_tokens") throw new Error("the reply was cut off");
     messages.push({ role: "assistant", content: response.content });
     const results = [];
     for (const u of uses) {
-      const entry = { tool: u.name, status: "running" };
-      message.tools.push(entry);
-      onStep(`Using ${u.name}`);
+      const entry = message.tools.find((item) => item.call_id === u.id) || { call_id: u.id, tool: u.name, status: "running" };
+      if (!message.tools.includes(entry)) message.tools.push(entry);
+      entry.tool = u.name;
       onProgress();
       const r = callTool(service, u.name, u.input);
       if (!r.ok) onStep(`${u.name} failed: ${r.text.slice(0, 160)}`);
@@ -244,7 +302,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
 
 // --- any OpenAI-compatible API ----------------------------------------------------------
 
-async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep }) {
+async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata }) {
   if (!model) throw Object.assign(new Error("pick a model in Settings first"), { status: 400 });
   const url = `${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/chat/completions`;
   const tools = TOOL_SCHEMAS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
@@ -256,21 +314,73 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
     const res = await fetch(url, {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
+      body: JSON.stringify({ model, messages, tools, tool_choice: "auto", stream: true, stream_options: { include_usage: true } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(TURN_SECONDS * 1000)]),
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "openai" });
-    const choice = body.choices?.[0]?.message;
-    if (!choice) throw new Error("the API sent no reply");
-    if (choice.content) message.text = String(choice.content).trim();
-    const calls = choice.tool_calls || [];
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "openai" });
+    }
+    if (!res.body) throw new Error("the API sent no reply stream");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let content = "";
+    const callsByIndex = new Map();
+    let gotEvent = false;
+    const consume = (chunk) => {
+      buffer += chunk;
+      let boundary;
+      while ((boundary = buffer.search(/\r?\n\r?\n/)) >= 0) {
+        const packet = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary).replace(/^\r?\n\r?\n/, "");
+        const data = packet.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+        if (!data || data === "[DONE]") continue;
+        let event;
+        try { event = JSON.parse(data); } catch { continue; }
+        gotEvent = true;
+        if (event.error) throw Object.assign(new Error(event.error.message || "the API returned an error"), { status: event.error.status || res.status, headers: res.headers, body: event, provider: "openai" });
+        const choice = event.choices?.[0];
+        const delta = choice?.delta;
+        if (delta?.content) { content += delta.content; message.text = (message.text || "") + delta.content; onProgress(); }
+        for (const part of delta?.tool_calls || []) {
+          const call = callsByIndex.get(part.index) || { id: "", type: "function", function: { name: "", arguments: "" } };
+          if (part.id) call.id = part.id;
+          if (part.type) call.type = part.type;
+          if (part.function?.name) call.function.name += part.function.name;
+          if (part.function?.arguments) call.function.arguments += part.function.arguments;
+          if (call.entry && part.id) call.entry.call_id = part.id;
+          if (!call.entry && call.function.name) {
+            call.entry = { call_id: call.id, tool: call.function.name, status: "running" };
+            message.tools.push(call.entry);
+            onStep(`Using ${call.function.name}`);
+            onProgress();
+          } else if (call.entry && part.function?.name) call.entry.tool = call.function.name;
+          callsByIndex.set(part.index, call);
+        }
+        if (event.usage) recordAssistantUsage(message, { input_tokens: event.usage.prompt_tokens, output_tokens: event.usage.completion_tokens, cache_read_input_tokens: event.usage.prompt_tokens_details?.cached_tokens, context_input_tokens: event.usage.prompt_tokens, cost_input_tokens: event.usage.prompt_tokens }, metadata);
+      }
+    };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        consume(decoder.decode(value, { stream: true }));
+      }
+      consume(decoder.decode());
+      if (buffer.trim()) { const tail = buffer; buffer = ""; consume(`${tail}\n\n`); }
+    } catch (e) {
+      await reader.cancel().catch(() => {});
+      throw e;
+    }
+    if (!gotEvent) throw new Error("the API sent no reply");
+    const calls = [...callsByIndex.values()];
     if (!calls.length) return;
-    messages.push({ role: "assistant", content: choice.content ?? null, tool_calls: calls });
+    messages.push({ role: "assistant", content: content || null, tool_calls: calls.map(({ id, type, function: fn }) => ({ id, type, function: fn })) });
     for (const c of calls) {
-      const entry = { tool: c.function?.name, status: "running" };
-      message.tools.push(entry);
-      onStep(`Using ${c.function?.name}`);
+      const entry = c.entry || { call_id: c.id, tool: c.function?.name, status: "running" };
+      if (!message.tools.includes(entry)) message.tools.push(entry);
+      entry.tool = c.function?.name;
       onProgress();
       let args = {};
       try { args = JSON.parse(c.function?.arguments || "{}"); } catch {}
@@ -284,13 +394,16 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
 }
 
 export async function listOpenAIModels({ key, base_url }) {
+  const cacheKey = createHash("sha256").update(`${base_url || OPENAI_PRESETS[0].base_url}\n${key}`).digest("hex");
+  const cached = openaiModelCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < 60 * 60_000) return cached.models;
   const res = await fetch(`${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/models`, {
     headers: { authorization: `Bearer ${key}` },
     signal: AbortSignal.timeout(15000),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "openai" });
-  return (body.data || []).map((m) => {
+  const models = (body.data || []).map((m) => {
     const id = String(m.id).replace(/^models\//, "");
     const context = Number(m.context_length);
     const input = Number(m.pricing?.prompt);
@@ -299,9 +412,11 @@ export async function listOpenAIModels({ key, base_url }) {
       id,
       name: String(m.name || m.display_name || id),
       context_window: Number.isFinite(context) && context > 0 ? context : null,
-      pricing: Number.isFinite(input) && Number.isFinite(output) ? { input, output } : null,
+      pricing: m.pricing?.prompt != null && m.pricing?.completion != null && Number.isFinite(input) && Number.isFinite(output) ? { input, output } : null,
     };
   }).sort((a, b) => a.id.localeCompare(b.id));
+  openaiModelCache.set(cacheKey, { at: Date.now(), models });
+  return models;
 }
 
 /** Checks a key before saving it: true, or throws with what is wrong. */
@@ -332,6 +447,11 @@ export async function runDirect({ settings, system, chat, userText, images, serv
   if (!key) throw new Error("Add your key in the assistant's settings first.");
   const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep };
   const provider = settings.engine;
+  let openaiModels = [];
+  if (provider === "openai") {
+    try { openaiModels = await listOpenAIModels({ key, base_url: settings.base_url }); } catch {}
+  }
+  const metadataFor = (id) => provider === "anthropic" ? claudeModels.find((m) => m.id === id) : openaiModels.find((m) => m.id === id);
   const runModel = provider === "anthropic" ? runAnthropic : runOpenAI;
   const tried = new Set();
   let model = settings.model || (provider === "anthropic" ? CLAUDE_MODELS[0].id : "");
@@ -339,6 +459,7 @@ export async function runDirect({ settings, system, chat, userText, images, serv
   while (model && !tried.has(model)) {
     tried.add(model);
     args.model = model;
+    args.metadata = metadataFor(model);
     let failure = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -366,7 +487,7 @@ export async function runDirect({ settings, system, chat, userText, images, serv
       alternatives = [...ids.slice(index + 1), ...ids.slice(0, Math.max(0, index))];
     } else {
       try {
-        const ids = (await listOpenAIModels({ key, base_url: settings.base_url })).map((m) => m.id);
+        const ids = (openaiModels.length ? openaiModels : await listOpenAIModels({ key, base_url: settings.base_url })).map((m) => m.id);
         const index = ids.indexOf(model);
         alternatives = index >= 0 ? [...ids.slice(index + 1), ...ids.slice(0, index)] : ids;
       } catch (e) {

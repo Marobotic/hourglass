@@ -335,6 +335,16 @@ private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Bo
             // What it did, drawn.
             for (c in m.optJSONArray("cards").list()) ResultCardView(c, now, Modifier.fillMaxWidth())
             if (text.isNotBlank()) NoteView(text, opener)
+            m.optJSONObject("usage")?.let { u ->
+                val parts = buildList {
+                    if (!u.isNull("input_tokens") || !u.isNull("output_tokens")) add("${u.optLong("input_tokens")} in · ${u.optLong("output_tokens")} out")
+                    val cached = u.optLong("cache_read_input_tokens") + u.optLong("cache_creation_input_tokens")
+                    if (cached > 0) add("$cached cached")
+                    if (!u.isNull("cost")) add("$" + "%.4f".format(u.optDouble("cost")))
+                    if (!u.isNull("context_percent")) add("${"%.1f".format(u.optDouble("context_percent")).trimEnd('0').trimEnd('.')}% context")
+                }
+                if (parts.isNotEmpty()) T(parts.joinToString("  ·  "), 10, HColors.faint)
+            }
             m.optString("error").takeIf { it.isNotBlank() && it != "null" }?.let { T(it, 13, HColors.accent) }
             // How it got there.
             val steps = m.optJSONArray("steps").list()

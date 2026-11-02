@@ -299,6 +299,17 @@ private struct Message: View {
                     // What it did, drawn.
                     ForEach(Array((m["cards"] as? [[String: Any]] ?? []).enumerated()), id: \.offset) { _, c in ResultCard(info: c, now: now) }
                     if !text.isEmpty { NoteBodyView(text: text, open: { opener.open($0, store) }) }
+                    if let usage = m["usage"] as? [String: Any] {
+                        let input = usage["input_tokens"] as? Int
+                        let output = usage["output_tokens"] as? Int
+                        let cached = (usage["cache_read_input_tokens"] as? Int ?? 0) + (usage["cache_creation_input_tokens"] as? Int ?? 0)
+                        var parts: [String] = []
+                        if input != nil || output != nil { parts.append("\(input ?? 0) in · \(output ?? 0) out") }
+                        if cached > 0 { parts.append("\(cached) cached") }
+                        if let cost = usage["cost"] as? Double { parts.append(String(format: "$%.4f", cost)) }
+                        if let percent = usage["context_percent"] as? Double { parts.append(String(format: "%.1f", percent).replacingOccurrences(of: "\\.0$", with: "", options: .regularExpression) + "% context") }
+                        if !parts.isEmpty { T(parts.joined(separator: "  ·  "), 10, H.faint) }
+                    }
                     if let e = m["error"] as? String, !e.isEmpty { T(e, 13, H.accent) }
                     // How it got there.
                     if canShowSteps, let steps = m["steps"] as? [[String: Any]], !steps.isEmpty {

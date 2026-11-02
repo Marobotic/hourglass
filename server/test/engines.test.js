@@ -14,6 +14,20 @@ const TOKEN = "owner-token-for-tests";
 const GOOD_KEY = "sk-test-good";
 let hg, base, data, fake, fakeUrl;
 const seen = []; // requests the fake APIs got
+let openaiStreamClosed = false;
+let anthropicStreamClosed = false;
+
+function sendSse(res, events, delay = 0) {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  return (async () => {
+    for (const event of events) {
+      if (res.destroyed) return;
+      res.write(`${event.type ? `event: ${event.type}\n` : ""}data: ${JSON.stringify(event)}\n\n`);
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    if (!res.destroyed) res.end("data: [DONE]\n\n");
+  })();
+}
 
 // One fake for both APIs. The model asks for an alarm, then says it is done.
 function startFake() {
@@ -28,23 +42,61 @@ function startFake() {
       if (key !== GOOD_KEY) return send(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
       if (req.url.startsWith("/v1/models")) return send(200, { data: [
         { type: "model", id: "claude-opus-5-5", display_name: "Claude Opus 5.5", created_at: "2026-01-01T00:00:00Z", context_window: 200000, pricing: { input: 0.000005, output: 0.000025 } },
-        { type: "model", id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5", created_at: "2026-01-01T00:00:00Z" },
+        { type: "model", id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5", created_at: "2026-01-01T00:00:00Z", context_window: 200000, pricing: { input: 0.000001, output: 0.000005 } },
         { type: "model", id: "claude-live-custom", display_name: "Claude Live Custom", created_at: "2026-01-01T00:00:00Z" },
+        { type: "model", id: "claude-stream-abort", display_name: "Claude Stream Abort", created_at: "2026-01-01T00:00:00Z" },
       ], has_more: false });
       if (req.url.startsWith("/v1/messages")) {
+        if (json.model === "claude-stream-abort") {
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.write(`event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "abort", type: "message", role: "assistant", model: json.model, content: [], usage: { input_tokens: 2 } } })}\n\n`);
+          res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`);
+          res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } })}\n\n`);
+          res.on("close", () => { anthropicStreamClosed = true; });
+          return;
+        }
         const done = json.messages.some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result"));
-        const usage = { input_tokens: 10, output_tokens: 5 };
-        if (!done) return send(200, { id: "msg_1", type: "message", role: "assistant", model: json.model, stop_reason: "tool_use", usage,
-          content: [{ type: "tool_use", id: "tu_1", name: "set_alarm", input: { label: "Gym", time: "07:30", days: ["Mon", "Wed"] } }] });
-        return send(200, { id: "msg_2", type: "message", role: "assistant", model: json.model, stop_reason: "end_turn", usage, content: [{ type: "text", text: "Done." }] });
+        const id = done ? "msg_2" : "msg_1";
+        const start = { type: "message_start", message: { id, type: "message", role: "assistant", model: json.model, content: [], usage: { input_tokens: 10, cache_read_input_tokens: 2 } } };
+        if (!done) return sendSse(res, [start,
+          { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tu_1", name: "set_alarm", input: {} } },
+          { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"label":"Gym",' } },
+          { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '"time":"07:30","days":["Mon","Wed"]}' } },
+          { type: "content_block_stop", index: 0 },
+          { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 3 } }, { type: "message_stop" }]);
+        return sendSse(res, [start,
+          { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Do" } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ne." } },
+          { type: "content_block_stop", index: 0 },
+          { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }, { type: "message_stop" }], 5);
       }
-      if (req.url === "/openai/models") return send(200, { data: ["gpt-test", "gpt-other", "gpt-rate", "gpt-alt", "gpt-partial"].map((id) => ({ id, name: `Display ${id}`, context_length: id === "gpt-test" ? 128000 : undefined, pricing: id === "gpt-test" ? { prompt: "0.000002", completion: "0.000008" } : undefined })) });
+      if (req.url === "/openai/models") return send(200, { data: ["gpt-test", "gpt-other", "gpt-rate", "gpt-alt", "gpt-partial", "zz-stream", "zz-abort"].map((id) => ({ id, name: `Display ${id}`, context_length: ["gpt-test", "zz-stream", "zz-abort"].includes(id) ? 128000 : undefined, pricing: ["gpt-test", "zz-stream", "zz-abort"].includes(id) ? { prompt: "0.000002", completion: "0.000008" } : undefined })) });
       if (req.url === "/openai/chat/completions") {
         const done = json.messages.some((m) => m.role === "tool");
         if (json.model === "gpt-rate") return send(429, { error: { code: "rate_limit_exceeded", message: "provider private rate limit detail" } }, { "retry-after": "3" });
         if (json.model === "gpt-partial" && done) return send(429, { error: { code: "rate_limit_exceeded", message: "provider private late limit detail" } }, { "retry-after": "3" });
-        if (!done) return send(200, { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "start_timer", arguments: JSON.stringify({ minutes: 25, label: "Focus" }) } }] } }] });
-        return send(200, { choices: [{ message: { role: "assistant", content: "Timer's on." } }] });
+        if (json.model === "zz-abort") {
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "partial" } }] })}\n\n`);
+          res.on("close", () => { openaiStreamClosed = true; });
+          return;
+        }
+        if (json.model === "zz-stream") return sendSse(res, [
+          { choices: [{ delta: { content: "A streamed " } }] },
+          { choices: [{ delta: { content: "reply." } }] },
+          { choices: [], usage: { prompt_tokens: 20, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 6 } } },
+        ], 100);
+        if (!done) return sendSse(res, [
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "start_timer", arguments: '{"minutes":' } }] } }] },
+          { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '25,"label":"Focus"}' } }] } }] },
+          { choices: [], usage: { prompt_tokens: 16, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 4 } } },
+        ]);
+        return sendSse(res, [
+          { choices: [{ delta: { content: "Timer" } }] },
+          { choices: [{ delta: { content: "'s on." } }] },
+          { choices: [], usage: { prompt_tokens: 30, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 5 } } },
+        ]);
       }
       send(404, { error: { message: "not here" } });
     });
@@ -141,6 +193,11 @@ test("Claude with a key: the tool call sets the alarm, and the reply has an alar
   assert.equal(reply.cards[0].label, "Gym");
   assert.equal(reply.cards[0].when, "Mon, Wed");
   assert.equal(reply.cards[0].time, "7:30 AM");
+  assert.equal(reply.usage.input_tokens, 20);
+  assert.equal(reply.usage.output_tokens, 8);
+  assert.equal(reply.usage.cache_read_input_tokens, 4);
+  assert.ok(reply.usage.cost > 0);
+  assert.equal(reply.usage.context_window, 200000);
   // The request: low effort, the system prompt cached, every Hourglass tool offered.
   const req = seen.filter((r) => r.path.startsWith("/v1/messages"))[0].body;
   assert.equal(req.model, "claude-haiku-5-5");
@@ -158,7 +215,7 @@ test("another API with a key: models are listed, and its tool calls run too", as
   const set = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, key: GOOD_KEY, model: "gpt-test" });
   assert.equal(set.status, 200);
   const models = await call("GET", `/api/assistant/models?base_url=${encodeURIComponent(fakeUrl + "/openai")}`);
-  assert.deepEqual(models.body.models.map((m) => m.id), ["gpt-alt", "gpt-other", "gpt-partial", "gpt-rate", "gpt-test"]);
+  assert.deepEqual(models.body.models.map((m) => m.id), ["gpt-alt", "gpt-other", "gpt-partial", "gpt-rate", "gpt-test", "zz-abort", "zz-stream"]);
   const rich = models.body.models.find((m) => m.id === "gpt-test");
   assert.equal(rich.name, "Display gpt-test");
   assert.equal(rich.context_window, 128000);
@@ -172,9 +229,61 @@ test("another API with a key: models are listed, and its tool calls run too", as
   assert.equal(reply.cards[0].kind, "timer");
   assert.equal(reply.cards[0].label, "Focus");
   assert.equal(reply.cards[0].duration_s, 1500);
+  assert.equal(reply.usage.input_tokens, 46);
+  assert.equal(reply.usage.output_tokens, 13);
+  assert.equal(reply.usage.cache_read_input_tokens, 9);
+  assert.ok(reply.usage.cost > 0);
+  assert.equal(reply.usage.context_window, 128000);
   // The earlier exchange went along as history.
   const req = seen.filter((r) => r.path === "/openai/chat/completions")[0].body;
   assert.ok(req.messages.some((m) => m.role === "assistant" && m.content === "Done."));
+});
+
+test("OpenAI-compatible text streams into the polled message with usage metadata", async () => {
+  assert.equal((await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, model: "zz-stream" })).status, 200);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Stream a reply" })).status, 202);
+  let partial = false;
+  for (let i = 0; i < 30; i++) {
+    const live = await call("GET", "/api/assistant");
+    partial ||= live.body.messages.at(-1)?.text === "A streamed ";
+    if (!live.body.busy) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const reply = (await waitIdle()).messages.at(-1);
+  assert.equal(partial, true);
+  assert.equal(reply.text, "A streamed reply.");
+  assert.equal(reply.usage.input_tokens, 20);
+  assert.equal(reply.usage.output_tokens, 4);
+  assert.equal(reply.usage.cache_read_input_tokens, 6);
+  assert.equal(reply.usage.context_window, 128000);
+});
+
+test("stopping a streamed OpenAI-compatible reply aborts its fetch", async () => {
+  openaiStreamClosed = false;
+  assert.equal((await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, model: "zz-abort" })).status, 200);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Stop this stream" })).status, 202);
+  for (let i = 0; i < 30; i++) {
+    const live = await call("GET", "/api/assistant");
+    if (live.body.messages.at(-1)?.text === "partial") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await call("POST", "/api/assistant/stop", {});
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(openaiStreamClosed, true);
+});
+
+test("stopping a streamed Claude reply aborts its SDK stream", async () => {
+  anthropicStreamClosed = false;
+  assert.equal((await call("POST", "/api/assistant/settings", { engine: "anthropic", model: "claude-stream-abort" })).status, 200);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Stop this Claude stream" })).status, 202);
+  for (let i = 0; i < 30; i++) {
+    const live = await call("GET", "/api/assistant");
+    if (live.body.messages.at(-1)?.text === "partial") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await call("POST", "/api/assistant/stop", {});
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(anthropicStreamClosed, true);
 });
 
 test("rate limits fall back to the next model of the same engine before any output", async () => {
