@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -55,11 +56,15 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -76,6 +81,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -88,6 +94,20 @@ private val SUGGESTIONS = listOf("What's on today?", "Remind me to call mom at 6
 
 // A picture or file for the next message: uploading, then its Drive id.
 private data class Attachment(val key: Long, val name: String, val mime: String, val id: String? = null, val error: String? = null)
+private data class DriveEntry(val kind: String, val id: String, val name: String, val mime: String = "")
+
+private val ASSISTANT_STATUS_WORDS = listOf("Simmering", "Tinkering", "Brewing", "Noodling", "Untangling", "Percolating", "Sketching", "Whittling", "Stirring", "Kneading", "Shaping", "Plotting", "Puzzling", "Polishing", "Wiring", "Weaving", "Mapping", "Mulling", "Sorting", "Mending", "Carving", "Measuring", "Sifting", "Riffing", "Fiddling", "Spinning", "Folding", "Juggling", "Tuning", "Tracing", "Layering", "Patching", "Marinating", "Hatching", "Shuffling", "Knitting", "Chiseling", "Doodling", "Arranging", "Mosaicking")
+private fun pastAssistantStatus(word: String): String = mapOf("Simmering" to "Simmered", "Tinkering" to "Tinkered", "Brewing" to "Brewed", "Noodling" to "Noodled", "Untangling" to "Untangled", "Percolating" to "Percolated", "Sketching" to "Sketched", "Whittling" to "Whittled", "Stirring" to "Stirred", "Kneading" to "Kneaded", "Shaping" to "Shaped", "Plotting" to "Plotted", "Puzzling" to "Puzzled", "Polishing" to "Polished", "Wiring" to "Wired", "Weaving" to "Wove", "Mapping" to "Mapped", "Mulling" to "Mulled", "Sorting" to "Sorted", "Mending" to "Mended", "Carving" to "Carved", "Measuring" to "Measured", "Sifting" to "Sifted", "Riffing" to "Riffed", "Fiddling" to "Fiddled", "Spinning" to "Spun", "Folding" to "Folded", "Juggling" to "Juggled", "Tuning" to "Tuned", "Tracing" to "Traced", "Layering" to "Layered", "Patching" to "Patched", "Marinating" to "Marinated", "Hatching" to "Hatched", "Shuffling" to "Shuffled", "Knitting" to "Knitted", "Chiseling" to "Chiseled", "Doodling" to "Doodled", "Arranging" to "Arranged", "Mosaicking" to "Mosaicked")[word] ?: word
+private fun assistantElapsed(ms: Long): String {
+    val seconds = (ms / 1000).coerceAtLeast(0)
+    return if (seconds >= 60) "${seconds / 60}m ${seconds % 60}s" else "${seconds}s"
+}
+private fun assistantToolVerb(tool: String): String = when {
+    Regex("read|get|list", RegexOption.IGNORE_CASE).containsMatchIn(tool) -> "Reading"
+    Regex("search|find", RegexOption.IGNORE_CASE).containsMatchIn(tool) -> "Searching"
+    Regex("edit|write|move|add|update|set|remove|delete|restore", RegexOption.IGNORE_CASE).containsMatchIn(tool) -> "Editing"
+    else -> "Running"
+}
 
 private fun JSONArray?.list(): List<JSONObject> = this?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
 
@@ -120,9 +140,17 @@ fun AssistantScreen(nav: Nav) {
     var problem by remember { mutableStateOf<String?>(null) }
     var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     var settingsOpen by remember { mutableStateOf(false) }
-    var showSteps by remember { mutableStateOf(true) }          // "What it's doing" under Working
+    var driveOpen by remember { mutableStateOf(false) }
+    var driveEntries by remember { mutableStateOf<List<DriveEntry>>(emptyList()) }
+    var driveTitle by remember { mutableStateOf("Choose a Drive file") }
+    var driveFolder by remember { mutableStateOf<String?>(null) }
+    var driveCourse by remember { mutableStateOf<String?>(null) }
+    var mode by remember { mutableStateOf("auto") }
+    var showSteps by remember { mutableStateOf(false) }         // collapsed thinking signature
     var openSteps by remember { mutableStateOf(setOf<String>()) } // finished answers whose steps are shown
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var statusTurn by remember { mutableStateOf("") }
+    var statusWord by remember { mutableStateOf(ASSISTANT_STATUS_WORDS.first()) }
     // Messages already on screen once: later ones rise in, these don't again.
     val seen = remember { mutableSetOf<String>() }
     var ready by remember { mutableStateOf(false) }
@@ -145,6 +173,7 @@ fun AssistantScreen(nav: Nav) {
         if (o == null) { problem = err; return@assistant }
         problem = null
         if (chat?.toString() != o.toString()) chat = o
+        mode = o.optString("mode", "auto").ifBlank { "auto" }
         if (pending != null && o.optJSONArray("messages").list().any { it.optString("role") == "user" && it.optString("text") == pending }) pending = null
         val nowBusy = o.optBoolean("busy") || pending != null
         // Finished: pull what the assistant changed.
@@ -183,11 +212,35 @@ fun AssistantScreen(nav: Nav) {
             }
         }
     }
+    fun loadDrive(folderId: String?, courseId: String?) {
+        driveFolder = folderId
+        driveCourse = courseId
+        val view = repo.drive(folderId, courseId)
+        driveTitle = when {
+            courseId != null -> "Course Drive"
+            folderId != null -> view.folder?.optString("name").orEmpty().ifBlank { "Drive folder" }
+            else -> "Choose a Drive file"
+        }
+        driveEntries = view.courses.map { (c, _) -> DriveEntry("course", c.optString("id"), c.optString("name")) } +
+            view.folders.map { (f, _) -> DriveEntry("folder", f.optString("id"), f.optString("name")) } +
+            view.files.map { f -> DriveEntry("file", f.optString("id"), f.optString("name"), f.optString("mime")) }
+    }
+    fun attachDriveFile(file: DriveEntry) {
+        if (attachments.any { it.id == file.id }) return
+        attachments = attachments + Attachment(System.nanoTime(), file.name, file.mime, file.id)
+        driveOpen = false
+    }
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { attach(it) }
 
     // Poll quickly while it works, slowly otherwise; a clock for timers and "Working N s".
     LaunchedEffect(busy) { while (true) { load(); delay(if (busy) 900 else 15000) } }
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
+    LaunchedEffect(current?.optString("id"), serverBusy) {
+        if (serverBusy && current?.optString("id") != statusTurn) {
+            statusTurn = current?.optString("id").orEmpty()
+            statusWord = ASSISTANT_STATUS_WORDS.filter { it != statusWord }.randomOrNull() ?: "Simmering"
+        }
+    }
     LaunchedEffect(chat != null) { if (chat != null) { delay(50); seen.addAll(shown.map { it.optString("id") }); ready = true } }
 
     // Stay on the newest message while it grows, unless scrolled up to read.
@@ -199,6 +252,40 @@ fun AssistantScreen(nav: Nav) {
     }
 
     if (settingsOpen) AssistantSettingsDialog(repo, onDismiss = { settingsOpen = false }, onSaved = { load() })
+    if (driveOpen) {
+        AlertDialog(
+            onDismissRequest = { driveOpen = false },
+            containerColor = HColors.surface,
+            shape = RectangleShape,
+            title = { Row(verticalAlignment = Alignment.CenterVertically) {
+                if (driveFolder != null || driveCourse != null) IconButton({ loadDrive(null, null) }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Drive root", tint = HColors.fg) }
+                T(driveTitle, 15, bold = true)
+            } },
+            text = {
+                Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (driveEntries.isEmpty()) T("This folder is empty.", 13, HColors.muted, modifier = Modifier.padding(vertical = 16.dp))
+                    for (entry in driveEntries) {
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                when (entry.kind) {
+                                    "course" -> loadDrive(null, entry.id)
+                                    "folder" -> loadDrive(entry.id, null)
+                                    else -> attachDriveFile(entry)
+                                }
+                            }.padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(if (entry.kind == "file") Icons.Outlined.Description else Icons.Outlined.FolderOpen, null, tint = HColors.muted, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(10.dp))
+                            T(entry.name, 13, modifier = Modifier.weight(1f), maxLines = 1)
+                            T(if (entry.kind == "file") "ATTACH" else "OPEN", 10, HColors.accent, bold = true)
+                        }
+                    }
+                }
+            },
+            confirmButton = { HButton("Close", onClick = { driveOpen = false }) },
+        )
+    }
 
     Column(Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -241,11 +328,13 @@ fun AssistantScreen(nav: Nav) {
                             m, opener, now,
                             stepsShown = id in openSteps,
                             canShowSteps = !(serverBusy && m == messages.lastOrNull()),
+                            statusWord = statusWord,
+                            onAction = { actionId, action -> repo.assistantAction(actionId, action) { _, err -> if (err != null) problem = err else load() } },
                             onToggleSteps = { openSteps = if (id in openSteps) openSteps - id else openSteps + id },
                         )
                     }
                 }
-                item(key = "working") { Working(busy, current, now, showSteps) { showSteps = !showSteps } }
+                item(key = "working") { Working(busy, current, now, showSteps, statusWord) { showSteps = !showSteps } }
             }
         }
 
@@ -259,6 +348,7 @@ fun AssistantScreen(nav: Nav) {
         // The message box
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom) {
             IconButton({ pickFiles.launch(arrayOf("image/*", "*/*")) }, enabled = enabled && !busy) { Icon(Icons.Outlined.AttachFile, "Attach pictures or files", tint = HColors.muted) }
+            IconButton({ loadDrive(null, null); driveOpen = true }, enabled = enabled && !busy) { Icon(Icons.Outlined.FolderOpen, "Attach from Drive", tint = HColors.muted) }
             BasicTextField(
                 input, { input = it },
                 Modifier.weight(1f).heightIn(min = 44.dp, max = 140.dp).border(1.dp, HColors.border).background(HColors.surface).padding(horizontal = 12.dp, vertical = 11.dp),
@@ -271,6 +361,64 @@ fun AssistantScreen(nav: Nav) {
             if (busy) HButton("", icon = Icons.Outlined.Stop) { repo.assistant("POST", "/stop") { _, _ -> load() } }
             else HButton("", primary = true, icon = Icons.AutoMirrored.Outlined.Send, enabled = enabled && (input.isNotBlank() || attachments.any { it.id != null }) && !uploading) { send(input) }
         }
+        if (mode == "dangerous") T("Dangerous: changes and deletions apply without asking", 11, HColors.accent, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp))
+        AssistantComposerChips(engineLabel(chat), mode, onModel = { settingsOpen = true }, onMode = { next ->
+            repo.assistantMode(next) { saved, err -> if (saved != null) { mode = saved; load() } else problem = err }
+        })
+    }
+}
+
+@Composable
+internal fun AssistantSnapshotScreen(repo: dev.marobotic.hourglass.data.Repo, variant: String) {
+    val opener = rememberFileOpener(repo)
+    val now = System.currentTimeMillis()
+    val thinking = JSONArray().put(JSONObject().put("at", now - 4000).put("text", "Thinking: I am checking the next step."))
+    val fileCards = JSONArray()
+        .put(JSONObject().put("kind", "file").put("id", "read-file").put("label", "Schedule.md").put("state", "read").put("size", 2048).put("diff", JSONObject().put("added", 0).put("removed", 0)))
+        .put(JSONObject().put("kind", "file").put("id", "changed-file").put("label", "Plan.md").put("state", "changed").put("size", 4096).put("diff", JSONObject().put("added", 2).put("removed", 1)))
+        .put(JSONObject().put("kind", "file").put("id", "created-file").put("label", "Checklist.md").put("state", "created").put("size", 1024).put("diff", JSONObject().put("added", 6).put("removed", 0)))
+    val action = JSONObject().put("id", "action-preview").put("status", "pending").put("summary", "Create alarm: Wake up at 7:30 AM on weekdays")
+    val messages = when (variant) {
+        "streaming" -> listOf(
+            JSONObject().put("id", "user-stream").put("role", "user").put("text", "Review my schedule and tell me what to change."),
+            JSONObject().put("id", "assistant-stream").put("role", "assistant").put("text", "").put("time", now - 4000).put("steps", thinking).put("tools", JSONArray()),
+        )
+        "pending" -> listOf(
+            JSONObject().put("id", "user-pending").put("role", "user").put("text", "Wake me at 7:30 on weekdays."),
+            JSONObject().put("id", "assistant-pending").put("role", "assistant").put("text", "I can set that alarm once you approve it.").put("pending_actions", JSONArray().put(action)),
+        )
+        "files" -> listOf(
+            JSONObject().put("id", "user-files").put("role", "user").put("text", "Read these and make a checklist.").put("files", JSONArray().put(JSONObject().put("id", "schedule").put("name", "Schedule.md").put("mime", "text/markdown"))),
+            JSONObject().put("id", "assistant-files").put("role", "assistant").put("text", "I read the schedule, updated the plan, and made a checklist.").put("cards", fileCards),
+        )
+        else -> emptyList()
+    }
+    Column(Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            T("Assistant", 18, bold = true)
+            Spacer(Modifier.weight(1f))
+            if (variant != "empty") T("New chat", 11, HColors.muted)
+        }
+        if (variant == "empty") {
+            Column(Modifier.weight(1f).fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                PixelLogo(5.dp)
+                Spacer(Modifier.height(12.dp))
+                T("Ask Hourglass to do it for you", 17, bold = true, align = androidx.compose.ui.text.style.TextAlign.Center)
+                T("It can read and change your notes, schedule, alarms, timers and Drive.", 13, HColors.muted, align = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        } else {
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                messages.forEach { m ->
+                    Message(m, opener, now, stepsShown = false, canShowSteps = true, statusWord = "Simmering", onAction = { _, _ -> }, onToggleSteps = {})
+                }
+                if (variant == "streaming") Working(true, messages.last(), now, false, "Simmering") {}
+            }
+        }
+        if (variant == "dangerous") T("Dangerous: changes and deletions apply without asking", 11, HColors.accent, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).heightIn(min = 46.dp).border(1.dp, HColors.border).background(HColors.surface).padding(12.dp)) {
+            T("Ask Hourglass…", 14, HColors.faint)
+        }
+        AssistantComposerChips("Claude plan · Haiku 5.5", if (variant == "dangerous") "dangerous" else "auto", onModel = {}, onMode = {})
     }
 }
 
@@ -284,11 +432,12 @@ private fun Rise(animate: Boolean, modifier: Modifier = Modifier, content: @Comp
 
 // While it works: three dots bouncing in turn, the seconds, and its steps live.
 @Composable
-private fun Working(busy: Boolean, current: JSONObject?, now: Long, showSteps: Boolean, onToggle: () -> Unit) {
+private fun Working(busy: Boolean, current: JSONObject?, now: Long, showSteps: Boolean, statusWord: String, onToggle: () -> Unit) {
     AnimatedVisibility(busy, enter = fadeIn(tween(200)) + expandVertically(), exit = fadeOut(tween(150)) + shrinkVertically()) {
         Column(Modifier.padding(start = 14.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val t = rememberInfiniteTransition(label = "dots")
+                val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "status-spin")
                 Row(Modifier.height(14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.Bottom) {
                     for (i in 0 until 3) {
                         val y by t.animateFloat(0f, 0f, infiniteRepeatable(keyframes {
@@ -301,8 +450,18 @@ private fun Working(busy: Boolean, current: JSONObject?, now: Long, showSteps: B
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                val secs = current?.optLong("time")?.takeIf { it > 0 }?.let { " ${maxOf(0, (now - it) / 1000)} s" }.orEmpty()
-                T("Working$secs", 13, HColors.muted)
+                val tools = current?.optJSONArray("tools").list()
+                val running = tools.asReversed().firstOrNull { it.optString("status") == "running" }
+                val status = when {
+                    running != null -> "${assistantToolVerb(running.optString("tool"))}…"
+                    !current?.optString("text").isNullOrBlank() -> "Writing…"
+                    else -> "$statusWord…"
+                }
+                val elapsed = current?.optLong("time")?.takeIf { it > 0 }?.let { assistantElapsed(now - it) }.orEmpty()
+                Icon(Icons.Outlined.Sync, null, Modifier.size(14.dp).rotate(spin), tint = HColors.accent)
+                Spacer(Modifier.width(8.dp))
+                T(status, 13, HColors.accent)
+                if (elapsed.isNotBlank()) T(elapsed, 11, HColors.faint)
                 if (current != null) {
                     Spacer(Modifier.width(12.dp))
                     T((if (showSteps) "▴" else "▾") + " What it's doing", 12, HColors.faint, modifier = Modifier.clickable(onClick = onToggle))
@@ -314,7 +473,7 @@ private fun Working(busy: Boolean, current: JSONObject?, now: Long, showSteps: B
 }
 
 @Composable
-private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Boolean, canShowSteps: Boolean, onToggleSteps: () -> Unit) {
+private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Boolean, canShowSteps: Boolean, statusWord: String, onAction: (String, String) -> Unit, onToggleSteps: () -> Unit) {
     val mine = m.optString("role") == "user"
     val text = m.optString("text")
     if (mine) {
@@ -333,7 +492,9 @@ private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Bo
             // What it did, one line per tool: a spinner, then a tick that pops in.
             for (t in m.optJSONArray("tools").list()) ToolLine(t.optString("label"), t.optString("status"))
             // What it did, drawn.
-            for (c in m.optJSONArray("cards").list()) ResultCardView(c, now, Modifier.fillMaxWidth())
+            for (a in m.optJSONArray("pending_actions").list()) PendingActionCard(a, onAction)
+            for (f in m.optJSONArray("cards").list().filter { it.optString("kind") == "file" }) FileResultChip(f, opener)
+            for (c in m.optJSONArray("cards").list().filter { it.optString("kind") !in listOf("action", "file") }) ResultCardView(c, now, Modifier.fillMaxWidth())
             if (text.isNotBlank()) NoteView(text, opener)
             m.optJSONObject("usage")?.let { u ->
                 val parts = buildList {
@@ -349,9 +510,13 @@ private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Bo
             // How it got there.
             val steps = m.optJSONArray("steps").list()
             if (steps.isNotEmpty() && canShowSteps) {
-                val model = m.optString("model").takeIf { it.isNotBlank() && it != "null" }?.removePrefix("opencode/")
-                T((if (stepsShown) "▴" else "▾") + " Steps" + (model?.let { " · $it" }.orEmpty()), 11, HColors.faint, modifier = Modifier.clickable(onClick = onToggleSteps).padding(vertical = 2.dp))
-                AnimatedVisibility(stepsShown, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) { StepList(steps) }
+                val thinking = steps.filter { it.optString("text").startsWith("Thinking:") }.ifEmpty { steps }
+                val span = if (thinking.size > 1) thinking.last().optLong("at") - thinking.first().optLong("at") else 0L
+                val caption = pastAssistantStatus(statusWord) + if (span >= 1000) " for ${assistantElapsed(span)}" else ""
+                Row(Modifier.clickable(onClick = onToggleSteps).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    T(if (stepsShown) "Hide $caption" else "Show $caption", 11, HColors.faint)
+                }
+                AnimatedVisibility(stepsShown, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) { StepList(thinking) }
             }
         }
     }
@@ -372,6 +537,53 @@ private fun ToolLine(label: String, status: String) {
         )
         Spacer(Modifier.width(8.dp))
         T(label, 13, HColors.muted)
+    }
+}
+
+@Composable
+private fun PendingActionCard(action: JSONObject, onAction: (String, String) -> Unit) {
+    HCard(Modifier.fillMaxWidth(), stripe = if (action.optString("status") == "pending") HColors.accent else HColors.border) {
+        T(action.optString("summary").ifBlank { "Action needs your approval" }, 12)
+        Spacer(Modifier.height(8.dp))
+        if (action.optString("status") == "pending") Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            HButton("Apply", primary = true) { onAction(action.optString("id"), "apply") }
+            HButton("Skip") { onAction(action.optString("id"), "skip") }
+        } else T(action.optString("status").uppercase(), 10, HColors.muted, spacing = 1.0)
+    }
+}
+
+@Composable
+private fun FileResultChip(file: JSONObject, opener: FileOpener) {
+    val state = file.optString("state").ifBlank { "changed" }.replaceFirstChar { it.uppercase() }
+    val diff = file.optJSONObject("diff")
+    val note = "$state · ${file.optLong("size")} bytes · +${diff?.optInt("added") ?: 0} / -${diff?.optInt("removed") ?: 0} lines"
+    FileChip(file.optString("label").ifBlank { "Drive file" }, file.optString("mime"), note, onClick = {
+        opener.repo.store.get("files", file.optString("id"))?.let { opener.open(it) }
+    })
+}
+
+@Composable
+private fun AssistantComposerChips(engine: String, mode: String, onModel: () -> Unit, onMode: (String) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.border(1.dp, HColors.border).background(HColors.surface2).clickable(onClick = onModel).padding(horizontal = 10.dp, vertical = 7.dp)) {
+            T("$engine  ▾", 10, HColors.fg, maxLines = 1)
+        }
+        Box {
+            Box(
+                Modifier.border(1.dp, if (mode == "dangerous") HColors.accent else HColors.border)
+                    .background(if (mode == "dangerous") HColors.accent else HColors.surface2)
+                    .clickable { menu = true }.padding(horizontal = 10.dp, vertical = 7.dp),
+            ) { T("${mode.replaceFirstChar { it.uppercase() }}  ▾", 10, if (mode == "dangerous") HColors.bg else HColors.fg, bold = mode == "dangerous", maxLines = 1) }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = HColors.surface, shape = RectangleShape) {
+                listOf("ask" to "Every change waits for approval", "auto" to "Only risky actions wait", "dangerous" to "Changes apply immediately").forEach { (value, detail) ->
+                    DropdownMenuItem(
+                        text = { Column { T(value.replaceFirstChar { it.uppercase() }, 13, if (value == "dangerous") HColors.accent else HColors.fg, bold = value == mode); T(detail, 10, HColors.muted) } },
+                        onClick = { menu = false; onMode(value) },
+                    )
+                }
+            }
+        }
     }
 }
 

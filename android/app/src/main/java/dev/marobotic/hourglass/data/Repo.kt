@@ -790,6 +790,15 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         kotlinx.coroutines.withContext(Dispatchers.Main) { done(r.getOrNull(), r.exceptionOrNull()?.message) }
     }
 
+    fun assistantMode(mode: String, done: (String?, String?) -> Unit) = assistant(
+        "POST", "/mode", JSONObject().put("mode", mode),
+    ) { response, error -> done(response?.optString("mode"), error) }
+
+    fun assistantAction(id: String, action: String, done: (JSONObject?, String?) -> Unit) {
+        require(action == "apply" || action == "skip")
+        assistant("POST", "/actions/${java.net.URLEncoder.encode(id, "UTF-8")}/$action", JSONObject(), done)
+    }
+
     fun signOut() = scope.launch {
         token?.takeIf { signedIn }?.let { t -> runCatching { http("POST", "${BuildConfig.SERVER}/auth/logout", t, "{}") } }
         store.setMeta("session_sealed", null)

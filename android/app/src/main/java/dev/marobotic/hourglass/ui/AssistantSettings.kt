@@ -83,9 +83,9 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
             delay(1000)
             repo.assistant("GET", "/claude/login/status") { d, _ ->
                 val state = d?.optString("state").orEmpty()
-                if (state == "error") { error = d.optString("message"); signin = "" }
+                if (state == "error") { error = d?.optString("message").orEmpty(); signin = "" }
                 else if (state == "connected") {
-                    note = d.optString("message"); signin = ""; code = ""
+                    note = d?.optString("message").orEmpty(); signin = ""; code = ""
                     repo.assistant("GET", "/settings") { settings, _ -> if (settings != null) s = settings }
                 }
                 else if (state == "waiting_code") signin = "waiting"

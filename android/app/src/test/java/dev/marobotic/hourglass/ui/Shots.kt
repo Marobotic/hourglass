@@ -86,6 +86,11 @@ class Shots {
         paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(repo, 0, Route.NoteR(n.id)) } } }
     }
     @Test fun assistant() = paparazzi.snapshot { HourglassTheme { WithPickers { HourglassApp(demo(), 0, Route.AssistantR) } } }
+    @Test fun assistantEmpty() = paparazzi.snapshot { HourglassTheme { AssistantSnapshotScreen(demo(), "empty") } }
+    @Test fun assistantStreaming() = paparazzi.snapshot { HourglassTheme { AssistantSnapshotScreen(demo(), "streaming") } }
+    @Test fun assistantPendingAction() = paparazzi.snapshot { HourglassTheme { AssistantSnapshotScreen(demo(), "pending") } }
+    @Test fun assistantFileChips() = paparazzi.snapshot { HourglassTheme { AssistantSnapshotScreen(demo(), "files") } }
+    @Test fun assistantDangerous() = paparazzi.snapshot { HourglassTheme { AssistantSnapshotScreen(demo(), "dangerous") } }
 }
 
 private val NL = 10.toChar().toString()
