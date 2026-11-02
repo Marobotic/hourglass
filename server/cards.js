@@ -16,6 +16,11 @@ import { addDays, localParts, WEEKDAYS } from "../core/dates.js";
 const MAX_CARDS = 4;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+function fileCard(id, name, size, state, diff = { added: 0, removed: 0 }) {
+  const changes = { added: diff.added || 0, removed: diff.removed || 0 };
+  return { kind: "file", id, file_id: id, name, label: name, size: size || 0, state, added: changes.added, removed: changes.removed, diff: changes };
+}
+
 function fmt(service) {
   const h12 = service.settings().time_format !== "24h";
   const today = service.today();
@@ -99,6 +104,15 @@ export function cardsFor(service, tool, args = {}, result = null) {
   try {
     const f = fmt(service);
     switch (tool) {
+      case "read_file":
+        return result?.file_id ? [fileCard(result.file_id, result.name, result.size, "read")] : [];
+      case "write_file":
+      case "edit_file":
+      case "restore_file_version":
+      case "rename_file":
+        return result?.id ? [fileCard(result.id, result.name || args.path?.split(/[\\/]/).pop() || "File", result.size, tool === "write_file" && result.created ? "created" : "changed", result.changes)] : [];
+      case "delete_file":
+        return result?.id ? [fileCard(result.id, result.name, result.size, "deleted")] : [];
       case "set_alarm":
         return result?.id ? [alarmCard(service, result, args.alarm_id ? (args.enabled === false ? "off" : args.enabled === true && Object.keys(args).length <= 2 ? "on" : "set") : "set")] : [];
       case "remove_alarm":

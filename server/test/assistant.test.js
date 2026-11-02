@@ -257,6 +257,21 @@ test("attachments: uploaded to the Drive's Assistant folder, staged for the mode
   await waitIdle();
 });
 
+test("dangerous mode writes workspace edits back to Drive with a file card and version", async () => {
+  const up = await fetch(`${base}/api/files/upload?name=workspace.txt`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` }, body: "before\n" });
+  const file = await up.json();
+  assert.equal((await call("POST", "/api/assistant/mode", { mode: "dangerous" })).status, 200);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "DANGEROUS WORKSPACE TEST", files: [file.id] })).status, 202);
+  const chat = await waitIdle();
+  const reply = chat.messages.at(-1);
+  assert.ok(reply.cards.some((card) => card.kind === "file" && card.id === file.id && card.state === "changed"));
+  const raw = await fetch(`${base}/api/files/${file.id}/raw`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(await raw.text(), "edited by fake CLI\n");
+  const history = await call("GET", `/api/files/${file.id}/versions`);
+  assert.equal(history.body.versions.length, 1);
+  await call("POST", "/api/assistant/mode", { mode: "auto" });
+});
+
 test("the shared OpenCode free quota stops model fallback after the first model", async () => {
   const set = await call("POST", "/api/assistant/settings", { engine: "free", model: "opencode/big-pickle" });
   assert.equal(set.status, 200);

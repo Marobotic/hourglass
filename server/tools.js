@@ -236,6 +236,13 @@ export const TOOLS = [
     readOnly: true,
     run: (s, a) => s.listDrive(a),
   },
+  { name: "read_file", title: "Read Drive file", description: "Read UTF-8 text from a Drive file. Use file_id or a unique Drive path; offset and limit are byte offsets and lengths.", permission: "read", input: { file_id: z.string().optional(), path: z.string().optional(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(200000).optional() }, readOnly: true, run: (s,a) => s.driveFiles.read(a) },
+  { name: "write_file", title: "Write Drive file", description: "Create a Drive file or overwrite an existing file by id or path.", permission: "change", overwrite_permission: "risky", input: { file_id: z.string().optional(), path: z.string().optional(), content: z.string() }, run: (s,a) => s.driveFiles.write(a) },
+  { name: "edit_file", title: "Edit Drive file", description: "Replace one unique exact string in a UTF-8 Drive file.", permission: "risky", input: { file_id: z.string(), old_text: z.string(), new_text: z.string() }, run: (s,a) => s.driveFiles.edit(a) },
+  { name: "delete_file", title: "Delete Drive file", description: "Delete a Drive file after preserving its current bytes as a version.", permission: "risky", input: { file_id: z.string() }, destructive: true, run: (s,a) => s.driveFiles.delete(a) },
+  { name: "rename_file", title: "Rename Drive file", description: "Rename a Drive file.", permission: "change", input: { file_id: z.string(), name: z.string() }, run: (s,a) => s.driveFiles.rename(a) },
+  { name: "list_file_versions", title: "Drive file history", description: "List the saved versions of a Drive file.", permission: "read", input: { file_id: z.string() }, readOnly: true, run: (s,a) => s.driveFiles.listVersions(a) },
+  { name: "restore_file_version", title: "Restore Drive file version", description: "Restore a previous file version, keeping the current bytes as a version too.", permission: "change", input: { file_id: z.string(), version_id: z.string() }, run: (s,a) => s.driveFiles.restore(a) },
   {
     name: "move_file",
     title: "Move Drive file",
@@ -529,7 +536,8 @@ export const TOOL_CLASSES = {
   whats_now: "read", get_schedule: "read", search: "read", find_events: "read", list_courses: "read",
   add_course: "change", update_course: "change", remove_course: "risky", add_event: "change", update_event: "change", remove_event: "risky",
   mark_session: "change", get_attendance: "read", get_notes: "read", search_notes: "read", add_note: "change", append_note: "change", update_note: "change", delete_note: "risky", note_versions: "read", restore_note_version: "change",
-  list_drive: "read", move_file: "change", add_folder: "change", remove_folder: "risky", move_folder: "change",
+  list_drive: "read", read_file: "read", write_file: "change", edit_file: "risky", delete_file: "risky", rename_file: "change", list_file_versions: "read", restore_file_version: "change",
+  move_file: "change", add_folder: "change", remove_folder: "risky", move_folder: "change",
   list_alarms: "read", set_alarm: "change", set_lecture_reminders: "change", remove_alarm: "risky", list_ringtones: "read", set_ringtone: "change", remove_ringtone: "risky", world_clock: "read", add_clock: "change", set_home_zone: "change", remove_clock: "risky",
   list_reminders: "read", reminder_settings: "read", add_reminder: "change", update_reminder: "change", remove_reminder: "risky", set_reminder_settings: "change", list_timers: "read", start_timer: "change", save_timer: "change", update_timer: "change", stop_timers: "change", set_alarms_enabled: "change", upcoming_events: "read", add_birthday: "change", get_settings: "read", set_settings: "change",
 };
@@ -546,8 +554,12 @@ export function runTool(service, name, args = {}) {
   return tool.run(service, parsed.data);
 }
 
-export function needsApproval(mode, name) {
-  const classification = TOOL_CLASSES[name];
+export function toolPermission(name, service = null, args = {}) {
+  return service?.driveFiles?.permissionFor?.(name, args) || TOOL_CLASSES[name];
+}
+
+export function needsApproval(mode, name, service = null, args = {}) {
+  const classification = toolPermission(name, service, args);
   if (!classification) throw new Error(`tool has no permission classification: ${name}`);
   return mode === "ask" ? classification !== "read" : mode !== "dangerous" && mode === "auto" && classification === "risky";
 }

@@ -27,6 +27,7 @@ import { makeClip } from "./sounds.js";
 import { createAssistant } from "./assistant.js";
 import { createShares } from "./share.js";
 import { createVersions, isText, lineDiff, whoOf } from "./versions.js";
+import { createDriveTools } from "./drive-tools.js";
 import { createRingRoutes } from "./ring.js";
 import { measureDriveTree, parseRcloneAbout, sumFileSizes } from "./drive-usage.js";
 
@@ -77,6 +78,15 @@ async function readRaw(req, limit) {
 
 // --- tenants ---------------------------------------------------------------
 
+const drivePath = (t, id) => {
+  if (driveDir) {
+    const userSubdir = t.email === owner ? "owner" : sha(t.email).slice(0, 24);
+    return join(driveDir, userSubdir, "drive", id);
+  }
+  return join(t.dir, "drive", id);
+};
+const versions = createVersions({ drivePath });
+
 const tenants = new Map(); // email ("" = owner) -> tenant
 
 // Personal AI keys: one per account, for ChatGPT, Claude, Gemini or any MCP
@@ -112,6 +122,7 @@ function tenant(email) {
   const store = new Store(join(dir, "hourglass.db"));
   const service = new Service(store);
   t = { email: key || owner, dir, store, service, icalKey: secret(dir, "ical_key"), aiKey: readKey(dir) };
+  service.driveFiles = createDriveTools(t, { drivePath, versions });
   t.ringRoute = createRingRoutes(t);
   if (t.aiKey) aiKeys.set(t.aiKey, key || owner);
   // The assistant's own key, so its MCP calls work straight after a restart.
@@ -261,16 +272,6 @@ function songFile(id) {
 const driveOnline = () => !driveDir || existsSync(join(driveDir, ".hourglass-drive"));
 const OFFLINE = "Drive storage is offline for a moment. Try again in a minute.";
 
-const drivePath = (t, id) => {
-  if (driveDir) {
-    const userSubdir = t.email === owner ? "owner" : sha(t.email).slice(0, 24);
-    return join(driveDir, userSubdir, "drive", id);
-  }
-  return join(t.dir, "drive", id);
-};
-
-const versions = createVersions({ drivePath });
-
 // Background backfill for existing files missing sha256.
 // One file at a time, only while driveOnline() is true.
 // Retries after a delay if a file fails or Drive is offline.
@@ -379,7 +380,7 @@ function sweepDrive(t) {
     const key = `${t.dir}/${f.id}`;
     if (!f.deleted || swept.has(key)) continue;
     swept.add(key);
-    Promise.all([rm(drivePath(t, f.id), { force: true }), rm(thumbPath(t, f.id), { force: true }), rm(thumbPath(t, f.id, true), { force: true }), versions.remove(t, f.id)]).catch(() => swept.delete(key));
+    Promise.all([rm(drivePath(t, f.id), { force: true }), rm(thumbPath(t, f.id), { force: true }), rm(thumbPath(t, f.id, true), { force: true }), ...(versions.keepDeleted(t, f.id) ? [] : [versions.remove(t, f.id)])]).catch(() => swept.delete(key));
   }
 }
 

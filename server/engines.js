@@ -19,7 +19,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { TOOLS, runTool, needsApproval } from "./tools.js";
+import { TOOLS, runTool, needsApproval, toolPermission } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { normalizeEngineError } from "./engine-errors.js";
 import { deepSeekCost, deepSeekModelPricing, deepSeekModelSupportsTools, isDeepSeekBaseUrl } from "./deepseek.js";
@@ -148,9 +148,10 @@ const TOOL_SCHEMAS = TOOLS.map((t) => ({ name: t.name, description: t.descriptio
 /** Runs one tool for the model: its result (as text for the model), and the cards it makes. */
 function callTool(service, name, args, mode = "auto", message = null) {
   try {
-    if (needsApproval(mode, name)) {
+    if (needsApproval(mode, name, service, args)) {
       const tool = TOOLS.find((t) => t.name === name);
-      const action = { id: randomBytes(12).toString("base64url"), tool: name, args: args ?? {}, summary: `${tool.title}: ${JSON.stringify(args ?? {})}`.slice(0, 500), risky: tool.permission === "risky", status: "pending" };
+      const fileSnapshot = name === "write_file" || name === "edit_file";
+      const action = { id: randomBytes(12).toString("base64url"), tool: name, args: args ?? {}, summary: `${tool.title}: ${JSON.stringify(args ?? {})}`.slice(0, 500), risky: toolPermission(name, service, args) === "risky", file_snapshot: fileSnapshot, file_sha256: service.driveFiles?.hashFor?.(name, args), status: "pending" };
       (message.pending_actions ||= []).push(action);
       const card = { kind: "action", ...action };
       return { ok: true, text: `Waiting for the user to approve: ${action.summary}`, cards: [card] };
