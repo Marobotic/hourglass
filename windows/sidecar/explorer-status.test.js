@@ -43,6 +43,8 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
     const pair2 = { id: "pair-2", local: folder2, syncedFilePaths: new Map([["ok-two.txt", "file-2"]]), syncedFolderPaths: new Map() };
     await helper.register(pair);
     await helper.register(pair2);
+    assert.equal(await helper.cleanupStale(), true);
+    assert.equal(await helper.registerNavigation(join(root, "courses")), true);
     assert.equal(await helper.connect(pair), true);
     assert.equal(await helper.connect(pair2), true);
     assert.equal(children.length, 1);
@@ -61,6 +63,8 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
     const recorded = (await readFile(calls, "utf8")).trim().split("\n").map(JSON.parse);
     assert.equal(recorded[0].args[0], "register");
     assert.equal(recorded[1].args[0], "register");
+    assert.equal(recorded[2].args[0], "cleanup-stale");
+    assert.deepEqual(recorded[3].args.slice(0, 4), ["navigation", "--path", join(root, "courses"), "--icon"]);
     const serves = recorded.filter((row) => row.args[0] === "serve");
     assert.equal(serves.length, 2);
     assert.ok(serves.every((row) => row.roots.length === 2));

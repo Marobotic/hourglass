@@ -24,6 +24,11 @@ enum Command {
         control: String,
     },
     List,
+    CleanupStale,
+    Navigation {
+        path: String,
+        icon: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,6 +108,11 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             control: value("--control")?,
         }),
         "list" => Ok(Command::List),
+        "cleanup-stale" => Ok(Command::CleanupStale),
+        "navigation" => Ok(Command::Navigation {
+            path: value("--path")?,
+            icon: value("--icon")?,
+        }),
         _ => Err(format!("unknown command: {command}")),
     }
 }
@@ -133,6 +143,37 @@ fn parse_status(json: &str) -> Result<StatusList, String> {
         }
     }
     Ok(list)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NamespaceCandidate {
+    id: String,
+    display: String,
+    target: String,
+}
+
+fn active_hourglass_namespace(candidate: &NamespaceCandidate, roots: &[RootJson]) -> bool {
+    candidate.display.to_lowercase().starts_with("hourglass")
+        && roots.iter().any(|root| {
+            candidate.id.eq_ignore_ascii_case(&root.id)
+                && candidate
+                    .target
+                    .trim_end_matches(['\\', '/'])
+                    .eq_ignore_ascii_case(root.path.trim_end_matches(['\\', '/']))
+        })
+}
+
+fn stale_proof_namespace(candidate: &NamespaceCandidate, temp: &str, roots: &[RootJson]) -> bool {
+    let target = candidate.target.replace('/', "\\");
+    let temp = temp.replace('/', "\\").trim_end_matches('\\').to_string() + "\\";
+    candidate.display.to_lowercase().starts_with("hourglass")
+        && candidate.id.to_lowercase().starts_with("hourglass!")
+        && !roots
+            .iter()
+            .any(|root| candidate.id.eq_ignore_ascii_case(&root.id))
+        && target
+            .to_lowercase()
+            .starts_with(&(temp.to_lowercase() + "hourglass-cloudfiles-proof-"))
 }
 
 #[cfg(windows)]
@@ -170,6 +211,91 @@ mod cloud_files {
     use windows::Win32::UI::Shell::{SHCNE_UPDATEITEM, SHCNF_PATHW, SHChangeNotify};
     use windows::core::{HSTRING, Interface, PCWSTR, PWSTR};
     use windows_collections::IVectorView;
+
+    const NAV_CLSID: &str = "{8D8756E8-6B61-4C5B-91C4-61B99A2243D0}";
+
+    // Registry selection is deliberately constrained to sync roots reported by
+    // StorageProviderSyncRootManager and the known temporary proof namespace.
+    fn registry_script(script: &str, roots: &[RootJson]) -> Result<(), String> {
+        let roots_json = serde_json::to_string(roots).map_err(|error| error.to_string())?;
+        let payload = format!(
+            "$roots = ConvertFrom-Json -InputObject '{}'\n{}",
+            roots_json.replace('\'', "''"),
+            script
+        );
+        let encoded = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            payload
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+            .output()
+            .map_err(|error| format!("start registry helper: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+        Ok(())
+    }
+
+    fn hide_owned_roots_and_clean_stale(roots: &[RootJson]) -> Result<(), String> {
+        registry_script(
+            r#"
+$ns = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace'
+$classes = 'HKCU:\Software\Classes\CLSID'
+if (Test-Path $ns) { foreach ($key in Get-ChildItem $ns -ErrorAction SilentlyContinue) {
+  $id = (Get-Item $key.PSPath).GetValue('')
+  $clsid = $key.PSChildName
+  $cp = Join-Path $classes $clsid
+  if (-not (Test-Path $cp)) { continue }
+  $display = (Get-Item $cp).GetValue('')
+  $targetKey = Join-Path $cp 'Instance\InitPropertyBag'
+  $target = if (Test-Path $targetKey) { (Get-Item $targetKey).GetValue('TargetFolderPath') } else { $null }
+  if (-not ($display -is [string] -and $display.StartsWith('Hourglass', [StringComparison]::OrdinalIgnoreCase))) { continue }
+  $active = $false
+  foreach ($root in $roots) { if ($id -eq $root.id -and $target -and [IO.Path]::GetFullPath($target).TrimEnd('\') -ieq [IO.Path]::GetFullPath($root.path).TrimEnd('\')) { $active = $true; break } }
+  if ($active) { New-ItemProperty -Path $cp -Name 'System.IsPinnedToNameSpaceTree' -Value 0 -PropertyType DWord -Force | Out-Null; continue }
+  $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+  $registeredId = $false
+  foreach ($root in $roots) { if ($id -is [string] -and $id -eq $root.id) { $registeredId = $true; break } }
+  if (-not $registeredId -and $id -is [string] -and $id.StartsWith('Hourglass!', [StringComparison]::OrdinalIgnoreCase) -and $target -is [string] -and [IO.Path]::GetFullPath($target).StartsWith($temp + 'hourglass-cloudfiles-proof-', [StringComparison]::OrdinalIgnoreCase)) {
+    Remove-Item -LiteralPath $key.PSPath -Recurse -Force
+    Remove-Item -LiteralPath $cp -Recurse -Force
+  }
+} }
+"#,
+            roots,
+        )
+    }
+
+    fn register_navigation(path: &str, icon: &str, roots: &[RootJson]) -> Result<(), String> {
+        let path = path.replace('\'', "''");
+        let icon = icon.replace('\'', "''");
+        let script = format!(
+            r#"
+$clsid = '{NAV_CLSID}'; $base = 'HKCU:\Software\Classes\CLSID\' + $clsid
+New-Item -Path $base -Force | Out-Null
+Set-Item -Path $base -Value 'Hourglass'
+New-ItemProperty -Path $base -Name 'System.IsPinnedToNameSpaceTree' -Value 1 -PropertyType DWord -Force | Out-Null
+New-Item -Path ($base + '\DefaultIcon') -Force | Out-Null
+Set-Item -Path ($base + '\DefaultIcon') -Value '{icon},0'
+$instance = New-Item -Path ($base + '\Instance') -Force
+Set-Item -Path $instance.PSPath -Value '{{0E5AAE11-A475-4c5b-AB00-C66DE400274E}}'
+New-Item -Path ($base + '\Instance\InitPropertyBag') -Force | Out-Null
+Set-ItemProperty -Path ($base + '\Instance\InitPropertyBag') -Name 'Attributes' -Value 17 -Type DWord -Force
+Set-ItemProperty -Path ($base + '\Instance\InitPropertyBag') -Name 'TargetFolderPath' -Value '{path}' -Force
+New-Item -Path ($base + '\InProcServer32') -Force | Out-Null
+Set-Item -Path ($base + '\InProcServer32') -Value ($env:SystemRoot + '\System32\shell32.dll')
+New-ItemProperty -Path ($base + '\InProcServer32') -Name 'ThreadingModel' -Value 'Apartment' -Force | Out-Null
+$nav = New-Item -Path ('HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\' + $clsid) -Force
+Set-Item -Path $nav.PSPath -Value 'Hourglass'
+New-ItemProperty -Path $nav.PSPath -Name 'SortOrderIndex' -Value 65 -PropertyType DWord -Force | Out-Null
+"#
+        );
+        registry_script(&script, roots)
+    }
 
     struct RoApartment;
     impl RoApartment {
@@ -376,10 +502,9 @@ mod cloud_files {
     }
 
     fn serve(roots_file: &str, control: &str) -> Result<ResultJson, String> {
-        let roots: Vec<ServeRoot> = serde_json::from_slice(
-            &std::fs::read(roots_file).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
+        let roots: Vec<ServeRoot> =
+            serde_json::from_slice(&std::fs::read(roots_file).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
         if roots.is_empty() {
             return Err("serve requires at least one root".into());
         }
@@ -423,10 +548,17 @@ mod cloud_files {
                 if let Ok(request) =
                     serde_json::from_str::<ServeRequest>(body.trim_start_matches('\u{feff}'))
                 {
-                    let response = connected.iter()
+                    let response = connected
+                        .iter()
                         .find(|(pair, _, _)| pair == &request.pair)
                         .ok_or_else(|| format!("unconnected sync pair {}", request.pair))
-                        .and_then(|(_, root, _)| status(&request.pair, root.to_string_lossy().as_ref(), &request.json))
+                        .and_then(|(_, root, _)| {
+                            status(
+                                &request.pair,
+                                root.to_string_lossy().as_ref(),
+                                &request.json,
+                            )
+                        })
                         .unwrap_or_else(|error| ResultJson {
                             ok: false,
                             id: None,
@@ -561,6 +693,8 @@ mod cloud_files {
         info.StorageProviderItemPropertyDefinitions()?
             .Append(&definition)?;
         StorageProviderSyncRootManager::Register(&info)?;
+        hide_owned_roots_and_clean_stale(&list_roots()?)
+            .map_err(|_| windows::core::Error::from_thread())?;
         Ok(ResultJson {
             ok: true,
             id: Some(id),
@@ -636,6 +770,9 @@ mod cloud_files {
                 errors.push(format!("{id}: {error}"));
             }
         }
+        if pair.is_none() {
+            let _ = remove_navigation();
+        }
         Ok(ResultJson {
             ok: errors.is_empty(),
             id: None,
@@ -645,6 +782,17 @@ mod cloud_files {
             states: None,
             errors: (!errors.is_empty()).then_some(errors),
         })
+    }
+
+    fn remove_navigation() -> Result<(), String> {
+        let script = format!(
+            r#"
+$clsid = '{NAV_CLSID}';
+Remove-Item -LiteralPath ('HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\' + $clsid) -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath ('HKCU:\Software\Classes\CLSID\' + $clsid) -Recurse -Force -ErrorAction SilentlyContinue
+"#
+        );
+        registry_script(&script, &[])
     }
 
     fn status(pair: &str, path: &str, json_path: &str) -> Result<ResultJson, String> {
@@ -666,8 +814,8 @@ mod cloud_files {
         let mut errors = Vec::new();
         for value in &list.clear_errors {
             let target = root.join(value);
-            let target = std::fs::canonicalize(&target)
-                .map_err(|error| format!("{value}: {error}"))?;
+            let target =
+                std::fs::canonicalize(&target).map_err(|error| format!("{value}: {error}"))?;
             if !target.starts_with(&root) {
                 return Err(format!("status path escapes sync root: {value}"));
             }
@@ -756,6 +904,32 @@ mod cloud_files {
                     errors: None,
                 })
                 .map_err(|error| error.to_string()),
+            Command::CleanupStale => {
+                let roots = list_roots().map_err(|error| error.to_string())?;
+                hide_owned_roots_and_clean_stale(&roots)?;
+                Ok(ResultJson {
+                    ok: true,
+                    id: None,
+                    path: None,
+                    roots: Some(roots),
+                    updated: None,
+                    states: None,
+                    errors: None,
+                })
+            }
+            Command::Navigation { path, icon } => {
+                let roots = list_roots().map_err(|error| error.to_string())?;
+                register_navigation(&path, &icon, &roots)?;
+                Ok(ResultJson {
+                    ok: true,
+                    id: None,
+                    path: Some(path),
+                    roots: None,
+                    updated: None,
+                    states: None,
+                    errors: None,
+                })
+            }
         }
     }
 }
@@ -841,9 +1015,75 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&args(&["serve", "--roots", "roots.json", "--control", "control"])).unwrap(),
-            Command::Serve { roots: "roots.json".into(), control: "control".into() }
+            parse_args(&args(&[
+                "serve",
+                "--roots",
+                "roots.json",
+                "--control",
+                "control"
+            ]))
+            .unwrap(),
+            Command::Serve {
+                roots: "roots.json".into(),
+                control: "control".into()
+            }
         );
+        assert_eq!(
+            parse_args(&args(&["cleanup-stale"])).unwrap(),
+            Command::CleanupStale
+        );
+    }
+
+    #[test]
+    fn registry_selection_only_matches_hourglass_roots_and_temp_proof() {
+        let root = RootJson {
+            id: "Hourglass!SID!pair".into(),
+            path: "C:\\Courses\\A".into(),
+            display_name: "Hourglass – A".into(),
+        };
+        let active = NamespaceCandidate {
+            id: root.id.clone(),
+            display: root.display_name.clone(),
+            target: root.path.clone(),
+        };
+        let other_provider = NamespaceCandidate {
+            id: "OneDrive!id".into(),
+            display: "OneDrive".into(),
+            target: root.path.clone(),
+        };
+        let mismatched_target = NamespaceCandidate {
+            id: root.id.clone(),
+            display: root.display_name.clone(),
+            target: "C:\\Other".into(),
+        };
+        let stale = NamespaceCandidate {
+            id: "Hourglass!SID!old".into(),
+            display: "Hourglass – Cloud".into(),
+            target: "C:\\Users\\Maro\\AppData\\Local\\Temp\\hourglass-cloudfiles-proof-old".into(),
+        };
+        assert!(active_hourglass_namespace(&active, &[root]));
+        assert!(!active_hourglass_namespace(&other_provider, &[]));
+        assert!(!active_hourglass_namespace(&mismatched_target, &[]));
+        assert!(stale_proof_namespace(
+            &stale,
+            "C:\\Users\\Maro\\AppData\\Local\\Temp",
+            &[]
+        ));
+        let registered_proof = RootJson {
+            id: stale.id.clone(),
+            path: stale.target.clone(),
+            display_name: stale.display.clone(),
+        };
+        assert!(!stale_proof_namespace(
+            &stale,
+            "C:\\Users\\Maro\\AppData\\Local\\Temp",
+            &[registered_proof]
+        ));
+        assert!(!stale_proof_namespace(
+            &other_provider,
+            "C:\\Users\\Maro\\AppData\\Local\\Temp",
+            &[]
+        ));
     }
 
     #[test]
@@ -857,7 +1097,10 @@ mod tests {
         assert_eq!(list.errors, ["file.txt"]);
         assert_eq!(list.clear_errors, ["old.txt"]);
         assert!(parse_status(r#"{"in_sync":["../outside"],"not_in_sync":[]}"#).is_err());
-        assert!(parse_status(r#"{"in_sync":[],"not_in_sync":[],"clear_errors":["../outside"]}"#).is_err());
+        assert!(
+            parse_status(r#"{"in_sync":[],"not_in_sync":[],"clear_errors":["../outside"]}"#)
+                .is_err()
+        );
         assert!(parse_status("not json").is_err());
     }
 }

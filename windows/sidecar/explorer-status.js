@@ -37,7 +37,7 @@ export async function makeStatusListing(pair) {
 }
 
 export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, env = process.env, platform = process.platform, spawnImpl = spawn, logger = () => {} }) {
-  if (!explorerStatusEnabled(env, platform)) return { enabled: false, register: async () => false, connect: async () => false, status: async () => false, unregister: async () => true, shutdown: async () => {} };
+  if (!explorerStatusEnabled(env, platform)) return { enabled: false, register: async () => false, connect: async () => false, status: async () => false, unregister: async () => true, cleanupStale: async () => false, registerNavigation: async () => false, shutdown: async () => {} };
   const exe = join(sidecarDir, "..", "bin", "hourglass-shell.exe");
   const icon = join(sidecarDir, "..", "hourglass.ico");
   const registered = new Map();
@@ -62,6 +62,14 @@ export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, en
       logger("Explorer sync root registered", pair.id, out.trim());
       return true;
     } catch (error) { logger("Explorer sync root skipped", pair.id, error.message); return false; }
+  }
+  async function cleanupStale() {
+    try { const out = await call(["cleanup-stale"]); logger("Explorer stale namespace cleanup complete", out.trim()); return true; }
+    catch (error) { logger("Explorer stale namespace cleanup failed", error.message); return false; }
+  }
+  async function registerNavigation(path) {
+    try { const out = await call(["navigation", "--path", resolve(path), "--icon", icon]); logger("Hourglass navigation entry registered", resolve(path), out.trim()); return true; }
+    catch (error) { logger("Hourglass navigation entry registration failed", error.message); return false; }
   }
   async function status(pair) {
     const current = requestQueue.catch(() => {}).then(() => applyStatus(pair));
@@ -182,5 +190,5 @@ export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, en
   }
   async function shutdown() { stopping = true; await stopServe(); }
   process.once("exit", () => { stopping = true; connection?.child.kill(); });
-  return { enabled: true, register, connect, status, unregister, shutdown };
+  return { enabled: true, register, connect, status, unregister, cleanupStale, registerNavigation, shutdown };
 }

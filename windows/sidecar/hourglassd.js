@@ -1192,6 +1192,7 @@ function scheduleExplorerPair(pair, register = false) {
   if (!explorerStatus.enabled) return;
   void (async () => {
     if (register && !await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) return;
+    if (register && pair.mode === "pull") await explorerStatus.registerNavigation(resolve(pair.local, "..", ".."));
     if (await explorerStatus.connect(pair)) await explorerStatus.status(pair);
   })().catch((error) => log("Explorer sync status task failed", pair.id, error.message));
 }
@@ -1199,9 +1200,13 @@ function scheduleExplorerPair(pair, register = false) {
 function scheduleExplorerStartup(pairs) {
   if (!explorerStatus.enabled) return;
   void (async () => {
+    await explorerStatus.cleanupStale();
     const registered = [];
     for (const pair of pairs) {
-      if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) registered.push(pair);
+      if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) {
+        registered.push(pair);
+        if (pair.mode === "pull") await explorerStatus.registerNavigation(resolve(pair.local, "..", ".."));
+      }
     }
     if (registered.length && await explorerStatus.connect(registered[0])) {
       for (const pair of registered) await explorerStatus.status(pair);
