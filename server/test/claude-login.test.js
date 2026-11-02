@@ -14,14 +14,20 @@ for (const version of ["2.1.303", "2.1.316"]) {
   });
 }
 
-test("plain wrapped URL and OSC hyperlink parse after terminal cleanup", () => {
+test("plain URL stops before the next prompt and OSC hyperlink parses", () => {
   const url = "https://claude.com/cai/oauth/authorize?code=true&state=REDACTED";
-  assert.equal(parseClaudeLoginUrl(`Browser URL:\n${url.slice(0, 32)}\r\n${url.slice(32)}`), url);
+  assert.equal(parseClaudeLoginUrl(`${url}\r\nPaste code here if prompted >`), url);
   assert.equal(parseClaudeLoginUrl(`\x1b]8;;${url}\x07click\x1b]8;;\x07`), url);
 });
 
-test("token parser accepts short token suffixes after terminal whitespace", () => {
-  assert.equal(parseClaudeSetupToken("token: sk-ant-oat01-aB\nC_d-9"), "sk-ant-oat01-aBC_d-9");
+test("token stops before following instructions or ANSI styled next-line text", () => {
+  assert.equal(parseClaudeSetupToken("sk-ant-oat01-aB_C-9\nStore this token securely."), "sk-ant-oat01-aB_C-9");
+  assert.equal(parseClaudeSetupToken("sk-ant-oat01-aB_C-9\r\n\x1b[38;5;246mStore this token securely."), "sk-ant-oat01-aB_C-9");
+});
+
+test("URL on its own line stops before ordinary next-line text", () => {
+  const url = "https://claude.com/cai/oauth/authorize?state=abc";
+  assert.equal(parseClaudeLoginUrl(`${url}\nPaste code here if prompted >`), url);
 });
 
 test("error mapping requires actual auth failure wording", () => {
