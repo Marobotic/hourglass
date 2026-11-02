@@ -116,29 +116,32 @@ struct AssistantSettingsSheet: View {
 
                     if engine == "claude" {
                         HStack(spacing: 10) {
-                            HButton(signin == "starting" ? "Opening…" : hasKey ? "Sign in again" : "Sign in with Claude", primary: !hasKey, enabled: signin.isEmpty && claudeReady) {
+                            HButton(signin == "starting" ? "Opening claude.com…" : hasKey ? "Sign in again" : "Sign in with Claude", primary: !hasKey, enabled: signin.isEmpty && claudeReady) {
                                 error = ""; note = ""; signin = "starting"
                                 Task {
                                     do {
                                         let d = try await store.assistant("POST", "/claude/login")
                                         signin = "waiting"
-                                        if let u = URL(string: d["url"] as? String ?? "") { openURL(u) }
+                                        guard let u = URL(string: d["url"] as? String ?? "") else { throw URLError(.badURL) }
+                                        openURL(u) { accepted in
+                                            if !accepted { signin = ""; error = "Could not open claude.com. Open the link again or paste a token instead." }
+                                        }
                                     } catch { signin = ""; self.error = error.localizedDescription }
                                 }
                             }
-                            if hasKey && signin.isEmpty { T("✓ Connected", 12, H.teal) }
+                            if hasKey && signin.isEmpty { T("✓ Connected as Claude Pro/Max", 12, H.teal) }
                         }
                         if signin == "waiting" || signin == "finishing" {
-                            T("Sign in on the page that opened and press Authorize. Claude then shows a code: copy it and paste it here.", 12, H.muted)
+                            T(signin == "finishing" ? "Connecting… Checking the subscription token with Claude." : "Paste the code from claude.com, including any #state part. Spaces and line breaks are okay.", 12, H.muted)
                             field("Paste the code from claude.com", text: $code)
-                            HButton(signin == "finishing" ? "Finishing…" : "Finish", primary: true, enabled: signin == "waiting" && !code.trimmingCharacters(in: .whitespaces).isEmpty) {
+                            HButton(signin == "finishing" ? "Connecting…" : "Finish", primary: true, enabled: signin == "waiting" && !code.trimmingCharacters(in: .whitespaces).isEmpty) {
                                 error = ""; signin = "finishing"
                                 Task {
                                     do {
                                         let d = try await store.assistant("POST", "/claude/login/code", ["code": code.trimmingCharacters(in: .whitespaces)])
                                         signin = ""; code = ""
                                         s?["has_key"] = d["has_key"]
-                                        note = "Signed in with your Claude account ✓"
+                                        note = "Connected as Claude Pro/Max ✓"
                                     } catch { signin = ""; self.error = error.localizedDescription }
                                 }
                             }
@@ -151,6 +154,7 @@ struct AssistantSettingsSheet: View {
 
                     if engine != "free" && (engine != "claude" || pasteToken) {
                         label(engine == "claude" ? "CLAUDE TOKEN" : "API KEY")
+                        if engine == "claude" { T("On your own PC, run claude setup-token in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints.", 12, H.faint) }
                         SecureField("", text: $key, prompt: Text(hasKey ? "Saved ✓ (paste a new one to replace it)" : engine == "anthropic" ? "sk-ant-api…" : engine == "claude" ? "sk-ant-oat…" : isDeepSeek ? "DeepSeek API key" : "Your API key").foregroundStyle(H.faint))
                             .font(H.mono(14)).foregroundStyle(H.fg).padding(10).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
                         if isDeepSeek, let url = URL(string: "https://platform.deepseek.com/api_keys") { Link("Get a DeepSeek API key", destination: url).font(H.mono(11)).foregroundStyle(H.muted) }

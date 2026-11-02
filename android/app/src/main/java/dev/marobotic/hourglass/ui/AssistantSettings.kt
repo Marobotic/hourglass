@@ -145,7 +145,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                 if (engine == "claude") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         HButton(
-                            when { signin == "starting" -> "Opening…"; hasKey() -> "Sign in again"; else -> "Sign in with Claude" },
+                            when { signin == "starting" -> "Opening claude.com…"; hasKey() -> "Sign in again"; else -> "Sign in with Claude" },
                             primary = !hasKey(), enabled = signin.isEmpty() && s?.optBoolean("claude_ready") == true,
                         ) {
                             error = ""; note = ""; signin = "starting"
@@ -153,20 +153,21 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                                 if (d == null) { signin = ""; error = err ?: "Could not start the sign-in."; return@assistant }
                                 signin = "waiting"
                                 runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(d.optString("url")))) }
+                                    .onFailure { signin = ""; error = "Could not open claude.com. Open the link again or paste a token instead." }
                             }
                         }
-                        if (hasKey() && signin.isEmpty()) { Spacer(Modifier.width(10.dp)); T("✓ Connected", 12, HColors.teal) }
+                        if (hasKey() && signin.isEmpty()) { Spacer(Modifier.width(10.dp)); T("✓ Connected as Claude Pro/Max", 12, HColors.teal) }
                     }
                     if (signin == "waiting" || signin == "finishing") {
-                        T("Sign in on the page that opened and press Authorize. Claude then shows a code: copy it and paste it here.", 12, HColors.muted)
+                        T(if (signin == "finishing") "Connecting… Checking the subscription token with Claude." else "Paste the code from claude.com, including any #state part. Spaces and line breaks are okay.", 12, HColors.muted)
                         Field(code, { code = it }, "Code from claude.com")
-                        HButton(if (signin == "finishing") "Finishing…" else "Finish", primary = true, enabled = signin == "waiting" && code.isNotBlank()) {
+                        HButton(if (signin == "finishing") "Connecting…" else "Finish", primary = true, enabled = signin == "waiting" && code.isNotBlank()) {
                             error = ""; signin = "finishing"
                             repo.assistant("POST", "/claude/login/code", JSONObject().put("code", code.trim())) { d, err ->
                                 if (d == null) { signin = ""; error = err ?: "Could not finish the sign-in."; return@assistant }
                                 signin = ""; code = ""
                                 s?.put("has_key", d.optJSONObject("has_key"))
-                                note = "Signed in with your Claude account ✓"
+                                note = "Connected as Claude Pro/Max ✓"
                             }
                         }
                     }
@@ -175,6 +176,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                 }
                 if (engine != "free" && (engine != "claude" || pasteToken)) {
                     T(if (engine == "claude") "CLAUDE TOKEN" else "API KEY", 11, HColors.muted, spacing = 1.0)
+                    if (engine == "claude") T("On your own PC, run claude setup-token in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints.", 12, HColors.faint)
                     Field(key, { key = it }, if (hasKey()) "Saved ✓ (paste a new one to replace it)" else if (engine == "anthropic") "sk-ant-api…" else if (engine == "claude") "sk-ant-oat…" else if (isDeepSeek()) "DeepSeek API key" else "Your API key", password = true)
                     if (isDeepSeek()) T("Get a DeepSeek API key", 11, HColors.muted, modifier = Modifier.clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://platform.deepseek.com/api_keys"))) })
                 }

@@ -164,7 +164,7 @@ Modal {
         Api.request("POST", "/api/assistant/claude/login", {}, (d, err) => {
             if (!d) { dlg.signin = ""; dlg.error = err || "Could not start the sign-in."; return; }
             dlg.signin = "waiting";
-            Qt.openUrlExternally(d.url);
+            if (!Qt.openUrlExternally(d.url)) { dlg.signin = ""; dlg.error = "Could not open claude.com. Open the link again or paste a token instead."; Api.request("POST", "/api/assistant/claude/login/cancel", {}, () => {}, true); return; }
             codeField.forceActiveFocus();
         }, true);
     }
@@ -175,7 +175,7 @@ Modal {
             dlg.signin = "";
             codeField.text = "";
             dlg.s.has_key = d.has_key;
-            dlg.note = "Signed in with your Claude account ✓";
+            dlg.note = "Connected as Claude Pro/Max ✓";
         }, true);
     }
     onClosed: if (signin !== "") { Api.request("POST", "/api/assistant/claude/login/cancel", {}, () => {}, true); signin = ""; }
@@ -188,7 +188,7 @@ Modal {
             Layout.fillWidth: true
             spacing: 10
             Btn {
-                text: dlg.signin === "starting" ? "Opening…" : dlg.hasKey ? "Sign in again" : "Sign in with Claude"
+                text: dlg.signin === "starting" ? "Opening claude.com…" : dlg.hasKey ? "Sign in again" : "Sign in with Claude"
                 kind: dlg.hasKey ? "ghost" : "primary"
                 enabled: dlg.signin === "" && !!dlg.s && dlg.s.claude_ready
                 onClicked: dlg.startSignin()
@@ -196,7 +196,7 @@ Modal {
             Text {
                 Layout.fillWidth: true
                 visible: dlg.hasKey && dlg.signin === ""
-                text: "✓ Connected to your Claude account"
+                text: "✓ Connected as Claude Pro/Max"
                 color: Theme.teal; font.family: Theme.mono; font.pixelSize: 12
             }
         }
@@ -204,7 +204,7 @@ Modal {
             visible: dlg.signin === "waiting" || dlg.signin === "finishing"
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: "Sign in on the page that opened in your browser and press Authorize. Claude then shows a code: copy it and paste it here."
+            text: dlg.signin === "finishing" ? "Connecting… Checking the subscription token with Claude." : "Paste the code from claude.com (including any #state part). Spaces and line breaks are okay."
             color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12
         }
         RowLayout {
@@ -212,7 +212,7 @@ Modal {
             Layout.fillWidth: true
             spacing: 8
             Field { id: codeField; Layout.fillWidth: true; placeholderText: "Paste the code from claude.com"; onAccepted: if (text.trim() !== "") dlg.finishSignin() }
-            Btn { text: dlg.signin === "finishing" ? "Finishing…" : "Finish"; kind: "primary"; enabled: dlg.signin === "waiting" && codeField.text.trim() !== ""; onClicked: dlg.finishSignin() }
+            Btn { text: dlg.signin === "finishing" ? "Connecting…" : "Finish"; kind: "primary"; enabled: dlg.signin === "waiting" && codeField.text.trim() !== ""; onClicked: dlg.finishSignin() }
         }
         Text {
             visible: dlg.signin === ""
@@ -235,7 +235,7 @@ Modal {
             visible: dlg.engine === "claude"
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: "In a terminal with Claude Code installed, run  claude setup-token  and sign in with your Claude account. Paste the token it prints (sk-ant-oat…)."
+            text: "On your own PC, run  claude setup-token  in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints here."
             color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
         }
         Field {

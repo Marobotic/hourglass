@@ -48,6 +48,7 @@ import { INSTRUCTIONS } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
 import { deepSeekPriceState, isDeepSeekBaseUrl } from "./deepseek.js";
+import { mapClaudeLoginError, parseClaudeLoginUrl, parseClaudeSetupToken, stripTerminalSequences } from "./claude-login.js";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
@@ -773,9 +774,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   // the code that page shows; given the code, it prints a long-lived token.
   const claudeLogin = (() => {
     const live = new Map(); // email -> { child, out, url, timer }
-    const ESC = String.fromCharCode(27);
-    const BEL = String.fromCharCode(7);
-    const plain = (s) => s.split(ESC).map((p, i) => (i ? p.replace(/^\[[0-9;?]*[ -\/]*[@-~]|^\][^\u0007]*(?:\u0007|$)|^[()][0-9A-Za-z]|^[=>78]/, "") : p)).join("");
+    // Measured link arrival is a few seconds on the VPS; retain a 45 s floor
+    // for a cold CLI start and allow three times the measured startup margin.
+    const LINK_TIMEOUT_MS = 45_000;
+    const EXCHANGE_TIMEOUT_MS = 90_000;
     function cancel(t) {
       const l = live.get(t.email);
       if (!l) return;
@@ -805,10 +807,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       return new Promise((resolve, reject) => {
         const began = Date.now();
         const poll = setInterval(() => {
-          // The link is in a terminal hyperlink: ESC ] 8 ; params ; URL BEL.
-          const m = new RegExp(`\\]8;[^;]*;(https://[^${BEL}${ESC}]+)`).exec(l.out) || /(https:\/\/claude\.(?:com|ai)\/[^\s"'<>]+oauth[^\s"'<>]+)/.exec(plain(l.out));
-          if (m) { clearInterval(poll); l.url = m[1]; return resolve(m[1]); }
-          if (child.exitCode !== null || Date.now() - began > 30_000) {
+          const url = parseClaudeLoginUrl(l.out);
+          if (url) { clearInterval(poll); l.url = url; l.linkMs = Date.now() - began; return resolve(url); }
+          if (child.exitCode !== null || Date.now() - began > LINK_TIMEOUT_MS) {
             clearInterval(poll);
             cancel(t);
             reject(new Error("Claude Code didn't start its sign-in. Try again in a moment."));
@@ -818,30 +819,42 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     }
     function finish(t, code) {
       const l = live.get(t.email);
-      if (!l) return Promise.reject(new Error("Start the sign-in again: it timed out or was not started."));
+      if (!l) return Promise.reject(new Error("Sign-in was cancelled or expired. Start again."));
       if (!code || code.length < 10) return Promise.reject(new Error("Paste the whole code from the claude.com page."));
       const before = l.out.length;
       l.child.stdin.write(code.replace(/\s+/g, "") + "\r");
       return new Promise((resolve, reject) => {
         const began = Date.now();
         const poll = setInterval(() => {
-          const after = plain(l.out.slice(before));
-          const tok = /(sk-ant-oat\d+-[A-Za-z0-9_-]{20,})/.exec(after.replace(/\s+/g, ""));
-          if (tok) { clearInterval(poll); cancel(t); return resolve(tok[1]); }
-          const bad = /(invalid|expired|error|failed)[^\n]{0,120}/i.exec(after);
-          if ((bad && Date.now() - began > 2000) || l.child.exitCode !== null || Date.now() - began > 45_000) {
+          const after = stripTerminalSequences(l.out.slice(before));
+          const tok = parseClaudeSetupToken(after);
+          if (tok) { clearInterval(poll); cancel(t); return resolve(tok); }
+          const mapped = mapClaudeLoginError(after);
+          if ((mapped && Date.now() - began > 2000) || childHasExited(l.child) || Date.now() - began > EXCHANGE_TIMEOUT_MS) {
             clearInterval(poll);
             cancel(t);
-            const said = bad ? bad[0].replace(/[\r\n]+/g, " ").replace(/press enter to retry\.*/i, "").trim() : "";
-            reject(new Error(/status code 400|invalid/i.test(said)
-              ? "That code wasn't accepted. Sign in again and copy the whole code from the claude.com page."
-              : said ? `Claude said: ${said}. Sign in again.` : "No token came back. Sign in again."));
+            reject(new Error(mapped || (childHasExited(l.child) ? "Claude Code closed before returning a token. Start sign-in again." : "Claude took too long to finish. Start sign-in again.")));
           }
         }, 250);
       });
     }
     return { start, finish, cancel };
   })();
+
+  function childHasExited(child) { return child.exitCode !== null || child.signalCode !== null; }
+
+  function checkClaudeToken(token) {
+    const dir = join(accountsDir, ".claude-login-check-" + randomBytes(6).toString("hex"));
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+      const result = spawnSync(claudeBin, ["-p", "Reply with exactly: OK", "--output-format", "text", "--tools", ""], {
+        env: { PATH: process.env.PATH, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, ".claude"), CLAUDE_CODE_OAUTH_TOKEN: token, DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+        encoding: "utf8", timeout: 90_000, maxBuffer: 1024 * 1024,
+      });
+      if (result.error || result.status !== 0 || !/\bOK\b/i.test(result.stdout || ""))
+        throw new Error("Claude could not verify this subscription token. Sign in again or paste a fresh token.");
+    } finally { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
+  }
 
   /** The alarm or note a reply set or showed: "it" in the next message. */
   function remember(chat, cards = [], ids = {}) {
@@ -961,6 +974,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       // https only, so the server can't be pointed at its own local services (tests run a local fake).
       if (base_url && !/^https:\/\/[^\s/]+/.test(base_url) && !(process.env.HOURGLASS_TEST_HTTP_API === "1" && /^http:\/\/127\.0\.0\.1:\d+/.test(base_url))) return send(res, 400, { error: "The API address must start with https://" }), true;
       const key = b.key !== undefined ? String(b.key || "").trim() : undefined;
+      if (engine === "claude" && key) {
+        try { checkClaudeToken(key); }
+        catch (e) { return send(res, 400, { error: e.message }), true; }
+      }
       if (key) {
         try { await checkKey({ engine, key, base_url: base_url ?? settings.view(t).base_url }); }
         catch (e) {
@@ -992,6 +1009,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const b = await readJson(req);
       try {
         const token = await claudeLogin.finish(t, String(b.code || "").trim());
+        checkClaudeToken(token);
         const cfg = settings.view(t);
         return send(res, 200, settings.save(t, { engine: "claude", model: cfg.engine === "claude" ? undefined : null, key: token })), true;
       } catch (e) { return send(res, 400, { error: e.message }), true; }
