@@ -19,6 +19,11 @@ enum Command {
     Pin {
         path: String,
     },
+    Serve {
+        root: String,
+        pair: String,
+        control: String,
+    },
     List,
 }
 
@@ -92,6 +97,11 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         "pin" => Ok(Command::Pin {
             path: value("--path")?,
         }),
+        "serve" => Ok(Command::Serve {
+            root: value("--root")?,
+            pair: value("--pair")?,
+            control: value("--control")?,
+        }),
         "list" => Ok(Command::List),
         _ => Err(format!("unknown command: {command}")),
     }
@@ -137,15 +147,18 @@ mod cloud_files {
         StorageProviderItemPropertyDefinition, StorageProviderPopulationPolicy,
         StorageProviderSyncRootInfo, StorageProviderSyncRootManager,
     };
+    use windows::Storage::Streams::DataWriter;
     use windows::Storage::{StorageFile, StorageFolder};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
     use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
     use windows::Win32::Storage::CloudFilters::{
-        CF_CONVERT_FLAG_MARK_IN_SYNC, CF_IN_SYNC_STATE_IN_SYNC, CF_IN_SYNC_STATE_NOT_IN_SYNC,
-        CF_PIN_STATE_PINNED, CF_PLACEHOLDER_BASIC_INFO, CF_PLACEHOLDER_INFO_BASIC,
-        CF_SET_PIN_FLAG_RECURSE, CfConvertToPlaceholder, CfGetPlaceholderInfo, CfSetInSyncState,
-        CfSetPinState,
+        CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS, CF_CALLBACK_REGISTRATION,
+        CF_CALLBACK_TYPE_FETCH_DATA, CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, CF_CALLBACK_TYPE_NONE,
+        CF_CONNECT_FLAG_NONE, CF_CONVERT_FLAG_MARK_IN_SYNC, CF_IN_SYNC_STATE_IN_SYNC,
+        CF_IN_SYNC_STATE_NOT_IN_SYNC, CF_PIN_STATE_PINNED, CF_PLACEHOLDER_BASIC_INFO,
+        CF_PLACEHOLDER_INFO_BASIC, CF_SET_PIN_FLAG_RECURSE, CfConnectSyncRoot,
+        CfConvertToPlaceholder, CfGetPlaceholderInfo, CfSetInSyncState, CfSetPinState,
     };
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
@@ -341,6 +354,83 @@ mod cloud_files {
         })
     }
 
+    unsafe extern "system" fn no_fetch_callback(
+        _info: *const CF_CALLBACK_INFO,
+        _parameters: *const CF_CALLBACK_PARAMETERS,
+    ) {
+        // AlwaysFull roots must never need data or placeholder callbacks.
+    }
+
+    #[derive(Deserialize)]
+    struct ServeRequest {
+        id: String,
+        json: String,
+    }
+
+    fn serve(root: &str, pair: &str, control: &str) -> Result<ResultJson, String> {
+        let root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
+        let full = root.to_string_lossy();
+        let path = full.strip_prefix("\\\\?\\").unwrap_or(&full);
+        let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+        let callbacks = [
+            CF_CALLBACK_REGISTRATION {
+                Type: CF_CALLBACK_TYPE_FETCH_DATA,
+                Callback: Some(no_fetch_callback),
+            },
+            CF_CALLBACK_REGISTRATION {
+                Type: CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS,
+                Callback: Some(no_fetch_callback),
+            },
+            CF_CALLBACK_REGISTRATION {
+                Type: CF_CALLBACK_TYPE_NONE,
+                Callback: None,
+            },
+        ];
+        let _apartment = RoApartment::init().map_err(|error| error.to_string())?;
+        let _connection = unsafe {
+            CfConnectSyncRoot(
+                PCWSTR(wide.as_ptr()),
+                callbacks.as_ptr(),
+                None,
+                CF_CONNECT_FLAG_NONE,
+            )
+        }
+        .map_err(|error| error.to_string())?;
+        println!(
+            "{{\"ok\":true,\"connected\":true,\"path\":{}}}",
+            serde_json::to_string(&root.to_string_lossy()).unwrap()
+        );
+        let request_path = Path::new(control).join("request.json");
+        loop {
+            if let Ok(body) = std::fs::read_to_string(&request_path) {
+                let _ = std::fs::remove_file(&request_path);
+                if let Ok(request) =
+                    serde_json::from_str::<ServeRequest>(body.trim_start_matches('\u{feff}'))
+                {
+                    let response = status(pair, root.to_string_lossy().as_ref(), &request.json)
+                        .unwrap_or_else(|error| ResultJson {
+                            ok: false,
+                            id: None,
+                            path: None,
+                            roots: None,
+                            updated: None,
+                            states: None,
+                            errors: Some(vec![error]),
+                        });
+                    let response_path =
+                        Path::new(control).join(format!("response-{}.json", request.id));
+                    let temp_path = response_path.with_extension("tmp");
+                    let _ = std::fs::write(
+                        &temp_path,
+                        serde_json::to_vec(&response).unwrap_or_default(),
+                    );
+                    let _ = std::fs::rename(&temp_path, &response_path);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
     fn set_error_property(path: &Path, failed: bool) -> windows::core::Result<()> {
         let full = path.to_string_lossy();
         let winrt_path = full.strip_prefix("\\\\?\\").unwrap_or(&full);
@@ -368,7 +458,7 @@ mod cloud_files {
             let property = StorageProviderItemProperty::new()?;
             property.SetId(1)?;
             property.SetValue(&HSTRING::from("Sync error"))?;
-            property.SetIconResource(&HSTRING::from("C:\\Windows\\System32\\imageres.dll,-100"))?;
+            property.SetIconResource(&HSTRING::from("C:\\Windows\\System32\\imageres.dll,-105"))?;
             vec![Some(property)].into()
         } else {
             Vec::<Option<StorageProviderItemProperty>>::new().into()
@@ -413,7 +503,7 @@ mod cloud_files {
             let existing_folder: StorageFolder = existing.Path()?.cast()?;
             let existing_path = existing_folder.Path()?.to_string_lossy();
             if std::fs::canonicalize(&existing_path).ok().as_ref() == Some(&root_path)
-                && existing.Version()?.to_string() == "2.0"
+                && existing.Version()?.to_string() == "3.0"
             {
                 return Ok(ResultJson {
                     ok: true,
@@ -428,9 +518,11 @@ mod cloud_files {
             StorageProviderSyncRootManager::Unregister(&HSTRING::from(id.as_str()))?;
         }
         let info = StorageProviderSyncRootInfo::new()?;
+        let provider_id = windows::core::GUID::from_u128(0x9a30_0d61_1c76_4c07_a944_5c9fa3ce2a11);
+        info.SetProviderId(provider_id)?;
         info.SetId(&HSTRING::from(id.as_str()))?;
         info.SetPath(&folder)?;
-        info.SetDisplayNameResource(&HSTRING::from(format!("Hourglass – {name}")))?;
+        info.SetDisplayNameResource(&HSTRING::from(format!("Hourglass \u{2013} {name}")))?;
         info.SetIconResource(&HSTRING::from(format!("{icon},0")))?;
         info.SetHydrationPolicy(StorageProviderHydrationPolicy::AlwaysFull)?;
         info.SetHydrationPolicyModifier(StorageProviderHydrationPolicyModifier::None)?;
@@ -440,7 +532,10 @@ mod cloud_files {
                 | StorageProviderInSyncPolicy::DirectoryLastWriteTime,
         )?;
         info.SetHardlinkPolicy(StorageProviderHardlinkPolicy::None)?;
-        info.SetVersion(&HSTRING::from("2.0"))?;
+        info.SetVersion(&HSTRING::from("3.0"))?;
+        let context = DataWriter::new()?;
+        context.WriteBytes(&provider_id.to_u128().to_be_bytes())?;
+        info.SetContext(&context.DetachBuffer()?)?;
         let definition = StorageProviderItemPropertyDefinition::new()?;
         definition.SetId(1)?;
         definition.SetDisplayNameResource(&HSTRING::from("Sync error"))?;
@@ -565,13 +660,14 @@ mod cloud_files {
         let mut errors = Vec::new();
         let mut states = Vec::new();
         for (target, in_sync, relative) in items {
+            // Clear provider metadata before changing Cloud Files state. Setting
+            // in-sync while a custom property is attached can be denied.
+            if let Err(error) = set_error_property(&target, false) {
+                errors.push(format!("{}: clear error icon: {error}", target.display()));
+            }
             match set_item(&target, in_sync) {
                 Ok(true) => {
                     converted += 1;
-                    if let Err(error) = set_error_property(&target, error_paths.contains(&relative))
-                    {
-                        errors.push(format!("{}: update error icon: {error}", target.display()));
-                    }
                     match read_item_state(&target) {
                         Ok(state) => states.push(state),
                         Err(error) => {
@@ -584,6 +680,11 @@ mod cloud_files {
                     target.display()
                 )),
                 Err(error) => errors.push(format!("{}: {error}", target.display())),
+            }
+            if error_paths.contains(&relative) {
+                if let Err(error) = set_error_property(&target, true) {
+                    errors.push(format!("{}: update error icon: {error}", target.display()));
+                }
             }
         }
         Ok(ResultJson {
@@ -610,6 +711,11 @@ mod cloud_files {
             }
             Command::Status { pair, path, json } => status(&pair, &path, &json),
             Command::Pin { path } => pin_root(&path).map_err(|error| error.to_string()),
+            Command::Serve {
+                root,
+                pair,
+                control,
+            } => serve(&root, &pair, &control),
             Command::List => list_roots()
                 .map(|roots| ResultJson {
                     ok: true,

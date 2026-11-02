@@ -1208,10 +1208,15 @@ const folderSync = createFolderSync({
   removeLocal: moveFilesToRecycleBin,
   deviceName: () => decodeURIComponent(deviceName()),
   signedIn: () => !!config().token && sync.state === "synced",
-  onPairAdded: async (pair) => { if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) await explorerStatus.status(pair); },
-  onPassComplete: async (pair) => { if (explorerStatus.enabled) await explorerStatus.status(pair); },
+  onPairAdded: async (pair) => {
+    if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) }) && await explorerStatus.connect(pair)) await explorerStatus.status(pair);
+  },
+  onPassComplete: async (pair) => {
+    if (!explorerStatus.enabled) return;
+    if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) }) && await explorerStatus.connect(pair)) await explorerStatus.status(pair);
+  },
   onStarted: async (pairs) => {
-    for (const pair of pairs) if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) await explorerStatus.status(pair);
+    for (const pair of pairs) if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) }) && await explorerStatus.connect(pair)) await explorerStatus.status(pair);
   },
   maxFile: async () => (await remote("/api/drive/usage")).max_file || Infinity,
   deferStart: true,

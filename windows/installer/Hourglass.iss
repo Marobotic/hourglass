@@ -55,6 +55,7 @@ Type: filesandordirs; Name: "{app}\*"
 Source: "{#Package}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [UninstallRun]
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM hourglass-shell.exe"; Flags: runhidden waituntilterminated; StatusMsg: "Stopping the Explorer sync provider..."
 Filename: "{app}\windows\bin\hourglass-shell.exe"; Parameters: "unregister --all"; Flags: runhidden waituntilterminated; StatusMsg: "Disconnecting synced folders..."; Check: FileExists(ExpandConstant('{app}\windows\bin\hourglass-shell.exe'))
 
 [Icons]
