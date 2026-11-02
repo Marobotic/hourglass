@@ -1213,7 +1213,7 @@ test("a failed upload is noted while the rest of the pass goes on", async () => 
 
   try {
     const pair = engine.add(root, "folder-root");
-    await waitFor(() => engine.list()[0].errors.length === 1, 8000);
+    await waitFor(() => engine.list()[0].errors.length === 1 && engine.list()[0].state === "error", 8000);
     assert.deepEqual(uploaded, ["good.txt"]);
     assert.equal(engine.list()[0].state, "error");
     assert.match(engine.list()[0].errors[0].path, /bad\.txt$/);

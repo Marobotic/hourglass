@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { watch, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rename, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileBelongsToPair, mapPairFile, mapPairFilePath, mapPairFolder } from "./drive-local-paths.js";
 
 const ignored = (name) => name === "desktop.ini"
   || name === "Thumbs.db"
@@ -333,15 +334,22 @@ export function createFolderSync({
   let stopped = false;
   let started = false;
   let syncStateCache = { file_ids: [], folder_ids: [] };
+  let coveredFileIds = new Set();
 
   function rebuildSyncStateCache() {
     const fileIds = new Set();
     const folderIds = new Set();
+    const covered = new Set();
+    const rows = getRows();
     for (const pair of pairs.values()) {
+      for (const id of pair.syncedFilePaths?.values() || []) covered.add(id);
+      for (const entry of Object.values(pair.base?.files || {})) if (entry?.file_id) covered.add(entry.file_id);
+      for (const row of rows.files || []) if (fileBelongsToPair(pair, row, rows.folders || [])) covered.add(row.id);
       if (pair.paused) continue;
       for (const id of pair.syncedFileIds || []) fileIds.add(id);
       for (const id of pair.syncedFolderIds || []) folderIds.add(id);
     }
+    coveredFileIds = covered;
     syncStateCache = { file_ids: [...fileIds], folder_ids: [...folderIds] };
   }
 
@@ -1038,6 +1046,7 @@ export function createFolderSync({
       course_id: null,
     };
     pairs.set(pair.id, pair);
+    rebuildSyncStateCache();
     save();
     startWatch(pair);
     if (running.size) schedule(pair, 2000);
@@ -1053,6 +1062,7 @@ export function createFolderSync({
       mode: "pull", paused: false, base: { files: {}, folders: {} }, state: "idle", errors: [], last_sync: null,
     };
     pairs.set(pair.id, pair);
+    rebuildSyncStateCache();
     mkdirSync(pair.local, { recursive: true });
     save();
     startWatch(pair);
@@ -1127,6 +1137,7 @@ export function createFolderSync({
   }
 
   load();
+  rebuildSyncStateCache();
   if (!deferStart) start();
 
   const interval = setInterval(() => {
@@ -1146,6 +1157,29 @@ export function createFolderSync({
       if (pair) schedule(pair, delay);
     },
     relocatePull,
+    localPathForFile: (id) => {
+      for (const pair of pairs.values()) {
+        const found = mapPairFilePath(pair, id);
+        if (found) return { ...found, pair: view(pair) };
+      }
+      return null;
+    },
+    matchingLocalPathForFile: async (id, row) => {
+      for (const pair of pairs.values()) {
+        if (pair.paused || pair.state === "syncing") continue;
+        const found = await mapPairFile(pair, id, row);
+        if (found) return { ...found, pair: view(pair) };
+      }
+      return null;
+    },
+    coversFile: (id) => coveredFileIds.has(id),
+    localPathForFolder: (id) => {
+      for (const pair of pairs.values()) {
+        const found = mapPairFolder(pair, id);
+        if (found) return { ...found, pair: view(pair) };
+      }
+      return null;
+    },
     syncState,
     start,
     stop: () => {

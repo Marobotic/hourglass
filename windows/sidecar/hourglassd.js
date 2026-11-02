@@ -16,6 +16,7 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { createFolderSync } from "./foldersync.js";
+import { validatePairFolder } from "./drive-local-paths.js";
 import { legacyCoursesDirectory, migrateLegacyCoursePairs, resolveCoursesDirectory } from "./courses-paths.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, snoozeTimerId } from "../../core/index.js";
@@ -723,6 +724,10 @@ try {
 const saveIndex = () => { mkdirSync(DRIVE_DIR, { recursive: true }); writeFileSync(INDEX, JSON.stringify(index)); };
 const safeName = (n) => String(n || "file").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/, "") || "file";
 const copyPath = (row) => join(DRIVE_DIR, row.id, safeName(row.name));
+function revealLocalPath(path, select = false) {
+  if (WIN) spawn("explorer.exe", select ? ["/select,", path] : [path], { detached: true, stdio: "ignore" }).unref();
+  else spawn("xdg-open", [select ? dirname(path) : path], { detached: true, stdio: "ignore" }).unref();
+}
 
 function remember(row, path) {
   const st = statSync(path);
@@ -752,6 +757,10 @@ async function localFile(id) {
   if (!/^[0-9a-f-]{36}$/.test(id)) throw Object.assign(new Error("bad id"), { status: 400 });
   const row = store.get("files", id);
   if (!row || row.deleted) throw Object.assign(new Error("no such file"), { status: 404 });
+  // A sync pair owns this file. Prefer its real local copy so opening it does
+  // not create a second editable copy under the sidecar cache.
+  const paired = folderSync.localPathForFile(id);
+  if (paired) return { row, path: paired.path, synced: true };
   const have = index[id];
   if (have && existsSync(have.path) && (have.updated_at >= row.updated_at || edited(have))) return { row, path: have.path };
   if (!fetching.has(id)) fetching.set(id, download(row).finally(() => fetching.delete(id)));
@@ -773,6 +782,19 @@ async function watchDrive() {
         rmSync(join(DRIVE_DIR, id), { recursive: true, force: true });
         delete index[id];
         saveIndex();
+        continue;
+      }
+      if (folderSync.coversFile(id) || have.pairOwned) {
+        // Folder sync is the only uploader for these files. Remove an
+        // untouched cache copy; retain an edited one for recovery but mark it
+        // so this watcher never sends the same edit a second time.
+        if (edited(have)) {
+          if (!have.pairOwned) { have.pairOwned = true; saveIndex(); }
+        } else {
+          rmSync(join(DRIVE_DIR, id), { recursive: true, force: true });
+          delete index[id];
+          saveIndex();
+        }
         continue;
       }
       let st;
@@ -1008,8 +1030,7 @@ async function driveRoutes(req, res, url, path) {
   const rev = /^\/api\/files\/([0-9a-f-]{36})\/reveal$/.exec(path);
   if (rev && m === "POST") {
     const { path: f } = await localFile(rev[1]);
-    if (WIN) spawn("explorer.exe", ["/select,", f], { detached: true, stdio: "ignore" }).unref();
-    else spawn("xdg-open", [dirname(f)], { detached: true, stdio: "ignore" }).unref();
+    revealLocalPath(f, true);
     return json(res, 200, { path: f }), true;
   }
   // Versions of a Drive file (kept on the server): the list, what changed, putting one back.
@@ -1218,6 +1239,22 @@ async function syncFolderRoutes(req, res, path) {
   const m = req.method;
   if (path === "/api/syncstate" && m === "GET") {
     return json(res, 200, folderSync.syncState()), true;
+  }
+  const pairReveal = /^\/api\/syncfolders\/([0-9a-f-]{36})\/reveal$/.exec(path);
+  if (pairReveal && m === "POST") {
+    const pair = folderSync.list().find((item) => item.id === pairReveal[1]);
+    const local = pair && validatePairFolder(pair, pair.local);
+    if (!local) return json(res, 404, { error: "Synced folder is unavailable." }), true;
+    revealLocalPath(local);
+    return json(res, 200, { path: local }), true;
+  }
+  const folderReveal = /^\/api\/folders\/([0-9a-f-]{36})\/reveal$/.exec(path);
+  if (folderReveal && m === "POST") {
+    const found = folderSync.localPathForFolder(folderReveal[1]);
+    const local = found && validatePairFolder(found.pair, found.path);
+    if (!local) return json(res, 404, { error: "This Drive folder is not present in a sync pair." }), true;
+    revealLocalPath(local);
+    return json(res, 200, { path: local }), true;
   }
   if (path === "/api/syncfolders" && m === "GET") {
     return json(res, 200, folderSync.list()), true;

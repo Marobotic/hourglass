@@ -108,6 +108,9 @@ Item {
     function localCopyFor(courseId) {
         return page.localCopies.find(copy => copy.course_id === courseId) || null;
     }
+    function syncPairForFolder(folderId) {
+        return page.syncFolders.find(pair => pair.folder_id === folderId) || null;
+    }
     function localCopyStatus(copy) {
         if (!copy) return "";
         if (copy.state === "error" || copy.error || copy.last_error || (copy.errors && copy.errors.length)) return "Error";
@@ -308,6 +311,8 @@ Item {
         }, true);
     }
     function reveal(f) { Api.request("POST", "/api/files/" + f.id + "/reveal", {}, (d, err) => { if (err) page.problem = err; }, true); }
+    function revealFolder(folderId) { Api.request("POST", "/api/folders/" + folderId + "/reveal", {}, (d, err) => { if (err) page.problem = err; }, true); }
+    function revealSyncPair(pairId) { Api.request("POST", "/api/syncfolders/" + pairId + "/reveal", {}, (d, err) => { if (err) page.problem = err; }, true); }
     function moveTo(f, courseId) { Api.action("move_file", { file_id: f.id, course: courseId }, () => page.load()); }
     // A file or folder into a folder ("" = the top of the Drive).
     function moveInto(it, folderId) {
@@ -590,12 +595,16 @@ Item {
             const course = page.courseFor(it);
             const copy = course ? page.localCopyFor(course.id) : null;
             const localItems = course ? (copy ? [
+                { key: "localcopy:reveal", label: "Open in File Explorer" },
+                { separator: true },
                 { key: "localcopy:" + (copy.paused || copy.state === "paused" ? "resume" : "pause"), label: copy.paused || copy.state === "paused" ? "Resume sync" : "Pause sync" },
                 { key: "localcopy:now", label: "Sync now" },
                 { key: "localcopy:remove", label: "Stop syncing", danger: true },
             ] : [{ key: "localcopy:add", label: "Sync folder" }]) : [];
+            const pair = page.syncPairForFolder(f.id);
             const folderItems = it.courseCard ? [] : [
                 { key: "open", label: "Open folder" },
+                ...(pair || page.isFolderSynced(f.id) ? [{ key: "reveal-folder", label: "Open in File Explorer" }] : []),
                 { key: "share", label: page.shares[f.id] ? "Shared · link…" : "Share…" },
                 { key: "move", label: "Move to…", sub: page.folderChoices(it) },
                 { key: "rename", label: "Rename" },
@@ -630,6 +639,11 @@ Item {
             const it = page.menuItem, f = it.row;
             if (key === "open") it.table === "folders" ? page.go(f.id, "") : page.openFile(f);
             else if (key === "localcopy:add") page.startLocalCopy(page.courseFor(it));
+            else if (key === "localcopy:reveal") {
+                const course = page.courseFor(it), copy = course ? page.localCopyFor(course.id) : null;
+                if (copy) page.revealSyncPair(copy.id);
+            }
+            else if (key === "reveal-folder") page.revealFolder(f.id);
             else if (key === "localcopy:pause" || key === "localcopy:resume" || key === "localcopy:now") {
                 const course = page.courseFor(it), copy = course ? page.localCopyFor(course.id) : null;
                 if (copy) page.localCopyCommand(copy, key.slice("localcopy:".length));
@@ -1210,14 +1224,6 @@ Item {
                                     else page.go("", ct.modelData.id);
                                 }
                             }
-                            Icon {
-                                visible: !!page.syncedFolders[ct.modelData.id]
-                                anchors { top: parent.top; right: parent.right; margins: 8 }
-                                name: "check"; size: 13; color: Theme.teal
-                                ToolTip.visible: courseSyncedHover.hovered
-                                ToolTip.text: "Synced"
-                                HoverHandler { id: courseSyncedHover }
-                            }
                             DropArea {
                                 id: courseDrop
                                 anchors.fill: parent
@@ -1291,7 +1297,6 @@ Item {
                         readonly property var courseInfo: isFolder ? page.courseFor(modelData) : null
                         readonly property var localCopy: courseInfo ? page.localCopyFor(courseInfo.id) : null
                         readonly property bool isBreak: modelData.table === "break"
-                        readonly property bool synced: !isBreak && (isFolder ? !!page.syncedFolders[f.id] : !!page.syncedFiles[f.id])
                         readonly property bool media: !isFolder && !isBreak && (page.isImage(f) || page.isVideo(f))
                         clip: isBreak
                         width: isBreak || look.view === "details" ? grid.width : look.view === "icons" ? 132 : grid.cell
@@ -1351,7 +1356,6 @@ Item {
                             }
                             Text { Layout.fillWidth: true; text: item.f.name; color: Theme.fg; elide: Text.ElideMiddle; font.family: Theme.mono; font.pixelSize: 14 }
                             Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); name: "sync"; size: 13; color: Theme.teal; ToolTip.visible: syncHover.hovered; ToolTip.text: "Synced to this PC"; HoverHandler { id: syncHover } }
-                            Icon { visible: item.synced; name: "check"; size: 13; color: Theme.teal; ToolTip.visible: syncedHoverD.hovered; ToolTip.text: "Synced"; HoverHandler { id: syncedHoverD } }
                             Text {
                                 visible: item.isFolder && !!item.localCopy
                                 text: page.localCopyStatus(item.localCopy)
@@ -1421,15 +1425,7 @@ Item {
                                 elide: Text.ElideRight
                                 color: Theme.fg; font.family: Theme.mono; font.pixelSize: 12
                             }
-                            Icon { visible: item.isFolder && page.isFolderSynced(item.f.id) && !item.synced; anchors { top: parent.top; right: parent.right; margins: 8 } name: "sync"; size: 12; color: Theme.teal }
-                            Icon {
-                                visible: item.synced
-                                anchors { top: parent.top; right: parent.right; margins: 8 }
-                                name: "check"; size: 13; color: Theme.teal
-                                ToolTip.visible: syncedHoverI.hovered
-                                ToolTip.text: "Synced"
-                                HoverHandler { id: syncedHoverI }
-                            }
+                            Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); anchors { top: parent.top; right: parent.right; margins: 8 } name: "sync"; size: 12; color: Theme.teal }
                             Icon { visible: !!page.shares[item.f.id]; anchors { top: parent.top; left: parent.left; margins: 8 } name: "link"; size: 12; color: Theme.teal }
                         }
 
@@ -1463,21 +1459,13 @@ Item {
                                     color: item.isFolder ? Theme.accent : Theme.faint
                                 }
                                 Icon { anchors.centerIn: parent; visible: !item.isFolder && page.isVideo(item.f) && galleryImg.status === Image.Ready; name: "play"; size: 28; color: "white"; style: Text.Outline; styleColor: "#80000000" }
-                                Icon {
-                                    visible: item.synced
-                                    anchors { top: parent.top; right: parent.right; margins: 8 }
-                                    name: "check"; size: 14; color: Theme.teal
-                                    ToolTip.visible: syncedHoverG.hovered
-                                    ToolTip.text: "Synced"
-                                    HoverHandler { id: syncedHoverG }
-                                }
                             }
                             RowLayout {
                                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 10; rightMargin: 4 }
                                 height: item.isFolder ? parent.height : 34
                                 spacing: 8
                                 Icon { visible: item.isFolder; name: "folder"; size: 16; color: Theme.accent }
-                                Icon { visible: item.isFolder && page.isFolderSynced(item.f.id) && !item.synced; name: "sync"; size: 12; color: Theme.teal; ToolTip.visible: syncHoverG.hovered; ToolTip.text: "Synced to this PC"; HoverHandler { id: syncHoverG } }
+                                Icon { visible: item.isFolder && page.isFolderSynced(item.f.id); name: "sync"; size: 12; color: Theme.teal; ToolTip.visible: syncHoverG.hovered; ToolTip.text: "Synced to this PC"; HoverHandler { id: syncHoverG } }
                                 Text {
                                     visible: item.isFolder && !!item.localCopy
                                     text: page.localCopyStatus(item.localCopy)
