@@ -32,6 +32,8 @@ struct StatusList {
     not_in_sync: Vec<String>,
     #[serde(default)]
     errors: Vec<String>,
+    #[serde(default)]
+    clear_errors: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,6 +115,7 @@ fn parse_status(json: &str) -> Result<StatusList, String> {
         .iter()
         .chain(&list.not_in_sync)
         .chain(&list.errors)
+        .chain(&list.clear_errors)
     {
         let path = std::path::Path::new(path);
         if path.is_absolute()
@@ -652,6 +655,26 @@ mod cloud_files {
         let id = root_id(pair).map_err(|error| error.to_string())?;
         let error_paths: std::collections::HashSet<String> =
             list.errors.iter().map(|path| path.to_lowercase()).collect();
+        let clear_paths: std::collections::HashSet<String> = list
+            .clear_errors
+            .iter()
+            .map(|path| path.to_lowercase())
+            .collect();
+        if error_paths.iter().any(|path| clear_paths.contains(path)) {
+            return Err("a path cannot be marked and cleared as an error together".into());
+        }
+        let mut errors = Vec::new();
+        for value in &list.clear_errors {
+            let target = root.join(value);
+            let target = std::fs::canonicalize(&target)
+                .map_err(|error| format!("{value}: {error}"))?;
+            if !target.starts_with(&root) {
+                return Err(format!("status path escapes sync root: {value}"));
+            }
+            if let Err(error) = set_error_property(&target, false) {
+                errors.push(format!("{}: clear error icon: {error}", target.display()));
+            }
+        }
         let mut items = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (value, in_sync) in list
@@ -673,14 +696,8 @@ mod cloud_files {
         }
         items.sort_by_key(|(path, _, _)| path.components().count());
         let mut converted = 0usize;
-        let mut errors = Vec::new();
         let mut states = Vec::new();
         for (target, in_sync, relative) in items {
-            // Clear provider metadata before changing Cloud Files state. Setting
-            // in-sync while a custom property is attached can be denied.
-            if let Err(error) = set_error_property(&target, false) {
-                errors.push(format!("{}: clear error icon: {error}", target.display()));
-            }
             match set_item(&target, in_sync) {
                 Ok(true) => {
                     converted += 1;
@@ -832,13 +849,15 @@ mod tests {
     #[test]
     fn parses_status_json_and_rejects_paths_outside_root() {
         let list = parse_status(
-            r#"{"in_sync":["file.txt","docs"],"not_in_sync":["new.txt"],"errors":["file.txt"]}"#,
+            r#"{"in_sync":["file.txt","docs"],"not_in_sync":["new.txt"],"errors":["file.txt"],"clear_errors":["old.txt"]}"#,
         )
         .unwrap();
         assert_eq!(list.in_sync, ["file.txt", "docs"]);
         assert_eq!(list.not_in_sync, ["new.txt"]);
         assert_eq!(list.errors, ["file.txt"]);
+        assert_eq!(list.clear_errors, ["old.txt"]);
         assert!(parse_status(r#"{"in_sync":["../outside"],"not_in_sync":[]}"#).is_err());
+        assert!(parse_status(r#"{"in_sync":[],"not_in_sync":[],"clear_errors":["../outside"]}"#).is_err());
         assert!(parse_status("not json").is_err());
     }
 }

@@ -50,6 +50,9 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
     await new Promise((resolve) => setTimeout(resolve, 1250));
     assert.equal(await helper.connect(pair), true);
     assert.equal(children.length, 2);
+    pair.errors = [{ path: "pending.txt" }];
+    await helper.status(pair);
+    pair.errors = [];
     await helper.status(pair);
     await helper.status(pair2);
     await helper.shutdown();
@@ -62,13 +65,14 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
     assert.equal(serves.length, 2);
     assert.ok(serves.every((row) => row.roots.length === 2));
     const statuses = recorded.filter((row) => row.args[0] === "status");
-    assert.equal(statuses.length, 2);
+    assert.equal(statuses.length, 3);
     assert.ok(statuses.every((row) => row.args[row.args.indexOf("--json") + 1].startsWith(tmpdir())));
-    assert.deepEqual(statuses.map((row) => row.pair), ["pair-1", "pair-2"]);
+    assert.deepEqual(statuses.map((row) => row.pair), ["pair-1", "pair-1", "pair-2"]);
     // The sidecar removes transient roots config after stopping the helper.
     await assert.rejects(readFile(serves.at(-1).args[serves.at(-1).args.indexOf("--roots") + 1]));
-    assert.deepEqual(statuses[0].input, { in_sync: ["ok.txt"], not_in_sync: ["pending.txt"] });
-    assert.deepEqual(statuses[1].input, { in_sync: ["ok-two.txt"], not_in_sync: [] });
+    assert.deepEqual(statuses[0].input, { in_sync: ["ok.txt"], not_in_sync: ["pending.txt"], errors: ["pending.txt"] });
+    assert.deepEqual(statuses[1].input.clear_errors, ["pending.txt"]);
+    assert.deepEqual(statuses[2].input, { in_sync: ["ok-two.txt"], not_in_sync: [] });
   } finally { for (const child of children) child.kill(); await rm(root, { recursive: true, force: true }); }
 });
 

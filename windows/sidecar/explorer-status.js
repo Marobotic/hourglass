@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readdir, writeFile, readFile, rm, mkdir } from "node:fs/promises";
+import { readdir, writeFile, readFile, rm, mkdir, rename } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -36,13 +36,15 @@ export async function makeStatusListing(pair) {
   return { in_sync, not_in_sync, ...(errors.length ? { errors } : {}) };
 }
 
-export function createExplorerStatus({ dataDir, sidecarDir = here, env = process.env, platform = process.platform, spawnImpl = spawn, logger = () => {} }) {
+export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, env = process.env, platform = process.platform, spawnImpl = spawn, logger = () => {} }) {
   if (!explorerStatusEnabled(env, platform)) return { enabled: false, register: async () => false, connect: async () => false, status: async () => false, unregister: async () => true, shutdown: async () => {} };
   const exe = join(sidecarDir, "..", "bin", "hourglass-shell.exe");
   const icon = join(sidecarDir, "..", "hourglass.ico");
   const registered = new Map();
   let connection = null, signature = "", starting = null, stopping = false;
   let requestQueue = Promise.resolve();
+  const errorCachePath = join(dataDir, "explorer-status-errors.json");
+  const errorCache = readFile(errorCachePath, "utf8").then((body) => JSON.parse(body)).catch(() => ({}));
   async function call(args) {
     return new Promise((resolve, reject) => {
       const child = spawnImpl(exe, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -75,13 +77,25 @@ export function createExplorerStatus({ dataDir, sidecarDir = here, env = process
     const request = join(active.controlDir, "request.json");
     const response = join(active.controlDir, `response-${requestId}.json`);
     try {
-      await writeFile(json, JSON.stringify(await makeStatusListing(pair)), "utf8");
+      const listing = await makeStatusListing(pair);
+      const cache = await errorCache;
+      const currentErrors = listing.errors || [];
+      const currentSet = new Set(currentErrors.map((path) => path.toLowerCase()));
+      const existing = new Set([...listing.in_sync, ...listing.not_in_sync].map((path) => path.toLowerCase()));
+      const clearErrors = (cache[pair.id] || []).filter((path) => existing.has(path.toLowerCase()) && !currentSet.has(path.toLowerCase()));
+      if (clearErrors.length) listing.clear_errors = clearErrors;
+      await writeFile(json, JSON.stringify(listing), "utf8");
       await writeFile(request, JSON.stringify({ pair: pair.id, id: requestId, json }), "utf8");
-      const deadline = Date.now() + 30000;
+      const requestTimeout = Math.max(30000, Number(env.HOURGLASS_EXPLORER_STATUS_TIMEOUT_MS) || 600000);
+      const deadline = Date.now() + requestTimeout;
       while (Date.now() < deadline) {
         try {
           const result = JSON.parse(await readFile(response, "utf8"));
           if (!result.ok) throw new Error(result.errors?.join("; ") || "Cloud Files status update failed");
+          cache[pair.id] = currentErrors;
+          const cacheTemp = `${errorCachePath}.${randomUUID()}.tmp`;
+          await writeFile(cacheTemp, JSON.stringify(cache), "utf8");
+          await rename(cacheTemp, errorCachePath);
           logger("Explorer sync status updated", pair.id, JSON.stringify(result));
           return true;
         } catch (error) {
