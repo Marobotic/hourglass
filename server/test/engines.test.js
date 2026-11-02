@@ -23,7 +23,7 @@ function startFake() {
       for await (const c of req) body += c;
       const json = body ? JSON.parse(body) : null;
       seen.push({ path: req.url, headers: req.headers, body: json });
-      const send = (status, obj) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
+      const send = (status, obj, headers = {}) => { res.writeHead(status, { "content-type": "application/json", ...headers }); res.end(JSON.stringify(obj)); };
       const key = req.headers["x-api-key"] || (req.headers.authorization || "").replace(/^Bearer /, "");
       if (key !== GOOD_KEY) return send(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
       if (req.url.startsWith("/v1/models")) return send(200, { type: "model", id: "claude-opus-5-5", display_name: "Claude Opus 5.5", created_at: "2026-01-01T00:00:00Z" });
@@ -34,9 +34,11 @@ function startFake() {
           content: [{ type: "tool_use", id: "tu_1", name: "set_alarm", input: { label: "Gym", time: "07:30", days: ["Mon", "Wed"] } }] });
         return send(200, { id: "msg_2", type: "message", role: "assistant", model: json.model, stop_reason: "end_turn", usage, content: [{ type: "text", text: "Done." }] });
       }
-      if (req.url === "/openai/models") return send(200, { data: [{ id: "gpt-test" }, { id: "gpt-other" }] });
+      if (req.url === "/openai/models") return send(200, { data: ["gpt-test", "gpt-other", "gpt-rate", "gpt-alt", "gpt-partial"].map((id) => ({ id })) });
       if (req.url === "/openai/chat/completions") {
         const done = json.messages.some((m) => m.role === "tool");
+        if (json.model === "gpt-rate") return send(429, { error: { code: "rate_limit_exceeded", message: "provider private rate limit detail" } }, { "retry-after": "3" });
+        if (json.model === "gpt-partial" && done) return send(429, { error: { code: "rate_limit_exceeded", message: "provider private late limit detail" } }, { "retry-after": "3" });
         if (!done) return send(200, { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "start_timer", arguments: JSON.stringify({ minutes: 25, label: "Focus" }) } }] } }] });
         return send(200, { choices: [{ message: { role: "assistant", content: "Timer's on." } }] });
       }
@@ -102,7 +104,7 @@ test("settings: free by default, a bad key is refused, a good one is kept but ne
   assert.ok(s.body.claude_models.length >= 3);
   const bad = await call("POST", "/api/assistant/settings", { engine: "anthropic", key: "sk-wrong" });
   assert.equal(bad.status, 400);
-  assert.match(bad.body.error, /not accepted/);
+  assert.match(bad.body.error, /rejected.*Assistant settings/);
   const ok = await call("POST", "/api/assistant/settings", { engine: "anthropic", model: "claude-haiku-5-5", key: GOOD_KEY });
   assert.equal(ok.status, 200);
   assert.deepEqual(ok.body.has_key, { anthropic: true });
@@ -138,7 +140,7 @@ test("another API with a key: models are listed, and its tool calls run too", as
   const set = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, key: GOOD_KEY, model: "gpt-test" });
   assert.equal(set.status, 200);
   const models = await call("GET", `/api/assistant/models?base_url=${encodeURIComponent(fakeUrl + "/openai")}`);
-  assert.deepEqual(models.body.models.map((m) => m.id), ["gpt-other", "gpt-test"]);
+  assert.deepEqual(models.body.models.map((m) => m.id), ["gpt-alt", "gpt-other", "gpt-partial", "gpt-rate", "gpt-test"]);
   assert.equal((await call("POST", "/api/assistant/message", { text: "focus timer please, 25 min" })).status, 202);
   const reply = (await waitIdle()).messages.at(-1);
   assert.equal(reply.error, null);
@@ -149,6 +151,30 @@ test("another API with a key: models are listed, and its tool calls run too", as
   // The earlier exchange went along as history.
   const req = seen.filter((r) => r.path === "/openai/chat/completions")[0].body;
   assert.ok(req.messages.some((m) => m.role === "assistant" && m.content === "Done."));
+});
+
+test("rate limits fall back to the next model of the same engine before any output", async () => {
+  const set = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, key: GOOD_KEY, model: "gpt-rate" });
+  assert.equal(set.status, 200);
+  const start = seen.length;
+  assert.equal((await call("POST", "/api/assistant/message", { text: "What should I do next?" })).status, 202);
+  const reply = (await waitIdle()).messages.at(-1);
+  assert.equal(reply.error, null);
+  assert.equal(reply.model, "gpt-test");
+  assert.deepEqual(seen.slice(start).filter((r) => r.path === "/openai/chat/completions").map((r) => r.body.model), ["gpt-rate", "gpt-test", "gpt-test"]);
+});
+
+test("a later provider failure does not fall back after a tool action", async () => {
+  const set = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, key: GOOD_KEY, model: "gpt-partial" });
+  assert.equal(set.status, 200);
+  const start = seen.length;
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Set the focus timer" })).status, 202);
+  const reply = (await waitIdle()).messages.at(-1);
+  assert.equal(reply.error_kind, "rate_limit");
+  assert.match(reply.error, /limit is reached/);
+  assert.doesNotMatch(reply.error, /provider private/);
+  assert.equal(reply.tools.length, 1);
+  assert.deepEqual(seen.slice(start).filter((r) => r.path === "/openai/chat/completions").map((r) => r.body.model), ["gpt-partial", "gpt-partial"]);
 });
 
 test("an address that isn't https is refused", async () => {

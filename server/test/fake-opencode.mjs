@@ -26,9 +26,14 @@ if (model === "fake/stuck") {
   await new Promise(() => {});
 }
 
+if (model === "opencode/big-pickle") {
+  emit({ type: "error", error: { name: "AI_APICallError", data: { message: "AI_APICallError: Free usage limit reached" } } });
+  process.exit(1);
+}
+
 // The first model in the list "refuses", like a free model that is down.
 if (model === "fake/down") {
-  emit({ type: "error", error: { name: "APIError", data: { message: "model is down" } } });
+  emit({ type: "error", error: { name: "APIError", data: { message: "503 Service Unavailable" } } });
   process.exit(1);
 }
 

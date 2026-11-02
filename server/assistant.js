@@ -41,6 +41,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { opencodeAccountDirectories, opencodeAccountOwnedPaths, opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "./opencode.js";
+import { isSharedFreeQuotaError, normalizeEngineError } from "./engine-errors.js";
 import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
 import { INSTRUCTIONS } from "./tools.js";
@@ -60,6 +61,11 @@ const KEEP_MESSAGES = 200;
 const SANDBOX_USER = "hourglass-ai";
 const MAX_FILES = 6;                // attachments on one message
 const ASSISTANT_FOLDER = "Assistant"; // the Drive folder attachments go to
+const FALLBACK_KINDS = new Set(["rate_limit", "quota", "overloaded", "network"]);
+const hasVisibleOutput = (message) => !!message.text?.trim() || !!message.tools?.length || !!message.cards?.length;
+const retryPause = () => new Promise((resolve) => setTimeout(resolve, 350));
+const rawErrorText = (value) => typeof value === "string" ? value : (() => { try { return JSON.stringify(value); } catch { return String(value); } })();
+const timeZoneOf = (t) => t.service.tz || "UTC";
 
 // What the user sees for a tool call: present tense while it runs, past when done.
 const TOOL_LABELS = {
@@ -367,6 +373,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       let buffer = "";
       let stderr = "";
       let error = null;
+      let failure = null;
       let sessionId = null;
       let anything = false;
       let stepText = "";
@@ -415,6 +422,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
           message.tools = [...toolsById.values()];
           anything = true;
         } else if (ev.type === "error") {
+          failure = ev.error || ev;
           error = ev.error?.data?.message || ev.error?.name || "something went wrong";
         }
       };
@@ -436,7 +444,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         if (buffer.trim()) { try { onEvent(JSON.parse(buffer)); } catch {} }
         if (stalled && !anything) error = "stalled";
         if (!error && !anything) error = code ? `opencode exited (${code})${stderr ? ": " + stderr.trim().slice(-200) : ""}` : "no reply";
-        resolve({ error, sessionId, anything });
+        resolve({ error, sessionId, anything, failure: failure || error });
       });
       child.stdin.end(prompt);
     });
@@ -515,6 +523,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       let buffer = "";
       let stderr = "";
       let error = null;
+      let failure = null;
       let anything = false;
       const timer = setTimeout(() => stop(t), (RUN_SECONDS + 10) * 1000);
       const began = Date.now();
@@ -548,7 +557,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         } else if (ev.type === "system" && ev.subtype === "init") {
           step(message, `Claude Code started (${Math.round((Date.now() - began) / 100) / 10} s)${(ev.mcp_servers || []).some((m) => m.status !== "connected") ? ", Hourglass tools not connected" : ""}`);
         } else if (ev.type === "result") {
-          if (ev.is_error) error = String(ev.result || ev.subtype || "Claude could not answer");
+          if (ev.is_error) { failure = ev; error = String(ev.result || ev.subtype || "Claude could not answer"); }
           else if (ev.result) message.text = String(ev.result).trim();
         }
       };
@@ -566,9 +575,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       child.on("close", (code) => {
         clearTimeout(timer);
         if (buffer.trim()) { try { onEvent(JSON.parse(buffer)); } catch {} }
+        const rawError = failure || error || stderr;
         if (/invalid api key|authentication|oauth|401/i.test(error || stderr)) error = "Your Claude token was not accepted. Make a new one with `claude setup-token` and paste it in the assistant's settings.";
         if (!error && !anything) error = code ? `Claude Code exited (${code})${stderr ? ": " + stderr.trim().slice(-200) : ""}` : "no reply";
-        resolve({ error, anything });
+        resolve({ error, anything, failure: failure || error, rawError });
       });
       child.stdin.end(prompt);
     });
@@ -583,13 +593,17 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (entry) entry.abort = abort;
       try {
         step(message, `Asking ${modelName(cfg)}…`);
-        await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x) });
+        const usedModel = await runDirect({ settings: cfg, system, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x), onError: (e) => log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`), timeZone: timeZoneOf(t) });
         step(message, "Done");
-        message.model = modelName(cfg);
+        message.model = usedModel || modelName(cfg);
       } catch (e) {
         if (!running.has(t.email)) message.error = "Stopped.";
-        else message.error = e.message || "Something went wrong.";
-        log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`);
+        else {
+          const normalized = e.normalized || normalizeEngineError(e, { provider: cfg.engine, timeZone: timeZoneOf(t) });
+          message.error = normalized.message;
+          message.error_kind = normalized.kind;
+        }
+        if (!e.logged) log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`);
       }
       if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
       saveChat(t, chat);
@@ -597,11 +611,31 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       return;
     }
     if (cfg.engine === "claude") {
-      const r = await runClaude(t, chat, message, text, files, cfg);
-      if (!running.has(t.email)) message.error = message.error || "Stopped.";
-      else if (r.error) message.error = r.error;
-      else message.model = modelName(cfg);
-      if (r.error) log(`assistant (${t.email || "owner"}, claude): ${String(r.error).slice(0, 300)}`);
+      const configured = cfg.model || CLAUDE_MODELS[0].id;
+      const ids = CLAUDE_MODELS.map((m) => m.id);
+      const index = ids.indexOf(configured);
+      const order = [configured, ...ids.slice(index >= 0 ? index + 1 : 0).filter((id) => id !== configured)];
+      let failed = null;
+      for (const model of order) {
+        let r;
+        let normalized;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          r = await runClaude(t, chat, message, text, files, { ...cfg, model });
+          if (!r.error) break;
+          log(`assistant (${t.email || "owner"}, claude): ${rawErrorText(r.rawError || r.failure || r.error).slice(0, 500)}`);
+          normalized = normalizeEngineError(r.failure || r.error, { provider: "claude", timeZone: timeZoneOf(t) });
+          if (hasVisibleOutput(message) || !["network", "overloaded"].includes(normalized.kind) || attempt > 0) break;
+          await retryPause();
+        }
+        if (!running.has(t.email)) { message.error = message.error || "Stopped."; break; }
+        if (!r.error) { message.model = model; failed = null; break; }
+        failed = { raw: r.rawError || r.failure || r.error, normalized: normalized || normalizeEngineError(r.failure || r.error, { provider: "claude", timeZone: timeZoneOf(t) }) };
+        if (hasVisibleOutput(message) || !FALLBACK_KINDS.has(failed.normalized.kind)) break;
+      }
+      if (failed && running.has(t.email)) {
+        message.error = failed.normalized.message;
+        message.error_kind = failed.normalized.kind;
+      }
       if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
       saveChat(t, chat);
       running.delete(t.email);
@@ -626,22 +660,41 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const picked = cfg.model && cfg.model.startsWith("opencode/") ? cfg.model : null;
     const order = pictures.length ? visionModels : picked ? [picked, ...models.filter((m) => m !== picked)] : models;
     const errors = [];
+    let lastNormalized = null;
     for (const model of order) {
       const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
       step(message, `${errors.length ? "Trying" : "Asking"} ${model.replace(/^opencode\//, "")} (free)…`);
-      const r = await runOnce(t, dirs, chat, message, promptFor(!chat.session), model, unit, pictures);
+      let r;
+      let normalized;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        r = await runOnce(t, dirs, chat, message, promptFor(!chat.session), model, unit, pictures);
+        if (!r.error) break;
+        normalized = normalizeEngineError(r.failure || r.error, { provider: "free", timeZone: timeZoneOf(t) });
+        lastNormalized = normalized;
+        if (r.anything || !["network", "overloaded"].includes(normalized.kind) || attempt > 0) break;
+        await retryPause();
+      }
       // A run that failed before doing anything leaves no session worth resuming.
       if (r.sessionId && (r.anything || !r.error)) chat.session = r.sessionId;
       if (!running.has(t.email)) { message.error = message.error || "Stopped."; break; } // the user pressed Stop
       if (!r.error) { message.model = model; step(message, "Done"); break; }
       errors.push(`${model}: ${r.error}`);
       // Something already happened on this model: do not run the request twice.
-      if (r.anything) { message.error = r.error; break; }
-      if (r.error !== "stalled") step(message, `${model.replace(/^opencode\//, "")} failed: ${String(r.error).slice(0, 120)}`);
+      if (r.anything || isSharedFreeQuotaError(r.failure || r.error) || !FALLBACK_KINDS.has(normalized.kind)) {
+        message.error = normalized.message;
+        message.error_kind = normalized.kind;
+        break;
+      }
+      step(message, `${model.replace(/^opencode\//, "")} unavailable; trying another model.`);
       // After a stall the next try starts a fresh conversation: the old one may be what hangs.
       if (r.error === "stalled") chat.session = null;
     }
-    if (!message.text && !message.tools.length && !message.error) message.error = errors.length ? "The assistant could not answer right now. Try again in a moment." : "No reply.";
+    if (!message.text && !message.tools.length && !message.error) {
+      if (errors.length) {
+        message.error = lastNormalized?.message || "The assistant couldn't complete this request. Try again.";
+        message.error_kind = lastNormalized?.kind || "other";
+      } else message.error = "No reply.";
+    }
     if (errors.length) log(`assistant (${t.email || "owner"}): ${errors.join(" ; ").slice(0, 400)}`);
     saveChat(t, chat);
     running.delete(t.email);
@@ -772,7 +825,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     if (ids?.reminder_id) Object.assign(last, { reminder_id: ids.reminder_id, last: "reminder" });
   }
 
-  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, files: m.files || [], quick: !!m.quick, model: m.model || null });
+  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], steps: m.steps || [], error: m.error || null, error_kind: m.error_kind || null, files: m.files || [], quick: !!m.quick, model: m.model || null });
 
   /** The Drive folder attachments go to, made on first use. */
   function assistantFolder(t) {
@@ -847,7 +900,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       saveChat(t, chat);
       running.set(t.email, { chat, message });
       run(t, chat, message, text, fresh, files).then(() => { remember(chat, message.cards); saveChat(t, chat); }).catch((e) => {
-        message.error = "Something went wrong.";
+        const normalized = e.normalized || normalizeEngineError(e, { provider: settings.get(t).engine, timeZone: timeZoneOf(t) });
+        message.error = normalized.message;
+        message.error_kind = normalized.kind;
         log(`assistant: ${e.stack || e}`);
         saveChat(t, chat);
         running.delete(t.email);
@@ -873,7 +928,11 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const key = b.key !== undefined ? String(b.key || "").trim() : undefined;
       if (key) {
         try { await checkKey({ engine, key, base_url: base_url ?? settings.view(t).base_url }); }
-        catch (e) { return send(res, 400, { error: e.message }), true; }
+        catch (e) {
+          const normalized = normalizeEngineError(e, { provider: engine, timeZone: timeZoneOf(t) });
+          log(`assistant (${t.email || "owner"}, ${engine} key check): ${e.message}`);
+          return send(res, 400, { error: normalized.message, error_kind: normalized.kind }), true;
+        }
       }
       const model = b.model !== undefined ? String(b.model || "").trim() : undefined;
       const discovery = listFreeModels();
@@ -909,7 +968,11 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const key = settings.get(t).keys[settings.keySlot("openai", base_url)];
       if (!key) return send(res, 200, { models: [], error: "Add a key for this API first." }), true;
       try { return send(res, 200, { models: await listOpenAIModels({ key, base_url }) }), true; }
-      catch (e) { return send(res, 200, { models: [], error: e.message }), true; }
+      catch (e) {
+        const normalized = normalizeEngineError(e, { provider: "openai", timeZone: timeZoneOf(t) });
+        log(`assistant (${t.email || "owner"}, openai models): ${e.message}`);
+        return send(res, 200, { models: [], error: normalized.message, error_kind: normalized.kind }), true;
+      }
     }
 
     if (path === "/api/assistant/stop" && m === "POST") {

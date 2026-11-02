@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { TOOLS, runTool } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
+import { normalizeEngineError } from "./engine-errors.js";
 
 export const ENGINES = [
   { id: "free", name: "Free", note: "opencode's free models. No key needed; slower." },
@@ -225,7 +226,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
 // --- any OpenAI-compatible API ----------------------------------------------------------
 
 async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep }) {
-  if (!model) throw new Error("pick a model in Settings first");
+  if (!model) throw Object.assign(new Error("pick a model in Settings first"), { status: 400 });
   const url = `${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/chat/completions`;
   const tools = TOOL_SCHEMAS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
   const user = images.length
@@ -240,7 +241,7 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
       signal: AbortSignal.any([signal, AbortSignal.timeout(TURN_SECONDS * 1000)]),
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body?.error?.message || `the API said ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "openai" });
     const choice = body.choices?.[0]?.message;
     if (!choice) throw new Error("the API sent no reply");
     if (choice.content) message.text = String(choice.content).trim();
@@ -269,7 +270,7 @@ export async function listOpenAIModels({ key, base_url }) {
     signal: AbortSignal.timeout(15000),
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error?.message || `the API said ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "openai" });
   return (body.data || []).map((m) => ({ id: String(m.id).replace(/^models\//, ""), name: m.name || m.display_name || String(m.id).replace(/^models\//, "") })).sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -280,10 +281,7 @@ export async function checkKey({ engine, key, base_url }) {
     try {
       await client.models.retrieve(CLAUDE_MODELS[0].id);
     } catch (e) {
-      if (e instanceof Anthropic.AuthenticationError) throw new Error("That API key was not accepted.");
-      if (e instanceof Anthropic.PermissionDeniedError) throw new Error("That key has no access to Claude models.");
-      if (e instanceof Anthropic.APIError) throw new Error(`Anthropic said ${e.status}: ${e.message}`);
-      throw new Error("Could not reach Anthropic to check the key.");
+      throw e;
     }
     return true;
   }
@@ -302,18 +300,54 @@ export async function checkKey({ engine, key, base_url }) {
  * One reply on a direct engine (anthropic or openai): message.text, .tools and
  * .cards fill in as it works. Throws on a failure the user should see.
  */
-export async function runDirect({ settings, system, chat, userText, images, service, message, signal, onProgress = () => {}, onStep = () => {} }) {
+export async function runDirect({ settings, system, chat, userText, images, service, message, signal, onProgress = () => {}, onStep = () => {}, onError = () => {}, timeZone = "UTC" }) {
   const history = historyTurns(chat, chat.messages.length - 2);
   const key = settings.keys[settings.engine === "openai" ? `openai:${settings.base_url || ""}` : settings.engine];
   if (!key) throw new Error("Add your key in the assistant's settings first.");
   const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep };
-  try {
-    if (settings.engine === "anthropic") await runAnthropic(args);
-    else await runOpenAI(args);
-  } catch (e) {
-    if (e instanceof Anthropic.AuthenticationError) throw new Error("Your Claude API key was not accepted. Check it in the assistant's settings.");
-    if (e instanceof Anthropic.RateLimitError) throw new Error("Claude is rate-limiting this key right now. Try again in a minute.");
-    if (e instanceof Anthropic.APIError) throw new Error(`Claude said ${e.status}: ${e.message}`);
-    throw e;
+  const provider = settings.engine;
+  const runModel = provider === "anthropic" ? runAnthropic : runOpenAI;
+  const tried = new Set();
+  let model = settings.model || (provider === "anthropic" ? CLAUDE_MODELS[0].id : "");
+  let lastError;
+  while (model && !tried.has(model)) {
+    tried.add(model);
+    args.model = model;
+    let failure = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await runModel(args);
+        return model;
+      } catch (e) {
+        const normalized = normalizeEngineError(e, { provider, status: e.status, headers: e.headers, body: e.body, timeZone });
+        e.normalized = normalized;
+        onError(e);
+        e.logged = true;
+        failure = e;
+        if (message.text?.trim() || message.tools?.length || message.cards?.length) throw e;
+        if (normalized.kind !== "network" && normalized.kind !== "overloaded") break;
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+    }
+    if (!failure) return;
+    const kind = failure.normalized.kind;
+    if (!["rate_limit", "quota", "overloaded", "network"].includes(kind)) throw failure;
+    lastError = failure;
+    let alternatives = [];
+    if (provider === "anthropic") {
+      const ids = CLAUDE_MODELS.map((m) => m.id);
+      const index = ids.indexOf(model);
+      alternatives = [...ids.slice(index + 1), ...ids.slice(0, Math.max(0, index))];
+    } else {
+      try {
+        const ids = (await listOpenAIModels({ key, base_url: settings.base_url })).map((m) => m.id);
+        const index = ids.indexOf(model);
+        alternatives = index >= 0 ? [...ids.slice(index + 1), ...ids.slice(0, index)] : ids;
+      } catch (e) {
+        // Keep the actual completion failure as the user-visible and logged cause.
+      }
+    }
+    model = alternatives.find((id) => !tried.has(id));
   }
+  if (lastError) throw lastError;
 }

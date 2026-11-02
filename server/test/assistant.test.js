@@ -138,17 +138,17 @@ test("a message runs opencode, which works on the account's data through the Hou
   const notes = await call("POST", "/api/actions/get_notes", { limit: 5 });
   assert.ok(notes.body.some((n) => n.title === "From assistant" && n.body === "Buy eggs and milk"), JSON.stringify(notes.body));
 
-  // The first model was down, so the next one was used. The first message of a
-  // conversation carries the full instructions and the time.
+  // A transient failure gets one retry before switching models. The first
+  // successful model's first message carries the full instructions and time.
   const c = calls();
-  assert.deepEqual(c.map((x) => x.model), ["fake/down", "fake/good"]);
-  assert.equal(c[1].session, null);
-  assert.match(c[1].prompt, /You are the assistant built into Hourglass/);
-  assert.match(c[1].prompt, /hourglass_search/);
-  assert.match(c[1].prompt, /It is \w+day \d{4}-\d\d-\d\d/);
+  assert.deepEqual(c.map((x) => x.model), ["fake/down", "fake/down", "fake/good"]);
+  assert.equal(c[2].session, null);
+  assert.match(c[2].prompt, /You are the assistant built into Hourglass/);
+  assert.match(c[2].prompt, /hourglass_search/);
+  assert.match(c[2].prompt, /It is \w+day \d{4}-\d\d-\d\d/);
   // The app guide and the account snapshot travel with it.
-  assert.match(c[1].prompt, /# Hourglass, the app/);
-  assert.match(c[1].prompt, /On now and next:/);
+  assert.match(c[2].prompt, /# Hourglass, the app/);
+  assert.match(c[2].prompt, /On now and next:/);
   assert.equal(c[1].home, join(accountDir(), "home"));
   assert.deepEqual(c[0].args, ["run", "--format", "json", "-m", "fake/down"]);
   assert.equal(c[0].env.OPENAI_API_KEY, undefined);
@@ -254,4 +254,15 @@ test("attachments: uploaded to the Drive's Assistant folder, staged for the mode
   // A file alone, with no words, is still a message.
   assert.equal((await call("POST", "/api/assistant/message", { files: [file.id] })).status, 202);
   await waitIdle();
+});
+
+test("the shared OpenCode free quota stops model fallback after the first model", async () => {
+  const set = await call("POST", "/api/assistant/settings", { engine: "free", model: "opencode/big-pickle" });
+  assert.equal(set.status, 200);
+  const start = calls().length;
+  assert.equal((await call("POST", "/api/assistant/message", { text: "What should I do today?" })).status, 202);
+  const reply = (await waitIdle()).messages.at(-1);
+  assert.equal(reply.error_kind, "quota");
+  assert.equal(reply.error, "The free models have hit their limit. Try again later, or add your own key in Assistant settings.");
+  assert.deepEqual(calls().slice(start).map((entry) => entry.model), ["opencode/big-pickle"]);
 });
