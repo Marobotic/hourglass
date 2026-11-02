@@ -220,6 +220,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
   // Opus 5.5 and Sonnet 5.5: if a safety check declines, the request is re-run on a fallback model.
   const fallback = /^claude-(opus|sonnet)-5-5$/.test(id);
   for (let step = 0; step < MAX_STEPS; step++) {
+    let stepHasText = false;
     const params = {
       model: id,
       max_tokens: 16000,
@@ -255,7 +256,12 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
       } else if (ev.type === "content_block_delta") {
         if (ev.delta?.type === "text_delta") {
           if (block?.type === "text") block.text += ev.delta.text || "";
-          message.text = (message.text || "") + (ev.delta.text || "");
+          const text = ev.delta.text || "";
+          if (text && !stepHasText) {
+            if (message.text?.trim()) message.text += "\n\n";
+            stepHasText = true;
+          }
+          message.text = (message.text || "") + text;
           onProgress();
         } else if (ev.delta?.type === "input_json_delta" && block) block.input += ev.delta.partial_json || "";
         else if (ev.delta?.type === "thinking_delta" && ev.delta.thinking?.trim()) onStep(`Thinking: ${ev.delta.thinking.trim().replace(/\s+/g, " ").slice(0, 240)}`);
@@ -311,6 +317,7 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
     : userText;
   const messages = [{ role: "system", content: system }, ...history, { role: "user", content: user }];
   for (let step = 0; step < MAX_STEPS; step++) {
+    let stepHasText = false;
     const res = await fetch(url, {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
@@ -342,7 +349,15 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
         if (event.error) throw Object.assign(new Error(event.error.message || "the API returned an error"), { status: event.error.status || res.status, headers: res.headers, body: event, provider: "openai" });
         const choice = event.choices?.[0];
         const delta = choice?.delta;
-        if (delta?.content) { content += delta.content; message.text = (message.text || "") + delta.content; onProgress(); }
+        if (delta?.content) {
+          if (!stepHasText) {
+            if (message.text?.trim()) message.text += "\n\n";
+            stepHasText = true;
+          }
+          content += delta.content;
+          message.text = (message.text || "") + delta.content;
+          onProgress();
+        }
         for (const part of delta?.tool_calls || []) {
           const call = callsByIndex.get(part.index) || { id: "", type: "function", function: { name: "", arguments: "" } };
           if (part.id) call.id = part.id;

@@ -55,7 +55,7 @@ Modal {
         if (m.note) label += "  · " + m.note;
         if (m.context_window) label += "  · " + (m.context_window >= 1000000 ? (m.context_window / 1000000).toFixed(1).replace(/\.0$/, "") + "M" : Math.round(m.context_window / 1000) + "k");
         if (m.pricing && m.pricing.input !== undefined && m.pricing.output !== undefined)
-            label += "  · $" + (m.pricing.input * 1000000).toPrecision(3).replace(/\.?0+$/, "") + "/$" + (m.pricing.output * 1000000).toPrecision(3).replace(/\.?0+$/, "") + " per 1M";
+            label += "  · $" + (m.pricing.input * 1000000).toPrecision(3).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") + "/$" + (m.pricing.output * 1000000).toPrecision(3).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") + " per 1M";
         return label;
     }
     function save() {

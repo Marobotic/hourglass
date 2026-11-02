@@ -59,10 +59,13 @@ function startFake() {
         const id = done ? "msg_2" : "msg_1";
         const start = { type: "message_start", message: { id, type: "message", role: "assistant", model: json.model, content: [], usage: { input_tokens: 10, cache_read_input_tokens: 2 } } };
         if (!done) return sendSse(res, [start,
-          { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tu_1", name: "set_alarm", input: {} } },
-          { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"label":"Gym",' } },
-          { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '"time":"07:30","days":["Mon","Wed"]}' } },
+          { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "I'll set that." } },
           { type: "content_block_stop", index: 0 },
+          { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu_1", name: "set_alarm", input: {} } },
+          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"label":"Gym",' } },
+          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '"time":"07:30","days":["Mon","Wed"]}' } },
+          { type: "content_block_stop", index: 1 },
           { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 3 } }, { type: "message_stop" }]);
         return sendSse(res, [start,
           { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
@@ -88,6 +91,7 @@ function startFake() {
           { choices: [], usage: { prompt_tokens: 20, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 6 } } },
         ], 100);
         if (!done) return sendSse(res, [
+          { choices: [{ delta: { content: "I'll set that." } }] },
           { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "start_timer", arguments: '{"minutes":' } }] } }] },
           { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '25,"label":"Focus"}' } }] } }] },
           { choices: [], usage: { prompt_tokens: 16, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 4 } } },
@@ -185,7 +189,7 @@ test("Claude with a key: the tool call sets the alarm, and the reply has an alar
   const done = await waitIdle();
   const reply = done.messages.at(-1);
   assert.equal(reply.error, null);
-  assert.equal(reply.text, "Done.");
+  assert.equal(reply.text, "I'll set that.\n\nDone.");
   assert.equal(reply.model, "claude-haiku-5-5");
   assert.deepEqual(reply.tools.map((x) => [x.tool, x.status]), [["set_alarm", "completed"]]);
   assert.equal(reply.cards.length, 1);
@@ -225,7 +229,7 @@ test("another API with a key: models are listed, and its tool calls run too", as
   assert.equal((await call("POST", "/api/assistant/message", { text: "focus timer please, 25 min" })).status, 202);
   const reply = (await waitIdle()).messages.at(-1);
   assert.equal(reply.error, null);
-  assert.equal(reply.text, "Timer's on.");
+  assert.equal(reply.text, "I'll set that.\n\nTimer's on.");
   assert.equal(reply.cards[0].kind, "timer");
   assert.equal(reply.cards[0].label, "Focus");
   assert.equal(reply.cards[0].duration_s, 1500);
@@ -236,7 +240,7 @@ test("another API with a key: models are listed, and its tool calls run too", as
   assert.equal(reply.usage.context_window, 128000);
   // The earlier exchange went along as history.
   const req = seen.filter((r) => r.path === "/openai/chat/completions")[0].body;
-  assert.ok(req.messages.some((m) => m.role === "assistant" && m.content === "Done."));
+  assert.ok(req.messages.some((m) => m.role === "assistant" && m.content === "I'll set that.\n\nDone."));
 });
 
 test("OpenAI-compatible text streams into the polled message with usage metadata", async () => {
