@@ -289,8 +289,12 @@ test("pull mode downloads a file the server has not hashed yet, and only once", 
     await engine.run(pair.id);
     const saved = JSON.parse(await readFile(join(temp, "data", "syncfolders.json"), "utf8"))[0];
     assert.equal(saved.base.files["lecture.mp4"].file_id, "remote-a");
+    assert.deepEqual(engine.syncState(), { file_ids: ["remote-a"], folder_ids: ["folder-root"] },
+      "a legacy unhashed file is confirmed from its pull base entry and matching size");
     await engine.run(pair.id);
     assert.equal(downloads, 1, "an unhashed file that is already here must not be fetched again");
+    assert.deepEqual(engine.syncState(), { file_ids: ["remote-a"], folder_ids: ["folder-root"] },
+      "the confirmation survives an unchanged pass");
   } finally {
     engine.stop();
     await rm(temp, { recursive: true, force: true });

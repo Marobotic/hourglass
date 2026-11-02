@@ -245,7 +245,7 @@ export function compareTrees(local, remote, base, {
   };
 }
 
-export function fullySyncedIds(pair, local, remote) {
+export function fullySyncedIds(pair, local, remote, base = pair.base || {}) {
   const fileIds = new Set();
   const folderIds = new Set();
   const filePaths = new Map();
@@ -263,16 +263,26 @@ export function fullySyncedIds(pair, local, remote) {
 
   for (const [path, remoteFile] of Object.entries(remote.files || {})) {
     const localFile = local.files?.[path];
-    if (!remoteFile.file_id || !remoteFile.sha256 || !localFile?.sha256
-      || localFile.sha256 !== remoteFile.sha256
-      || localPending.has(path) || remotePending.has(path) || errorPaths.has("") || errorPaths.has(path)) continue;
+    const prior = base.files?.[path];
+    const hashesMatch = !!remoteFile.sha256 && !!localFile?.sha256 && localFile.sha256 === remoteFile.sha256;
+    // Legacy course uploads may not have a Drive hash yet. Pull records the
+    // downloaded file id, local hash and size; that base plus matching sizes
+    // is the available confirmation until Drive hashes the remote bytes.
+    const pullBaseMatches = pair.mode === "pull" && !remoteFile.sha256
+      && prior?.file_id === remoteFile.file_id && !!prior.sha256 && !!localFile?.sha256
+      && localFile.sha256 === prior.sha256
+      && Number(localFile.size) === Number(remoteFile.size)
+      && Number(prior.size) === Number(remoteFile.size);
+    if (!remoteFile.file_id || (!hashesMatch && !pullBaseMatches)
+      || localPending.has(path) || (remotePending.has(path) && !pullBaseMatches)
+      || errorPaths.has("") || errorPaths.has(path)) continue;
     fileIds.add(remoteFile.file_id);
     filePaths.set(path, remoteFile.file_id);
   }
 
   const folderIsSynced = (folderPath) => {
     const within = (path) => !folderPath || path.startsWith(`${folderPath}/`);
-    if ([...localPending, ...remotePending, ...errorPaths].some((path) => !path || within(path))) return false;
+    if ([...localPending, ...errorPaths].some((path) => !path || within(path))) return false;
     const paths = new Set([
       ...Object.keys(local.files || {}).filter(within),
       ...Object.keys(remote.files || {}).filter(within),
@@ -931,7 +941,7 @@ export function createFolderSync({
         }
       }
       pair.base = base;
-      const synced = fullySyncedIds(pair, afterLocal, remote);
+      const synced = fullySyncedIds(pair, afterLocal, remote, base);
       pair.syncedFileIds = synced.fileIds;
       pair.syncedFolderIds = synced.folderIds;
       pair.syncedFilePaths = synced.filePaths;
