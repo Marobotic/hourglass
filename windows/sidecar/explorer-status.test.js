@@ -34,7 +34,7 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
   await writeFile(join(folder, "pending.txt"), "pending");
   await writeFile(fake, `import { appendFileSync, readFileSync } from 'node:fs'; const args=process.argv.slice(2); const i=args.indexOf('--json'); const input=i<0?null:JSON.parse(readFileSync(args[i+1],'utf8')); appendFileSync(${JSON.stringify(calls)}, JSON.stringify({args,input})+'\\n'); console.log(JSON.stringify({ok:true}));`);
   try {
-    const helper = createExplorerStatus({ dataDir: root, sidecarDir: root, platform: "win32", env: {}, spawnImpl: (_exe, args, options) => spawn(process.execPath, [fake, ...args], options) });
+    const helper = createExplorerStatus({ dataDir: root, sidecarDir: root, platform: "win32", env: { HOURGLASS_EXPLORER_STATUS: "on" }, spawnImpl: (_exe, args, options) => spawn(process.execPath, [fake, ...args], options) });
     const pair = { id: "pair-1", local: folder, syncedFilePaths: new Map([["ok.txt", "file-1"]]), syncedFolderPaths: new Map() };
     await helper.register(pair);
     await helper.status(pair);
