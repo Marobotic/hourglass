@@ -16,6 +16,7 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Store } from "../../core/node/store.js";
 import { createFolderSync } from "./foldersync.js";
+import { createExplorerStatus } from "./explorer-status.js";
 import { validatePairFolder } from "./drive-local-paths.js";
 import { legacyCoursesDirectory, migrateLegacyCoursePairs, resolveCoursesDirectory } from "./courses-paths.js";
 import { Service } from "../../core/node/service.js";
@@ -1185,6 +1186,10 @@ foreach ($path in $folders) {
   });
 }
 
+const explorerStatus = createExplorerStatus({ dataDir: DATA_DIR, logger: (...args) => log(...args) });
+const explorerPairLabel = (pair) => pair.mode === "pull"
+  ? (store.all("courses").find((course) => course.id === pair.course_id)?.name || "Course copy")
+  : (store.all("folders").find((folder) => folder.id === pair.folder_id)?.name || "Synced folder");
 const folderSync = createFolderSync({
   dataDir: DATA_DIR,
   driveDir: DRIVE_DIR,
@@ -1203,6 +1208,11 @@ const folderSync = createFolderSync({
   removeLocal: moveFilesToRecycleBin,
   deviceName: () => decodeURIComponent(deviceName()),
   signedIn: () => !!config().token && sync.state === "synced",
+  onPairAdded: async (pair) => { if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) await explorerStatus.status(pair); },
+  onPassComplete: async (pair) => { if (explorerStatus.enabled) await explorerStatus.status(pair); },
+  onStarted: async (pairs) => {
+    for (const pair of pairs) if (await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) await explorerStatus.status(pair);
+  },
   maxFile: async () => (await remote("/api/drive/usage")).max_file || Infinity,
   deferStart: true,
 });
@@ -1316,6 +1326,7 @@ async function syncFolderRoutes(req, res, path) {
 
   const del = /^\/api\/syncfolders\/([0-9a-f-]+)$/.exec(path);
   if (del && m === "DELETE") {
+    if (!await explorerStatus.unregister(del[1])) return json(res, 500, { error: "Could not unregister the Explorer sync root." }), true;
     return folderSync.remove(del[1])
       ? (json(res, 200, { ok: true }), true)
       : (json(res, 404, { error: "Sync folder not found." }), true);
@@ -1384,6 +1395,7 @@ async function localCopyRoutes(req, res, path) {
     } catch {
       return json(res, 400, { error: "The local copy folder is unavailable." }), true;
     }
+    if (!await explorerStatus.unregister(pair.id)) return json(res, 500, { error: "Could not unregister the Explorer sync root." }), true;
     folderSync.remove(pair.id);
     // A course can be gigabytes: delete it off the event loop, or the whole
     // sidecar stops answering while Windows walks the tree.

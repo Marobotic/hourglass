@@ -110,6 +110,14 @@ or pass -QtRoot <folder> pointing at a 6.8.3 msvc2022_64 tree.
   $d = Join-Path $src 'dist\Hourglass'
   $w = Join-Path $d 'windows'
   New-Item -ItemType Directory -Force (Join-Path $w 'node'), (Join-Path $w 'qt\bin'), (Join-Path $w 'app\fonts') | Out-Null
+  Push-Location $src
+  try {
+    & cargo build --manifest-path windows\shell\hourglass-shell\Cargo.toml --release
+    if ($LASTEXITCODE -ne 0) { throw 'hourglass-shell cargo build failed' }
+  } finally { Pop-Location }
+  New-Item -ItemType Directory -Force (Join-Path $w 'bin') | Out-Null
+  Copy-Item (Join-Path $src 'windows\shell\hourglass-shell\target\release\hourglass-shell.exe') (Join-Path $w 'bin\hourglass-shell.exe') -Force
+  Step 'Cloud Files helper (cargo)'
   Push-Location (Join-Path $src 'server')
   try {
     & npm ci --omit=dev --no-audit --no-fund

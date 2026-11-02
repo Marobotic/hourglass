@@ -319,6 +319,9 @@ export function createFolderSync({
   deviceName = () => "PC",
   signedIn = () => true,
   onState = () => {},
+  onPairAdded = () => {},
+  onPassComplete = () => {},
+  onStarted = () => {},
   watchFactory = watch,
   intervalMs = 30000,
   clock = () => Date.now(),
@@ -981,6 +984,7 @@ export function createFolderSync({
       running.delete(id);
       emit(pair);
       runQueuedResolution();
+      Promise.resolve(onPassComplete(pair)).catch(() => {});
     }
   }
 
@@ -993,6 +997,7 @@ export function createFolderSync({
     pair.state = "syncing";
     emit(pair);
     startWatch(pair);
+    Promise.resolve(onPairAdded(pair)).catch(() => {});
     const actions = pair.pendingDeletes?.actions || [];
     const localFileDeletes = [];
 
@@ -1049,6 +1054,7 @@ export function createFolderSync({
     rebuildSyncStateCache();
     save();
     startWatch(pair);
+    Promise.resolve(onPairAdded(pair)).catch(() => {});
     if (running.size) schedule(pair, 2000);
     else run(pair.id);
     return view(pair);
@@ -1130,6 +1136,7 @@ export function createFolderSync({
     for (const pair of pairs.values()) {
       if (!pair.paused) startWatch(pair);
     }
+    Promise.resolve(onStarted([...pairs.values()])).catch(() => {});
   }
 
   function syncState() {

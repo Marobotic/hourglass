@@ -54,6 +54,9 @@ Type: filesandordirs; Name: "{app}\*"
 [Files]
 Source: "{#Package}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
+[UninstallRun]
+Filename: "{app}\windows\bin\hourglass-shell.exe"; Parameters: "unregister --all"; Flags: runhidden waituntilterminated; StatusMsg: "Disconnecting synced folders..."; Check: FileExists(ExpandConstant('{app}\windows\bin\hourglass-shell.exe'))
+
 [Icons]
 Name: "{userprograms}\Hourglass"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\windows\Hourglass.vbs"""; WorkingDir: "{app}\windows"; IconFilename: "{app}\windows\hourglass.ico"; Comment: "Calendar, notes, alarms and timers"
 ; The background service at sign-in: alarms and timers ring with the window closed.
