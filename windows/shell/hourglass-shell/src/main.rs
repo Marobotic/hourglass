@@ -208,7 +208,9 @@ mod cloud_files {
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize};
-    use windows::Win32::UI::Shell::{SHCNE_UPDATEITEM, SHCNF_PATHW, SHChangeNotify};
+    use windows::Win32::UI::Shell::{
+        SHCNE_ASSOCCHANGED, SHCNE_UPDATEITEM, SHCNF_IDLIST, SHCNF_PATHW, SHChangeNotify,
+    };
     use windows::core::{HSTRING, Interface, PCWSTR, PWSTR};
     use windows_collections::IVectorView;
 
@@ -238,6 +240,12 @@ mod cloud_files {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
         }
         Ok(())
+    }
+
+    fn notify_namespace_changed() {
+        unsafe {
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+        }
     }
 
     fn hide_owned_roots_and_clean_stale(roots: &[RootJson]) -> Result<(), String> {
@@ -880,7 +888,14 @@ Remove-Item -LiteralPath ('HKCU:\Software\Classes\CLSID\' + $clsid) -Recurse -Fo
     }
 
     pub fn execute(command: Command) -> Result<ResultJson, String> {
-        match command {
+        let notify = matches!(
+            command,
+            Command::Register { .. }
+                | Command::Unregister { .. }
+                | Command::CleanupStale
+                | Command::Navigation { .. }
+        );
+        let result = match command {
             Command::Register {
                 pair,
                 path,
@@ -930,7 +945,11 @@ Remove-Item -LiteralPath ('HKCU:\Software\Classes\CLSID\' + $clsid) -Recurse -Fo
                     errors: None,
                 })
             }
+        };
+        if notify && result.is_ok() {
+            notify_namespace_changed();
         }
+        result
     }
 }
 
