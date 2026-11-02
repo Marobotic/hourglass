@@ -1207,7 +1207,6 @@ const coursesReady = (async () => {
 
 store.onChange((table) => {
   if (table !== "files" && table !== "folders" && table !== "courses") return;
-  folderSync.invalidateSynced();
   if (table === "courses") return;
   for (const pair of folderSync.list()) {
     if (pair.state !== "paused") folderSync.schedule(pair.id, 2000);

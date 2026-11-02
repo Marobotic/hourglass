@@ -248,6 +248,8 @@ export function compareTrees(local, remote, base, {
 export function fullySyncedIds(pair, local, remote) {
   const fileIds = new Set();
   const folderIds = new Set();
+  const filePaths = new Map();
+  const folderPaths = new Map();
   const localPending = new Set(local.pending || []);
   const remotePending = new Set(remote.pending || []);
   const errorPaths = new Set();
@@ -265,6 +267,7 @@ export function fullySyncedIds(pair, local, remote) {
       || localFile.sha256 !== remoteFile.sha256
       || localPending.has(path) || remotePending.has(path) || errorPaths.has("") || errorPaths.has(path)) continue;
     fileIds.add(remoteFile.file_id);
+    filePaths.set(path, remoteFile.file_id);
   }
 
   const folderIsSynced = (folderPath) => {
@@ -281,10 +284,16 @@ export function fullySyncedIds(pair, local, remote) {
   };
 
   for (const [path, id] of Object.entries(remote.folders || {})) {
-    if (folderIsSynced(path)) folderIds.add(id);
+    if (folderIsSynced(path)) {
+      folderIds.add(id);
+      folderPaths.set(path, id);
+    }
   }
-  if (pair.folder_id && folderIsSynced("")) folderIds.add(pair.folder_id);
-  return { fileIds, folderIds };
+  if (pair.folder_id && folderIsSynced("")) {
+    folderIds.add(pair.folder_id);
+    folderPaths.set("", pair.folder_id);
+  }
+  return { fileIds, folderIds, filePaths, folderPaths };
 }
 
 export function createFolderSync({
@@ -300,6 +309,7 @@ export function createFolderSync({
   signedIn = () => true,
   onState = () => {},
   watchFactory = watch,
+  intervalMs = 30000,
   clock = () => Date.now(),
   deferStart = false,
 }) {
@@ -318,7 +328,7 @@ export function createFolderSync({
     const fileIds = new Set();
     const folderIds = new Set();
     for (const pair of pairs.values()) {
-      if (pair.paused || pair.state === "syncing") continue;
+      if (pair.paused) continue;
       for (const id of pair.syncedFileIds || []) fileIds.add(id);
       for (const id of pair.syncedFolderIds || []) folderIds.add(id);
     }
@@ -349,7 +359,7 @@ export function createFolderSync({
 
   // folderPath scans every row, and view() runs on every progress emit: on a
   // 5,000-file pair that scan was the whole of the sidecar's CPU. Remember the
-  // answer for the pass; run() clears it, so a rename shows up on the next one.
+  // answer for the pass.
   const folderPaths = new Map();
 
   function folderPath(id) {
@@ -430,9 +440,28 @@ export function createFolderSync({
     if (!started || stopped) return;
     try {
       watchers.get(pair.id)?.close();
-      const watcher = watchFactory(pair.local, { recursive: true }, () => {
-        pair.syncedFileIds = new Set();
-        pair.syncedFolderIds = new Set();
+      const watcher = watchFactory(pair.local, { recursive: true }, (_event, filename) => {
+        const path = filename == null ? "" : String(filename).replace(/\\/g, "/").replace(/^\.\//, "");
+        if (!path) {
+          pair.syncedFilePaths = new Map();
+          pair.syncedFolderPaths = new Map();
+        } else {
+          const knownFiles = pair.syncedFilePaths || new Map();
+          const knownFolders = pair.syncedFolderPaths || new Map();
+          const directory = knownFolders.has(path)
+            || [...knownFiles.keys(), ...knownFolders.keys()].some((item) => item.startsWith(`${path}/`));
+          for (const item of knownFiles.keys()) {
+            if (item === path || (directory && item.startsWith(`${path}/`))) knownFiles.delete(item);
+          }
+          for (const item of knownFolders.keys()) {
+            const ancestor = !item || path === item || path.startsWith(`${item}/`);
+            if (ancestor || (directory && item.startsWith(`${path}/`))) knownFolders.delete(item);
+          }
+          pair.syncedFilePaths = knownFiles;
+          pair.syncedFolderPaths = knownFolders;
+        }
+        pair.syncedFileIds = new Set(pair.syncedFilePaths?.values() || []);
+        pair.syncedFolderIds = new Set(pair.syncedFolderPaths?.values() || []);
         rebuildSyncStateCache();
         schedule(pair, 2000);
       });
@@ -740,8 +769,6 @@ export function createFolderSync({
       return;
     }
     running.add(id);
-    pair.syncedFileIds = new Set();
-    pair.syncedFolderIds = new Set();
     pair.state = "syncing";
     rebuildSyncStateCache();
     folderPaths.delete(pair.folder_id);
@@ -907,6 +934,8 @@ export function createFolderSync({
       const synced = fullySyncedIds(pair, afterLocal, remote);
       pair.syncedFileIds = synced.fileIds;
       pair.syncedFolderIds = synced.folderIds;
+      pair.syncedFilePaths = synced.filePaths;
+      pair.syncedFolderPaths = synced.folderPaths;
       pair.last_sync = clock();
       pair.state = pair.errors.length ? "error" : "idle";
       pair.reason = null;
@@ -921,6 +950,10 @@ export function createFolderSync({
       if (error.pause || rootGone) {
         pause(pair, error.pause || "root_unreadable", error.message);
       } else {
+        pair.syncedFileIds = new Set();
+        pair.syncedFolderIds = new Set();
+        pair.syncedFilePaths = new Map();
+        pair.syncedFolderPaths = new Map();
         pair.state = "error";
         pair.errors = [{ path: pair.local, error: error.message }];
         emit(pair);
@@ -1083,20 +1116,12 @@ export function createFolderSync({
     return syncStateCache;
   }
 
-  function invalidateSynced() {
-    for (const pair of pairs.values()) {
-      pair.syncedFileIds = new Set();
-      pair.syncedFolderIds = new Set();
-    }
-    rebuildSyncStateCache();
-  }
-
   load();
   if (!deferStart) start();
 
   const interval = setInterval(() => {
     for (const pair of pairs.values()) schedule(pair, 0);
-  }, 30000);
+  }, intervalMs);
   interval.unref?.();
 
   return {
@@ -1112,7 +1137,6 @@ export function createFolderSync({
     },
     relocatePull,
     syncState,
-    invalidateSynced,
     start,
     stop: () => {
       stopped = true;

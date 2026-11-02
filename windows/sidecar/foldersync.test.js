@@ -45,6 +45,8 @@ test("sync-state IDs include only matching files and folders with complete desce
   }, local, remote);
   assert.deepEqual([...state.fileIds].sort(), ["id-complete", "id-good", "id-nested"]);
   assert.deepEqual([...state.folderIds], ["folder-clean"]);
+  assert.equal(state.filePaths.get("clean/good.txt"), "id-good");
+  assert.equal(state.folderPaths.get("clean"), "folder-clean");
 
   const complete = fullySyncedIds(
     { folder_id: "folder-root", local: "C:\\Courses\\Physics", errors: [] },
@@ -83,6 +85,72 @@ async function savedPair({ temp, root, id = "pair-1", folderId = "folder-root", 
   await writeFile(join(data, "syncfolders.json"), JSON.stringify([pair]));
   return { data, pair };
 }
+
+test("confirmed IDs survive unchanged periodic passes and watcher invalidation is path-scoped", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-sync-state-cache-"));
+  const root = join(temp, "local");
+  await mkdir(join(root, "a"), { recursive: true });
+  await mkdir(join(root, "b"), { recursive: true });
+  const a = join(root, "a", "one.txt");
+  const b = join(root, "b", "two.txt");
+  await writeFile(a, "one");
+  await writeFile(b, "two");
+  const hash = async (path) => createHash("sha256").update(await readFile(path)).digest("hex");
+  const state = {
+    folders: [
+      { id: "folder-root", name: "Drive" },
+      { id: "folder-a", name: "a", parent_id: "folder-root" },
+      { id: "folder-b", name: "b", parent_id: "folder-root" },
+    ],
+    files: [
+      { id: "id-a", name: "one.txt", folder_id: "folder-a", sha256: await hash(a) },
+      { id: "id-b", name: "two.txt", folder_id: "folder-b", sha256: await hash(b) },
+    ],
+  };
+  let syncCalls = 0;
+  let beginSecondPass;
+  let releaseSecondPass;
+  const secondPassStarted = new Promise((resolve) => { beginSecondPass = resolve; });
+  const secondPassGate = new Promise((resolve) => { releaseSecondPass = resolve; });
+  let watchChanged;
+  const engine = createFolderSync({
+    dataDir: join(temp, "data"), driveDir: join(temp, "drive"), getRows: () => state,
+    syncOnce: async () => {
+      syncCalls++;
+      if (syncCalls === 3) {
+        beginSecondPass();
+        await secondPassGate;
+      }
+    },
+    upload: async () => {}, download: async () => {}, removeLocal: async () => {},
+    signedIn: () => true,
+    watchFactory: (path, options, callback) => { watchChanged = callback; return fakeWatch(); },
+    intervalMs: 60,
+  });
+
+  try {
+    engine.add(root, "folder-root");
+    await waitFor(() => engine.syncState().file_ids.length === 2);
+    assert.deepEqual([...engine.syncState().file_ids].sort(), ["id-a", "id-b"]);
+    assert.deepEqual([...engine.syncState().folder_ids].sort(), ["folder-a", "folder-b", "folder-root"]);
+
+    await secondPassStarted;
+    assert.equal(engine.list()[0].state, "syncing");
+    assert.deepEqual([...engine.syncState().file_ids].sort(), ["id-a", "id-b"]);
+    releaseSecondPass();
+    await waitFor(() => syncCalls >= 4 && engine.list()[0].state !== "syncing");
+    assert.deepEqual([...engine.syncState().file_ids].sort(), ["id-a", "id-b"]);
+
+    watchChanged("change", "a/one.txt");
+    assert.deepEqual(engine.syncState().file_ids, ["id-b"]);
+    assert.deepEqual(engine.syncState().folder_ids, ["folder-b"]);
+    watchChanged("rename", null);
+    assert.deepEqual(engine.syncState(), { file_ids: [], folder_ids: [] });
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
 
 test("first pairing uploads local-only files, downloads remote-only files, and records identical hashes", () => {
   const plan = compareTrees(
@@ -1146,8 +1214,6 @@ test("a failed upload is noted while the rest of the pass goes on", async () => 
     assert.equal(engine.list()[0].state, "error");
     assert.match(engine.list()[0].errors[0].path, /bad\.txt$/);
     assert.deepEqual(engine.syncState().file_ids, ["id-good.txt"]);
-    engine.invalidateSynced();
-    assert.deepEqual(engine.syncState(), { file_ids: [], folder_ids: [] });
 
     // The pass still saved what it did, so the next one only retries the failure.
     await engine.run(pair.id);
