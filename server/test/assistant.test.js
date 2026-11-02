@@ -13,7 +13,8 @@ import { join } from "node:path";
 
 const TOKEN = "owner-token-for-tests";
 const FAKE = join(import.meta.dirname, "fake-opencode.mjs");
-let hg, hgOff, base, baseOff, data, dataOff, accounts;
+const FAILING_MODELS = join(import.meta.dirname, "fake-opencode-models-fail.mjs");
+let hg, hgOff, hgFail, base, baseOff, baseFail, data, dataOff, dataFail, accounts, failAccounts;
 
 async function freePort() {
   const s = createServer();
@@ -43,7 +44,9 @@ async function startHourglass(dataDir, extraEnv = {}) {
 before(async () => {
   data = mkdtempSync(join(tmpdir(), "hg-assistant-"));
   dataOff = mkdtempSync(join(tmpdir(), "hg-assistant-off-"));
+  dataFail = mkdtempSync(join(tmpdir(), "hg-assistant-models-fail-"));
   accounts = join(data, "assistant-accounts");
+  failAccounts = join(dataFail, "assistant-accounts");
   ({ child: hg, base } = await startHourglass(data, {
     HOURGLASS_ASSISTANT: "on",
     HOURGLASS_ASSISTANT_RUNNER: "direct",
@@ -51,17 +54,24 @@ before(async () => {
     HOURGLASS_ASSISTANT_MODELS: "fake/down,fake/good",
     HOURGLASS_ASSISTANT_VISION_MODELS: "fake/vision",
     HOURGLASS_ASSISTANT_DIR: accounts,
+    OPENAI_API_KEY: "must-not-reach-opencode",
+    DATABASE_URL: "postgres://must-not-reach-opencode",
   }));
   ({ child: hgOff, base: baseOff } = await startHourglass(dataOff));
+  ({ child: hgFail, base: baseFail } = await startHourglass(dataFail, {
+    HOURGLASS_ASSISTANT: "on", HOURGLASS_ASSISTANT_RUNNER: "direct", HOURGLASS_ASSISTANT_BIN: FAILING_MODELS,
+    HOURGLASS_ASSISTANT_MODELS: "configured/one,configured/two", HOURGLASS_ASSISTANT_DIR: failAccounts,
+  }));
 });
 
 // Wait for the servers to exit before deleting: Windows keeps an open database locked.
 const stop = (child) => new Promise((r) => { if (!child || child.exitCode !== null) return r(); child.removeAllListeners("exit"); child.once("exit", r); child.kill(); });
 
 after(async () => {
-  await Promise.all([stop(hg), stop(hgOff)]);
+  await Promise.all([stop(hg), stop(hgOff), stop(hgFail)]);
   rmSync(data, { recursive: true, force: true, maxRetries: 5 });
   rmSync(dataOff, { recursive: true, force: true, maxRetries: 5 });
+  rmSync(dataFail, { recursive: true, force: true, maxRetries: 5 });
 });
 
 const call = async (method, path, body, at = base) => {
@@ -78,7 +88,7 @@ async function waitIdle() {
   throw new Error("assistant never finished");
 }
 
-const accountDir = () => join(accounts, readdirSync(accounts)[0]);
+const accountDir = () => join(accounts, readdirSync(accounts).find((name) => !name.startsWith(".")));
 const calls = () => readFileSync(join(accountDir(), "work", "calls.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 
 // --- tests ----------------------------------------------------------------------
@@ -94,7 +104,25 @@ test("needs an account", async () => {
   assert.equal((await fetch(base + "/api/assistant")).status, 401);
 });
 
+test("failed discovery says so and labels the fallback list as configured", async () => {
+  let response;
+  for (let i = 0; i < 20; i++) {
+    try { response = await call("GET", "/api/assistant/settings", null, baseFail); break; }
+    catch { await new Promise((resolve) => setTimeout(resolve, 25)); }
+  }
+  assert.ok(response, "the discovery test server starts");
+  assert.equal(response.body.free_model_discovery.status, "discovery failed");
+  assert.deepEqual(response.body.free_model_discovery.configured, ["configured/one", "configured/two"]);
+  assert.deepEqual(response.body.free_models.map(({ id, source }) => [id, source]), [
+    ["configured/one", "configured"], ["configured/two", "configured"],
+  ]);
+});
+
 test("a message runs opencode, which works on the account's data through the Hourglass tools", async () => {
+  const settings = await call("GET", "/api/assistant/settings");
+  assert.equal(settings.body.free_model_discovery.status, "discovered");
+  assert.ok(settings.body.free_models.some((m) => m.id === "opencode/beam-free"));
+  assert.ok(settings.body.free_models.every((m) => m.source === "discovered"));
   const empty = await call("GET", "/api/assistant");
   assert.deepEqual(empty.body, { enabled: true, engine: "free", model: "fake/down", busy: false, messages: [] });
 
@@ -122,6 +150,18 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.match(c[1].prompt, /# Hourglass, the app/);
   assert.match(c[1].prompt, /On now and next:/);
   assert.equal(c[1].home, join(accountDir(), "home"));
+  assert.deepEqual(c[0].args, ["run", "--format", "json", "-m", "fake/down"]);
+  assert.equal(c[0].env.OPENAI_API_KEY, undefined);
+  assert.equal(c[0].env.DATABASE_URL, undefined);
+  assert.equal(c[0].env.HOURGLASS_TOKEN, undefined);
+  assert.equal(c[0].env.HOME, join(accountDir(), "home"));
+  assert.equal(c[0].env.XDG_CONFIG_HOME, join(accountDir(), "config"));
+  assert.equal(c[0].env.XDG_DATA_HOME, join(accountDir(), "data"));
+  assert.equal(c[0].env.XDG_STATE_HOME, join(accountDir(), "state"));
+  assert.equal(c[0].env.XDG_CACHE_HOME, join(accountDir(), "cache"));
+  assert.equal(c[0].env.TMPDIR, join(accountDir(), "temp"));
+  assert.equal(c[0].env.TEMP, join(accountDir(), "temp"));
+  assert.equal(c[0].env.OPENCODE_CONFIG, join(accountDir(), "work", "opencode.json"));
 });
 
 test("the account folder's config is stock opencode plus the Hourglass MCP server", async () => {

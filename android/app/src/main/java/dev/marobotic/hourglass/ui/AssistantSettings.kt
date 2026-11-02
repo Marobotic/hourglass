@@ -169,6 +169,8 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                         for ((label, id) in opts) DropdownMenuItem(text = { T(label, 13, if (id == current) HColors.fg else HColors.muted) }, onClick = { model = id; open = false })
                     }
                 }
+                if (engine == "free" && s?.optJSONObject("free_model_discovery")?.optString("status") == "discovery failed")
+                    T("Model discovery failed; showing the configured fallback models.", 12, HColors.faint)
                 if (note.isNotBlank()) T(note, 12, HColors.muted)
                 if (error.isNotBlank()) T(error, 13, HColors.accent)
             }

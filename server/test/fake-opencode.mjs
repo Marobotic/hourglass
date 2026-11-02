@@ -7,11 +7,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const args = process.argv.slice(2);
+if (args[0] === "models" && args[1] === "opencode") {
+  process.stdout.write(readFileSync(new URL("./fixtures/opencode-models-opencode.txt", import.meta.url), "utf8"));
+  process.exit(0);
+}
 const model = args[args.indexOf("-m") + 1];
 const session = args.includes("--session") ? args[args.indexOf("--session") + 1] : null;
 let prompt = "";
 for await (const c of process.stdin) prompt += c;
-appendFileSync("calls.jsonl", JSON.stringify({ args, model, session, prompt, home: process.env.HOME }) + "\n");
+appendFileSync("calls.jsonl", JSON.stringify({ args, model, session, prompt, home: process.env.HOME, env: process.env }) + "\n");
 
 const sessionID = session || "ses_fake1";
 const emit = (e) => process.stdout.write(JSON.stringify({ sessionID, ...e }) + "\n");

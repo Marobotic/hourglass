@@ -239,6 +239,13 @@ Modal {
             onPicked: v => dlg.model = v
         }
         Text {
+            visible: dlg.engine === "free" && dlg.s && dlg.s.free_model_discovery.status === "discovery failed"
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: "Model discovery failed; showing the configured fallback models."
+            color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
+        }
+        Text {
             visible: dlg.engine === "openai" && dlg.apiModels.length === 0
             Layout.fillWidth: true
             wrapMode: Text.Wrap

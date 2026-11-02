@@ -40,6 +40,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "./opencode.js";
 import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
 import { INSTRUCTIONS } from "./tools.js";
@@ -229,7 +230,12 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const dir = join(accountsDir, sha(t.email || "owner").slice(0, 24));
     const home = join(dir, "home");
     const work = join(dir, "work");
-    for (const d of [dir, home, work]) mkdirSync(d, { recursive: true, mode: 0o700 });
+    const configDir = join(dir, "config");
+    const data = join(dir, "data");
+    const state = join(dir, "state");
+    const cache = join(dir, "cache");
+    const temp = join(dir, "temp");
+    for (const d of [dir, home, work, configDir, data, state, cache, temp]) mkdirSync(d, { recursive: true, mode: 0o700 });
     const config = JSON.stringify({
       $schema: "https://opencode.ai/config.json",
       mcp: { hourglass: { type: "remote", url: `${mcpBase}/mcp/${keyOf(t)}`, enabled: true } },
@@ -238,7 +244,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     if (!existsSync(file) || readFileSync(file, "utf8") !== config) writeFileSync(file, config, { mode: 0o600 });
     // The sandbox runs as hourglass-ai: it owns its account folder and nothing else.
     if (sandboxIds) for (const p of [dir, home, work, file]) chownSync(p, sandboxIds.uid, sandboxIds.gid);
-    return { dir, home, work };
+    return { dir, home, work, config: configDir, data, state, cache, temp };
   }
 
   // --- the conversation, kept in the account's own data (the sandbox cannot read it) ---
@@ -327,16 +333,16 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
 
   // --- running opencode ---------------------------------------------------------
 
-  function command(dirs, unit, args, program = bin, env = {}) {
+  function command(dirs, unit, args, program = bin, env = opencodeProfileEnv(dirs)) {
     const viaNode = /\.m?js$/.test(program);
     const exe = viaNode ? process.execPath : program;
     const exeArgs = viaNode ? [program, ...args] : args;
     if (runner !== "systemd") {
-      return { file: exe, args: exeArgs, options: { cwd: dirs.work, env: { ...process.env, HOME: dirs.home, ...env } } };
+      return { file: exe, args: exeArgs, options: { cwd: dirs.work, env } };
     }
     const p = [
       `User=${SANDBOX_USER}`, `Group=${SANDBOX_USER}`,
-      `Environment=HOME=${dirs.home}`, ...Object.entries(env).map(([k, v]) => `Environment=${k}=${v}`), `WorkingDirectory=${dirs.work}`,
+      ...Object.entries(env).map(([k, v]) => `Environment=${k}=${v}`), `WorkingDirectory=${dirs.work}`,
       // Only this account's folder exists under /var/lib; /opt and homes are hidden.
       "TemporaryFileSystem=/var/lib", `BindPaths=${dirs.dir}`, `ReadWritePaths=${dirs.dir}`,
       "InaccessiblePaths=-/opt", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "PrivateDevices=yes",
@@ -359,9 +365,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
    */
   function runOnce(t, dirs, chat, message, prompt, model, unit, attach = []) {
     return new Promise((resolve) => {
-      const args = ["run", "--format", "json", "-m", model];
-      if (chat.session) args.push("--session", chat.session);
-      for (const f of attach) args.push("-f", f);
+      const args = opencodeRunArgs(model, chat.session, attach);
       const { file, args: cmdArgs, options } = command(dirs, unit, args);
       const child = spawn(file, cmdArgs, { ...options, stdio: ["pipe", "pipe", "pipe"] });
       const entry = running.get(t.email);
@@ -447,19 +451,24 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   // --- the engines ----------------------------------------------------------------
 
   /** opencode's free models, from `opencode models` (cached an hour); the env list if that fails. */
-  let freeModels = { at: 0, list: models };
+  let freeModels = { at: 0, status: "discovery failed", list: [] };
   function listFreeModels() {
-    if (Date.now() - freeModels.at < 3600_000) return freeModels.list;
+    if (Date.now() - freeModels.at < 3600_000) return freeModels;
     try {
       const viaNode = /\.m?js$/.test(bin);
-      const r = spawnSync(viaNode ? process.execPath : bin, viaNode ? [bin, "models", "opencode"] : ["models", "opencode"], { encoding: "utf8", timeout: 30000, env: { ...process.env, HOME: join(accountsDir, ".models-home") } });
-      const list = (r.stdout || "").split("\n").map((l) => l.trim()).filter((l) => /^opencode\/(big-pickle|[\w.-]+-free)$/.test(l));
-      if (list.length) freeModels = { at: Date.now(), list: [...new Set([...models.filter((m) => list.includes(m)), ...list])] };
-      else freeModels.at = Date.now();
+      const dir = join(accountsDir, ".models-home");
+      const profile = { dir, home: join(dir, "home"), work: dir, config: join(dir, "config"), data: join(dir, "data"), state: join(dir, "state"), cache: join(dir, "cache"), temp: join(dir, "temp") };
+      for (const p of [profile.home, profile.config, profile.data, profile.state, profile.cache, profile.temp]) mkdirSync(p, { recursive: true, mode: 0o700 });
+      const configFile = join(dir, "opencode.json");
+      if (!existsSync(configFile)) writeFileSync(configFile, JSON.stringify({ $schema: "https://opencode.ai/config.json" }), { mode: 0o600 });
+      const r = spawnSync(viaNode ? process.execPath : bin, viaNode ? [bin, "models", "opencode"] : ["models", "opencode"], { encoding: "utf8", timeout: 30000, cwd: profile.home, env: opencodeProfileEnv(profile) });
+      const list = r.status === 0 ? parseOpencodeModels(r.stdout) : [];
+      if (list.length) freeModels = { at: Date.now(), status: "discovered", list };
+      else freeModels = { at: Date.now(), status: "discovery failed", list: [] };
     } catch {
-      freeModels.at = Date.now();
+      freeModels = { at: Date.now(), status: "discovery failed", list: [] };
     }
-    return freeModels.list;
+    return freeModels;
   }
 
   const modelName = (cfg) => {
@@ -854,7 +863,11 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
 
     // Which AI answers: the engine, its model, and the user's key (never sent back).
     if (path === "/api/assistant/settings" && m === "GET") {
-      return send(res, 200, { ...settings.view(t), engines: ENGINES, claude_models: CLAUDE_MODELS, free_models: listFreeModels().map((id) => ({ id, name: id.replace(/^opencode\//, "") })), presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
+      const discovery = listFreeModels();
+      const freeList = discovery.status === "discovered"
+        ? discovery.list.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "discovered" }))
+        : models.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "configured" }));
+      return send(res, 200, { ...settings.view(t), engines: ENGINES, claude_models: CLAUDE_MODELS, free_models: freeList, free_model_discovery: { status: discovery.status, configured: models }, presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
     }
     if (path === "/api/assistant/settings" && (m === "PUT" || m === "POST")) {
       const b = await readJson(req);
@@ -869,7 +882,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         catch (e) { return send(res, 400, { error: e.message }), true; }
       }
       const model = b.model !== undefined ? String(b.model || "").trim() : undefined;
-      if (model && engine === "free" && !listFreeModels().includes(model)) return send(res, 400, { error: "That free model isn't available." }), true;
+      const discovery = listFreeModels();
+      const availableFreeModels = discovery.status === "discovered" ? discovery.list : models;
+      if (model && engine === "free" && !availableFreeModels.includes(model)) return send(res, 400, { error: "That free model isn't available." }), true;
       if (model && (engine === "anthropic" || engine === "claude") && !CLAUDE_MODELS.some((x) => x.id === model)) return send(res, 400, { error: "Unknown Claude model." }), true;
       return send(res, 200, settings.save(t, { engine, model, base_url, key })), true;
     }

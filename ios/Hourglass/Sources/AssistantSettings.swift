@@ -155,6 +155,10 @@ struct AssistantSettingsSheet: View {
                     }
                     .disabled(options.isEmpty)
 
+                    if engine == "free", (s?["free_model_discovery"] as? [String: Any])?["status"] as? String == "discovery failed" {
+                        T("Model discovery failed; showing the configured fallback models.", 12, H.faint)
+                    }
+
                     if !note.isEmpty { T(note, 12, H.muted) }
                     if !error.isEmpty { T(error, 13, H.accent) }
                 }
