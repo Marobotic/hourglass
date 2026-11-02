@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const here = fileURLToPath(new URL(".", import.meta.url));
 
 export function explorerStatusEnabled(env = process.env, platform = process.platform) {
-  return platform === "win32" && String(env.HOURGLASS_EXPLORER_STATUS || "on").toLowerCase() !== "off";
+  return platform === "win32" && String(env.HOURGLASS_EXPLORER_STATUS || "off").toLowerCase() === "on";
 }
 
 export async function makeStatusListing(pair) {

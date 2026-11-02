@@ -6,10 +6,11 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createExplorerStatus, explorerStatusEnabled, makeStatusListing } from "./explorer-status.js";
 
-test("Explorer status is opt-in on Windows and the off switch disables it", () => {
-  assert.equal(explorerStatusEnabled({}, "win32"), true);
+test("Explorer status is off by default and only enabled explicitly on Windows", () => {
+  assert.equal(explorerStatusEnabled({}, "win32"), false);
+  assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "on" }, "win32"), true);
   assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "off" }, "win32"), false);
-  assert.equal(explorerStatusEnabled({}, "linux"), false);
+  assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "on" }, "linux"), false);
 });
 
 test("status listing classifies synced files and folders from the pair maps", async () => {
