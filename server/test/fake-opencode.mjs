@@ -2,9 +2,10 @@
 // prompt from stdin, calls the Hourglass MCP server named in ./opencode.json,
 // and prints the JSON events opencode prints. Every call is appended to
 // ./calls.jsonl so a test can check what it was given.
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { join } from "node:path";
 
 const args = process.argv.slice(2);
 if (args[0] === "models" && args[1] === "opencode") {
@@ -35,6 +36,13 @@ if (model === "opencode/big-pickle") {
 if (model === "fake/down") {
   emit({ type: "error", error: { name: "APIError", data: { message: "503 Service Unavailable" } } });
   process.exit(1);
+}
+
+if (prompt.includes("DANGEROUS WORKSPACE TEST")) {
+  const dir = join(process.cwd(), "files");
+  const first = readdirSync(dir).find((name) => !name.startsWith("."));
+  if (first) writeFileSync(join(dir, first), "edited by fake CLI\n");
+  else writeFileSync(join(dir, "created.txt"), "created by fake CLI\n");
 }
 
 const said = prompt.split("The user says:\n")[1] || "";

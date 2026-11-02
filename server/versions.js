@@ -66,6 +66,19 @@ export function createVersions({ drivePath }) {
       write(t, row.id, log);
       return log;
     },
+    archive(t, row, who = {}) {
+      const log = read(t, row.id), now = drivePath(t, row.id);
+      if (!existsSync(now)) return null;
+      const vid = randomUUID();
+      mkdirSync(dir(t, row.id), { recursive: true });
+      renameSync(now, path(t, row.id, vid));
+      const was = log.current || {};
+      log.versions.unshift({ id: vid, at: was.at || row.updated_at || Date.now(), size: was.size ?? row.size ?? 0,
+        by: was.by ?? null, device: was.device ?? null, name: row.name });
+      log.current = { ...who, at: Date.now(), size: 0, deleted: true };
+      prune(log, t, row.id); write(t, row.id, log);
+      return vid;
+    },
     list(t, row) {
       const log = read(t, row.id);
       return {
@@ -78,6 +91,8 @@ export function createVersions({ drivePath }) {
     get(t, id, vid) {
       return read(t, id).versions.find((v) => v.id === vid) || null;
     },
+    keepDeleted(t, id) { return read(t, id).current?.deleted === true; },
+    restored(t, id) { const log = read(t, id); if (log.current) { delete log.current.deleted; write(t, id, log); } },
     // A copy of the version's bytes next to the current file, to restore from.
     async copyOut(t, id, vid) {
       const tmp = drivePath(t, id) + ".restore";

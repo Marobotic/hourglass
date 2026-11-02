@@ -236,6 +236,13 @@ export const TOOLS = [
     readOnly: true,
     run: (s, a) => s.listDrive(a),
   },
+  { name: "read_file", title: "Read Drive file", description: "Read UTF-8 text from a Drive file. Use file_id or a unique Drive path; offset and limit are byte offsets and lengths.", permission: "read", input: { file_id: z.string().optional(), path: z.string().optional(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(200000).optional() }, readOnly: true, run: (s,a) => s.driveFiles.read(a) },
+  { name: "write_file", title: "Write Drive file", description: "Create a Drive file or overwrite an existing file by id or path.", permission: "change", overwrite_permission: "risky", input: { file_id: z.string().optional(), path: z.string().optional(), content: z.string() }, run: (s,a) => s.driveFiles.write(a) },
+  { name: "edit_file", title: "Edit Drive file", description: "Replace one unique exact string in a UTF-8 Drive file.", permission: "risky", input: { file_id: z.string(), old_text: z.string(), new_text: z.string() }, run: (s,a) => s.driveFiles.edit(a) },
+  { name: "delete_file", title: "Delete Drive file", description: "Delete a Drive file after preserving its current bytes as a version.", permission: "risky", input: { file_id: z.string() }, destructive: true, run: (s,a) => s.driveFiles.delete(a) },
+  { name: "rename_file", title: "Rename Drive file", description: "Rename a Drive file.", permission: "change", input: { file_id: z.string(), name: z.string() }, run: (s,a) => s.driveFiles.rename(a) },
+  { name: "list_file_versions", title: "Drive file history", description: "List the saved versions of a Drive file.", permission: "read", input: { file_id: z.string() }, readOnly: true, run: (s,a) => s.driveFiles.listVersions(a) },
+  { name: "restore_file_version", title: "Restore Drive file version", description: "Restore a previous file version, keeping the current bytes as a version too.", permission: "change", input: { file_id: z.string(), version_id: z.string() }, run: (s,a) => s.driveFiles.restore(a) },
   {
     name: "move_file",
     title: "Move Drive file",

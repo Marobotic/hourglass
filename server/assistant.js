@@ -38,7 +38,7 @@
 // account. The key is the server's own, separate from the user's AI link.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { opencodeAccountDirectories, opencodeAccountOwnedPaths, opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "./opencode.js";
 import { isSharedFreeQuotaError, normalizeEngineError } from "./engine-errors.js";
@@ -532,8 +532,9 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const mcp = JSON.stringify({ mcpServers: { hourglass: { type: "http", url: `${mcpBase}/mcp/${keyOf(t)}` } } });
     const history = historyTurns(chat, chat.messages.length - 2).map((m) => `${m.role === "user" ? "User" : "You"}: ${m.content}`).join("\n");
     const prompt = `${history ? `The conversation so far:\n${history}\n\n` : ""}${userTurn(t, text, files)}`;
+    const dangerousWorkspace = chat.workspace === true;
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--model", cfg.model || CLAUDE_MODELS[0].id,
-      "--system-prompt", system, "--mcp-config", mcp, "--strict-mcp-config", "--tools", "", "--allowedTools", "mcp__hourglass", "--permission-mode", "dontAsk"];
+      "--system-prompt", system, "--mcp-config", mcp, "--strict-mcp-config", "--tools", dangerousWorkspace ? "Bash,Read,Edit,Write,Glob,Grep" : "", "--allowedTools", dangerousWorkspace ? "mcp__hourglass,Bash,Read,Edit,Write,Glob,Grep" : "mcp__hourglass", "--permission-mode", "dontAsk"];
     const env = { CLAUDE_CONFIG_DIR: join(dirs.home, ".claude-hourglass"), DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
     const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
     // A tiny shell reads the token into the environment, then becomes Claude Code.
@@ -617,7 +618,61 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     });
   }
 
+  function prepareWorkspace(t, files) {
+    const dirs = accountDir(t), root = join(dirs.work, "files");
+    rmSync(root, { recursive: true, force: true }); mkdirSync(root, { recursive: true, mode: 0o700 });
+    const initial = new Map();
+    const stageOne = (file) => {
+      if ([...initial.values()].some((saved) => saved.id === file.id)) return;
+      const src = filePath(t, file.id);
+      if (!src || !existsSync(src)) return;
+      const name = `${file.id}--${file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 100)}`;
+      const dst = join(root, name); copyFileSync(src, dst);
+      initial.set(name, { id: file.id, hash: sha(readFileSync(dst)) });
+      if (sandboxIds) chownSync(dst, sandboxIds.uid, sandboxIds.gid);
+    };
+    for (const file of files) stageOne(file);
+    if (sandboxIds) chownSync(root, sandboxIds.uid, sandboxIds.gid);
+    return { root, initial, stageOne };
+  }
+
+  function writeWorkspaceBack(t, message, workspace) {
+    if (!workspace) return;
+    const visit = (dir, prefix = "") => {
+      const out = [];
+      for (const name of readdirSync(dir)) {
+        const file = join(dir, name), rel = prefix ? `${prefix}/${name}` : name;
+        if (statSync(file).isDirectory()) out.push(...visit(file, rel)); else if (statSync(file).isFile()) out.push([rel, file]);
+      }
+      return out;
+    };
+    for (const [rel, file] of visit(workspace.root)) {
+      const bytes = readFileSync(file), prior = workspace.initial.get(rel);
+      if (prior && prior.hash === sha(bytes)) continue;
+      const result = t.service.driveFiles.writeBytes(prior ? { file_id: prior.id, bytes } : { path: rel, bytes });
+      const card = cardsFor(t.service, "write_file", { file_id: prior?.id, path: rel }, result)[0];
+      if (card) message.cards = trimCards([...(message.cards || []), card]);
+    }
+  }
+
   async function run(t, chat, message, text, fresh, files = []) {
+    const dangerousWorkspace = chat.mode === "dangerous";
+    const workspace = dangerousWorkspace ? prepareWorkspace(t, files) : null;
+    try {
+      if (dangerousWorkspace) {
+        chat.workspace = true;
+        t.service.driveFiles.onRead = (row) => workspace.stageOne(row);
+        text += "\n\nDangerous mode workspace: attached Drive files and files you read with the Hourglass Drive tools are available under ./files/. You may use your file and shell tools there; changes are saved back to Drive after this turn.";
+      }
+      await runInternal(t, chat, message, text, fresh, files);
+    } finally {
+      delete chat.workspace;
+      if (dangerousWorkspace) delete t.service.driveFiles.onRead;
+      writeWorkspaceBack(t, message, workspace);
+    }
+  }
+
+  async function runInternal(t, chat, message, text, fresh, files = []) {
     const cfg = settings.get(t);
     message.cards = [];
     if (cfg.engine === "anthropic" || cfg.engine === "openai") {
@@ -944,6 +999,13 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       return send(res, 200, { enabled: true, engine: cfg.engine, model: modelName(cfg), busy: !!live, messages: chat.messages.map(view) }), true;
     }
 
+    if (path === "/api/assistant/mode" && m === "POST") {
+      const body = await readJson(req);
+      if (!["ask", "auto", "dangerous"].includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto or dangerous" }), true;
+      const chat = loadChat(t); chat.mode = body.mode; saveChat(t, chat);
+      return send(res, 200, { mode: chat.mode }), true;
+    }
+
     // Where the apps upload attachments before sending them (the Drive's "Assistant" folder).
     if (path === "/api/assistant/folder" && m === "GET") {
       return send(res, 200, { folder_id: assistantFolder(t).id, name: ASSISTANT_FOLDER }), true;
@@ -962,6 +1024,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (running.has(t.email)) return send(res, 409, { error: "Still working on the last message." }), true;
       if (!allow(t.email || "owner")) return send(res, 429, { error: "That's a lot of messages - try again in a while." }), true;
       const chat = loadChat(t);
+      if (body.mode !== undefined) {
+        if (!["ask", "auto", "dangerous"].includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto or dangerous" }), true;
+        chat.mode = body.mode;
+      }
       const now = Date.now();
       // The fast lane: done here at once, no model.
       // What this chat last touched, so "remove it" or "make it 9" knows what "it" is.

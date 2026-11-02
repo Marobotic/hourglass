@@ -99,6 +99,15 @@ export function cardsFor(service, tool, args = {}, result = null) {
   try {
     const f = fmt(service);
     switch (tool) {
+      case "read_file":
+        return result?.file_id ? [{ kind: "file", state: "read", id: result.file_id, label: result.name, size: result.size, diff: { added: 0, removed: 0 } }] : [];
+      case "write_file":
+      case "edit_file":
+      case "restore_file_version":
+      case "rename_file":
+        return result?.id ? [{ kind: "file", state: tool === "write_file" && result.created ? "created" : "changed", id: result.id, label: result.name || args.path?.split(/[\\/]/).pop() || "File", size: result.size || 0, diff: result.changes || { added: 0, removed: 0 } }] : [];
+      case "delete_file":
+        return result?.id ? [{ kind: "file", state: "deleted", id: result.id, label: result.name, size: result.size || 0, diff: { added: 0, removed: 0 } }] : [];
       case "set_alarm":
         return result?.id ? [alarmCard(service, result, args.alarm_id ? (args.enabled === false ? "off" : args.enabled === true && Object.keys(args).length <= 2 ? "on" : "set") : "set")] : [];
       case "remove_alarm":

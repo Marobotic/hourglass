@@ -11,7 +11,7 @@ Rectangle {
     property double now: Date.now()
     readonly property string kind: info.kind || ""
     readonly property string st: info.state || ""
-    readonly property bool gone: st === "removed" || st === "stopped" || st === "off" || st === "done"
+    readonly property bool gone: st === "removed" || st === "deleted" || st === "stopped" || st === "off" || st === "done"
     // Timer: seconds left, counted here so the ring moves.
     readonly property double secsLeft: kind === "timer" && info.ends_at ? Math.max(0, Math.ceil((info.ends_at - now) / 1000)) : 0
 
@@ -35,6 +35,7 @@ Rectangle {
         if (kind === "timer") return Theme.teal;
         if (kind === "event") return info.birthday ? Theme.gold : Theme.orange;
         if (kind === "reminder") return Theme.gold;
+        if (kind === "file") return Theme.accent;
         return Theme.teal;
     }
     function pad(n) { return n < 10 ? "0" + n : "" + n; }
@@ -49,6 +50,9 @@ Rectangle {
         if (st === "on") return { text: "ON", color: Theme.teal };
         if (st === "added") return { text: "ADDED", color: Theme.teal };
         if (st === "changed") return { text: "CHANGED", color: Theme.teal };
+        if (kind === "file" && st === "created") return { text: "CREATED", color: Theme.teal };
+        if (kind === "file" && st === "read") return { text: "READ", color: Theme.muted };
+        if (kind === "file" && st === "deleted") return { text: "DELETED", color: Theme.muted };
         if ((kind === "alarm" || kind === "reminder") && st === "set") return { text: "SET", color: Theme.teal };
         if (st === "done") return { text: "DONE", color: Theme.teal };
         if (st === "snoozed") return { text: "SNOOZED", color: Theme.gold };
@@ -165,11 +169,11 @@ Rectangle {
         // Note or setting: an icon in a square.
         Rectangle {
             anchors.fill: parent
-            visible: kind === "note" || kind === "setting" || kind === "reminder"
+            visible: kind === "note" || kind === "setting" || kind === "reminder" || kind === "file"
             color: Theme.bg
             border.width: 1
             border.color: Theme.border
-            Icon { anchors.centerIn: parent; name: kind === "note" ? "note" : kind === "reminder" && card.st !== "done" ? "reminder" : "check"; size: 26; color: kind === "reminder" ? Theme.gold : Theme.teal }
+            Icon { anchors.centerIn: parent; name: kind === "file" ? "file" : kind === "note" ? "note" : kind === "reminder" && card.st !== "done" ? "reminder" : "check"; size: 26; color: kind === "file" ? card.accentOf() : kind === "reminder" ? Theme.gold : Theme.teal }
         }
     }
 
@@ -218,6 +222,7 @@ Rectangle {
                 : kind === "timer" ? (card.st === "running" ? (card.secsLeft > 0 ? "rings in " + card.countdown(card.secsLeft) : "rang") : "stopped")
                 : kind === "event" ? [card.info.when, card.info.time].filter(x => !!x).join(" · ")
                 : kind === "note" ? (card.info.course || (card.st === "added" ? "New note" : "Note"))
+                : kind === "file" ? ((card.info.size || 0) + " bytes · " + (card.info.diff?.added || 0) + " added, " + (card.info.diff?.removed || 0) + " removed")
                 : kind === "reminder" ? [card.info.time, card.info.when].filter(x => !!x).join(" · ")
                 : (card.info.value || "")
             color: Theme.muted
