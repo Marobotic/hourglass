@@ -4,13 +4,17 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { createExplorerStatus, explorerStatusEnabled, makeStatusListing } from "./explorer-status.js";
+import { createExplorerStatus, coursesRootForPair, explorerStatusEnabled, makeStatusListing } from "./explorer-status.js";
 
 test("Explorer status is on by default on Windows and can be disabled", () => {
   assert.equal(explorerStatusEnabled({}, "win32"), true);
   assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "on" }, "win32"), true);
   assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "off" }, "win32"), false);
   assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "on" }, "linux"), false);
+});
+
+test("course pairs share the Courses navigation root", () => {
+  assert.equal(coursesRootForPair({ local: "C:\\Users\\Maro\\Documents\\Courses\\Typography (1)" }), "C:\\Users\\Maro\\Documents\\Courses");
 });
 
 test("status listing classifies synced files and folders from the pair maps", async () => {

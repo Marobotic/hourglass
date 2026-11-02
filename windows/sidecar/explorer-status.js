@@ -11,6 +11,10 @@ export function explorerStatusEnabled(env = process.env, platform = process.plat
   return platform === "win32" && String(env.HOURGLASS_EXPLORER_STATUS || "on").toLowerCase() !== "off";
 }
 
+export function coursesRootForPair(pair) {
+  return resolve(pair.local, "..");
+}
+
 export async function makeStatusListing(pair) {
   const synced = new Set([
     ...(pair.syncedFilePaths?.keys?.() || []),
