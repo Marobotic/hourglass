@@ -47,6 +47,7 @@ import { quickAnswer } from "./quick.js";
 import { INSTRUCTIONS } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
+import { deepSeekPriceState, isDeepSeekBaseUrl } from "./deepseek.js";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
@@ -963,7 +964,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (key) {
         try { await checkKey({ engine, key, base_url: base_url ?? settings.view(t).base_url }); }
         catch (e) {
-          const normalized = normalizeEngineError(e, { provider: engine, timeZone: timeZoneOf(t) });
+          const normalized = normalizeEngineError(e, { provider: engine === "openai" && isDeepSeekBaseUrl(base_url ?? settings.view(t).base_url) ? "deepseek" : engine, timeZone: timeZoneOf(t) });
           log(`assistant (${t.email || "owner"}, ${engine} key check): ${e.message}`);
           return send(res, 400, { error: normalized.message, error_kind: normalized.kind }), true;
         }
@@ -1008,10 +1009,14 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (!key) return send(res, 200, { models: [], error: "Add a key for this API first." }), true;
       try { return send(res, 200, { models: await listOpenAIModels({ key, base_url }) }), true; }
       catch (e) {
-        const normalized = normalizeEngineError(e, { provider: "openai", timeZone: timeZoneOf(t) });
+        const normalized = normalizeEngineError(e, { provider: isDeepSeekBaseUrl(base_url) ? "deepseek" : "openai", timeZone: timeZoneOf(t) });
         log(`assistant (${t.email || "owner"}, openai models): ${e.message}`);
         return send(res, 200, { models: [], error: normalized.message, error_kind: normalized.kind }), true;
       }
+    }
+
+    if (path === "/api/assistant/deepseek-pricing" && m === "GET") {
+      return send(res, 200, deepSeekPriceState()), true;
     }
 
     if (path === "/api/assistant/stop" && m === "POST") {

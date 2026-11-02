@@ -98,13 +98,15 @@ function formatReset(resets_at, timeZone = "UTC") {
 }
 
 export function userMessage(kind, provider = "assistant", { retry_after_s, resets_at, timeZone = "UTC" } = {}) {
-  const name = provider === "claude" || provider === "anthropic" ? "Claude" : provider === "openai" ? "Your AI provider" : "The assistant provider";
+  const name = provider === "claude" || provider === "anthropic" ? "Claude" : provider === "deepseek" ? "DeepSeek" : provider === "openai" ? "Your AI provider" : "The assistant provider";
   if (kind === "auth") {
     if (provider === "claude") return "Your Claude sign-in expired. Sign in again in Assistant settings.";
     if (provider === "anthropic") return "Your Claude API key was rejected. Check it in Assistant settings.";
     return "Your API key or sign-in was rejected. Check Assistant settings.";
   }
   if (kind === "rate_limit" || kind === "quota") {
+    if (provider === "deepseek" && kind === "quota") return "DeepSeek balance is empty";
+    if (provider === "deepseek" && kind === "rate_limit") return "DeepSeek is rate limited. Try again shortly.";
     if (resets_at) {
       return `${name}'s limit is reached; it resets at ${formatReset(resets_at, timeZone)}.`;
     }

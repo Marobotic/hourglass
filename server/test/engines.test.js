@@ -72,6 +72,11 @@ function startFake() {
           { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }, { type: "message_stop" }], 5);
       }
       if (req.url === "/openai/models") return send(200, { data: ["gpt-test", "gpt-other", "gpt-rate", "gpt-alt", "gpt-partial", "zz-stream", "zz-abort"].map((id) => ({ id, name: `Display ${id}`, context_length: ["gpt-test", "zz-stream", "zz-abort"].includes(id) ? 128000 : undefined, pricing: ["gpt-test", "zz-stream", "zz-abort"].includes(id) ? { prompt: "0.000002", completion: "0.000008" } : undefined })) });
+      if (req.url === "/deepseek/models") return send(200, { data: [
+        { id: "deepseek-flash", name: "DeepSeek Flash", context_length: 1000000 },
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", context_length: 1000000 },
+        { id: "deepseek-reasoner", name: "DeepSeek Reasoner" },
+      ] });
       if (req.url === "/openai/chat/completions") {
         const done = json.messages.some((m) => m.role === "tool");
         if (json.model === "gpt-rate") return send(429, { error: { code: "rate_limit_exceeded", message: "provider private rate limit detail" } }, { "retry-after": "3" });
@@ -96,6 +101,16 @@ function startFake() {
           { choices: [{ delta: { content: "Timer" } }] },
           { choices: [{ delta: { content: "'s on." } }] },
           { choices: [], usage: { prompt_tokens: 30, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 5 } } },
+        ]);
+      }
+      if (req.url === "/deepseek/chat/completions") {
+        const prompt = JSON.stringify(json.messages.at(-1)?.content || "");
+        if (prompt.includes("DEEPSEEK_402_TEST")) return send(402, { error: { code: "insufficient_balance", message: "Insufficient Balance" } });
+        if (prompt.includes("DEEPSEEK_429_TEST")) return send(429, { error: { code: "rate_limit_exceeded", message: "Too Many Requests" } }, { "retry-after": "1" });
+        return sendSse(res, [
+          { choices: [{ delta: { content: "DeepSeek " } }] },
+          { choices: [{ delta: { content: "streamed." } }] },
+          { choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, prompt_cache_hit_tokens: 2, prompt_cache_miss_tokens: 8 } },
         ]);
       }
       send(404, { error: { message: "not here" } });
@@ -284,6 +299,47 @@ test("stopping a streamed Claude reply aborts its SDK stream", async () => {
   await call("POST", "/api/assistant/stop", {});
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(anthropicStreamClosed, true);
+});
+
+test("DeepSeek preset lists tool capability and prices a streamed usage reply", async () => {
+  const baseUrl = `${fakeUrl}/deepseek`;
+  const set = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: baseUrl, key: GOOD_KEY, model: "deepseek-flash" });
+  assert.equal(set.status, 200);
+  const models = await call("GET", `/api/assistant/models?base_url=${encodeURIComponent(baseUrl)}`);
+  assert.deepEqual(models.body.models.map((m) => [m.id, m.supports_tools]), [["deepseek-flash", true], ["deepseek-reasoner", false], ["deepseek-v4-pro", true]]);
+  assert.deepEqual(models.body.models[0].pricing, { input: 0.0000003, output: 0.0000012, cache_hit: 0.000000006 });
+  assert.match((await call("GET", "/api/assistant/deepseek-pricing")).body.line, /^(Peak price until \d{2}:00 UTC|Off-peak: half price)$/);
+  const start = seen.length;
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Stream from DeepSeek" })).status, 202);
+  const reply = (await waitIdle()).messages.at(-1);
+  assert.equal(reply.text, "DeepSeek streamed.");
+  assert.equal(reply.usage.input_tokens, 10);
+  assert.equal(reply.usage.output_tokens, 5);
+  assert.equal(reply.usage.cache_read_input_tokens, 2);
+  assert.equal(reply.usage.deepseek_cache_miss_tokens, 8);
+  assert.ok(reply.usage.cost > 0);
+  const request = seen.slice(start).find((r) => r.path === "/deepseek/chat/completions");
+  assert.equal(request.body.stream, true);
+  assert.ok(request.body.tools.length > 0);
+  assert.equal(request.body.tool_choice, "auto");
+});
+
+test("DeepSeek 402 stops model fallback; 429 remains a transient rate limit", async () => {
+  const baseUrl = `${fakeUrl}/deepseek`;
+  await call("POST", "/api/assistant/settings", { engine: "openai", base_url: baseUrl, model: "deepseek-flash" });
+  let start = seen.length;
+  await call("POST", "/api/assistant/message", { text: "DEEPSEEK_402_TEST" });
+  let reply = (await waitIdle()).messages.at(-1);
+  assert.equal(reply.error_kind, "quota");
+  assert.equal(reply.error, "DeepSeek balance is empty");
+  assert.equal(seen.slice(start).filter((r) => r.path === "/deepseek/chat/completions").length, 1);
+
+  start = seen.length;
+  await call("POST", "/api/assistant/message", { text: "DEEPSEEK_429_TEST" });
+  reply = (await waitIdle()).messages.at(-1);
+  assert.equal(reply.error_kind, "rate_limit");
+  assert.equal(reply.error, "DeepSeek is rate limited. Try again shortly.");
+  assert.ok(seen.slice(start).filter((r) => r.path === "/deepseek/chat/completions").length > 1);
 });
 
 test("rate limits fall back to the next model of the same engine before any output", async () => {

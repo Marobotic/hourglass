@@ -17,6 +17,7 @@ Modal {
     property string model: ""
     property string baseUrl: ""
     property var apiModels: []      // an OpenAI-compatible API's models
+    property string deepSeekPriceLine: ""
     property string error: ""
     property string note: ""
     property bool saving: false
@@ -24,6 +25,7 @@ Modal {
     readonly property var engineInfo: s ? (s.engines.find(e => e.id === engine) || null) : null
     readonly property bool needsKey: engine !== "free"
     readonly property bool hasKey: !!(s && s.has_key && s.has_key[engine === "openai" ? "openai:" + baseUrl : engine])
+    readonly property bool deepSeekSelected: engine === "openai" && baseUrl.indexOf("api.deepseek.com") >= 0
 
     function load() {
         error = ""; note = "";
@@ -35,6 +37,7 @@ Modal {
             dlg.baseUrl = d.base_url || d.presets[0].base_url;
             keyField.text = "";
             if (dlg.engine === "openai") dlg.loadModels();
+            dlg.loadDeepSeekPrice();
         }, true);
     }
     function loadModels() {
@@ -43,6 +46,10 @@ Modal {
             if (d && d.models) dlg.apiModels = d.models;
             if (d && d.error && dlg.hasKey) dlg.note = d.error;
         }, true);
+    }
+    function loadDeepSeekPrice() {
+        if (!deepSeekSelected) { deepSeekPriceLine = ""; return; }
+        Api.request("GET", "/api/assistant/deepseek-pricing", null, d => { if (d) dlg.deepSeekPriceLine = d.line || ""; }, true);
     }
     function modelOptions() {
         if (!s) return [];
@@ -53,6 +60,7 @@ Modal {
     function modelLabel(m) {
         let label = m.name || m.id;
         if (m.note) label += "  · " + m.note;
+        if (m.supports_tools === false) label += "  · tools unsupported";
         if (m.context_window) label += "  · " + (m.context_window >= 1000000 ? (m.context_window / 1000000).toFixed(1).replace(/\.0$/, "") + "M" : Math.round(m.context_window / 1000) + "k");
         if (m.pricing && m.pricing.input !== undefined && m.pricing.output !== undefined)
             label += "  · $" + (m.pricing.input * 1000000).toPrecision(3).replace(/\.?0+$/, "") + "/$" + (m.pricing.output * 1000000).toPrecision(3).replace(/\.?0+$/, "") + " per 1M";
@@ -141,10 +149,10 @@ Modal {
             spacing: 6
             Repeater {
                 model: dlg.s ? dlg.s.presets : []
-                Btn { required property var modelData; compact: true; text: modelData.name; active: dlg.baseUrl === modelData.base_url; kind: "subtle"; onClicked: { dlg.baseUrl = modelData.base_url; dlg.model = ""; dlg.loadModels(); } }
+                Btn { required property var modelData; compact: true; text: modelData.name; active: dlg.baseUrl === modelData.base_url; kind: "subtle"; onClicked: { dlg.baseUrl = modelData.base_url; dlg.model = ""; dlg.loadModels(); dlg.loadDeepSeekPrice(); } }
             }
         }
-        Field { Layout.fillWidth: true; text: dlg.baseUrl; placeholderText: "https://…/v1"; onEditingFinished: { if (text !== dlg.baseUrl) { dlg.baseUrl = text.trim(); dlg.model = ""; dlg.loadModels(); } } }
+        Field { Layout.fillWidth: true; text: dlg.baseUrl; placeholderText: "https://…/v1"; onEditingFinished: { if (text !== dlg.baseUrl) { dlg.baseUrl = text.trim(); dlg.model = ""; dlg.loadModels(); dlg.loadDeepSeekPrice(); } } }
     }
 
     // Claude plan: sign in in the browser. The server runs Claude Code's own sign-in;
@@ -237,6 +245,16 @@ Modal {
             placeholderText: dlg.hasKey ? "Saved ✓  (paste a new one to replace it)" : dlg.engine === "claude" ? "sk-ant-oat…" : dlg.engine === "anthropic" ? "sk-ant-api…" : "Your API key"
         }
         Text {
+            visible: dlg.deepSeekSelected
+            text: "<a href=\"https://platform.deepseek.com/api_keys\">Get a DeepSeek API key</a>"
+            textFormat: Text.RichText
+            color: Theme.muted
+            linkColor: Theme.fg
+            font.family: Theme.mono
+            font.pixelSize: 11
+            onLinkActivated: link => Qt.openUrlExternally(link)
+        }
+        Text {
             visible: dlg.engine === "claude" && dlg.s && !dlg.s.claude_ready
             Layout.fillWidth: true
             wrapMode: Text.Wrap
@@ -270,7 +288,17 @@ Modal {
             text: dlg.hasKey ? "Loading this API's models…" : "Save your key first, then pick a model."
             color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
         }
+        Text {
+            visible: dlg.deepSeekSelected && dlg.deepSeekPriceLine !== ""
+            Layout.fillWidth: true
+            text: dlg.deepSeekPriceLine
+            color: Theme.faint
+            font.family: Theme.mono
+            font.pixelSize: 11
+        }
     }
+
+    Timer { interval: 60000; repeat: true; running: dlg.deepSeekSelected; onTriggered: dlg.loadDeepSeekPrice() }
 
     Text { visible: dlg.note !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap; text: dlg.note; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
     Text { visible: dlg.error !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap; text: dlg.error; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13 }

@@ -22,6 +22,7 @@ import { z } from "zod";
 import { TOOLS, runTool } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { normalizeEngineError } from "./engine-errors.js";
+import { deepSeekCost, deepSeekModelPricing, deepSeekModelSupportsTools, isDeepSeekBaseUrl } from "./deepseek.js";
 
 export const ENGINES = [
   { id: "free", name: "Free", note: "opencode's free models. No key needed; slower." },
@@ -61,6 +62,7 @@ export const OPENAI_PRESETS = [
   { id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1" },
   { id: "gemini", name: "Google Gemini", base_url: "https://generativelanguage.googleapis.com/v1beta/openai" },
   { id: "groq", name: "Groq", base_url: "https://api.groq.com/openai/v1" },
+  { id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com" },
 ];
 
 const openaiModelCache = new Map();
@@ -193,7 +195,7 @@ export function historyTurns(chat, upTo) {
 // --- Claude with an API key -------------------------------------------------------------
 
 export function recordAssistantUsage(message, usage, metadata) {
-  const has = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].some((k) => usage?.[k] != null && Number.isFinite(Number(usage[k])));
+  const has = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "deepseek_cache_hit_tokens", "deepseek_cache_miss_tokens"].some((k) => usage?.[k] != null && Number.isFinite(Number(usage[k])));
   if (!has) return;
   const u = message.usage ||= { input_tokens: null, output_tokens: null, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cost: null, context_window: null, context_percent: null };
   for (const [target, source] of [["input_tokens", "input_tokens"], ["output_tokens", "output_tokens"], ["cache_read_input_tokens", "cache_read_input_tokens"], ["cache_creation_input_tokens", "cache_creation_input_tokens"]]) {
@@ -205,7 +207,18 @@ export function recordAssistantUsage(message, usage, metadata) {
   const contextInput = usage.context_input_tokens != null && Number.isFinite(Number(usage.context_input_tokens)) ? Number(usage.context_input_tokens) : input + cachedRead + cachedWrite;
   u.context_window = Number.isFinite(metadata?.context_window) && metadata.context_window > 0 ? metadata.context_window : null;
   u.context_percent = u.context_window && contextInput ? Math.round(contextInput / u.context_window * 1000) / 10 : null;
-  if (metadata?.pricing && Number.isFinite(u.input_tokens) && Number.isFinite(u.output_tokens)) {
+  if (metadata?.deepseek_pricing_model) {
+    u.deepseek_cache_hit_tokens = (u.deepseek_cache_hit_tokens || 0) + Number(usage.deepseek_cache_hit_tokens || 0);
+    u.deepseek_cache_miss_tokens = (u.deepseek_cache_miss_tokens || 0) + Number(usage.deepseek_cache_miss_tokens || 0);
+    if (usage.deepseek_cache_hit_tokens != null && usage.deepseek_cache_miss_tokens != null && usage.output_tokens != null) {
+      const cost = deepSeekCost(metadata.deepseek_pricing_model, {
+        cache_hit: u.deepseek_cache_hit_tokens,
+        cache_miss: u.deepseek_cache_miss_tokens,
+        output: u.output_tokens || 0,
+      });
+      if (cost != null) u.cost = cost;
+    }
+  } else if (metadata?.pricing && Number.isFinite(u.input_tokens) && Number.isFinite(u.output_tokens)) {
     const billedInput = usage.cost_input_tokens != null && Number.isFinite(Number(usage.cost_input_tokens)) ? Number(usage.cost_input_tokens) : u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens;
     u.cost = billedInput * metadata.pricing.input + u.output_tokens * metadata.pricing.output;
   }
@@ -305,7 +318,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
 async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata }) {
   if (!model) throw Object.assign(new Error("pick a model in Settings first"), { status: 400 });
   const url = `${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/chat/completions`;
-  const tools = TOOL_SCHEMAS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
+  const tools = metadata?.supports_tools === false ? [] : TOOL_SCHEMAS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
   const user = images.length
     ? [{ type: "text", text: userText }, ...images.map((im) => ({ type: "image_url", image_url: { url: `data:${im.mime};base64,${im.data}` } }))]
     : userText;
@@ -314,7 +327,7 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
     const res = await fetch(url, {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ model, messages, tools, tool_choice: "auto", stream: true, stream_options: { include_usage: true } }),
+      body: JSON.stringify({ model, messages, ...(metadata?.supports_tools === false ? {} : { tools, tool_choice: "auto" }), stream: true, stream_options: { include_usage: true } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(TURN_SECONDS * 1000)]),
     });
     if (!res.ok) {
@@ -358,7 +371,15 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
           } else if (call.entry && part.function?.name) call.entry.tool = call.function.name;
           callsByIndex.set(part.index, call);
         }
-        if (event.usage) recordAssistantUsage(message, { input_tokens: event.usage.prompt_tokens, output_tokens: event.usage.completion_tokens, cache_read_input_tokens: event.usage.prompt_tokens_details?.cached_tokens, context_input_tokens: event.usage.prompt_tokens, cost_input_tokens: event.usage.prompt_tokens }, metadata);
+        if (event.usage) recordAssistantUsage(message, {
+          input_tokens: event.usage.prompt_tokens,
+          output_tokens: event.usage.completion_tokens,
+          cache_read_input_tokens: event.usage.prompt_tokens_details?.cached_tokens ?? event.usage.prompt_cache_hit_tokens,
+          context_input_tokens: event.usage.prompt_tokens,
+          cost_input_tokens: event.usage.prompt_tokens,
+          deepseek_cache_hit_tokens: event.usage.prompt_cache_hit_tokens,
+          deepseek_cache_miss_tokens: event.usage.prompt_cache_miss_tokens,
+        }, metadata);
       }
     };
     try {
@@ -413,6 +434,11 @@ export async function listOpenAIModels({ key, base_url }) {
       name: String(m.name || m.display_name || id),
       context_window: Number.isFinite(context) && context > 0 ? context : null,
       pricing: m.pricing?.prompt != null && m.pricing?.completion != null && Number.isFinite(input) && Number.isFinite(output) ? { input, output } : null,
+      ...(isDeepSeekBaseUrl(base_url) ? {
+        supports_tools: deepSeekModelSupportsTools(id),
+        deepseek_pricing_model: deepSeekModelPricing(id) ? id : null,
+        pricing: deepSeekModelPricing(id),
+      } : {}),
     };
   }).sort((a, b) => a.id.localeCompare(b.id));
   openaiModelCache.set(cacheKey, { at: Date.now(), models });
@@ -446,12 +472,17 @@ export async function runDirect({ settings, system, chat, userText, images, serv
   const key = settings.keys[settings.engine === "openai" ? `openai:${settings.base_url || ""}` : settings.engine];
   if (!key) throw new Error("Add your key in the assistant's settings first.");
   const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep };
-  const provider = settings.engine;
+  const deepseek = settings.engine === "openai" && isDeepSeekBaseUrl(settings.base_url);
+  const provider = deepseek ? "deepseek" : settings.engine;
   let openaiModels = [];
-  if (provider === "openai") {
+  if (settings.engine === "openai") {
     try { openaiModels = await listOpenAIModels({ key, base_url: settings.base_url }); } catch {}
   }
-  const metadataFor = (id) => provider === "anthropic" ? claudeModels.find((m) => m.id === id) : openaiModels.find((m) => m.id === id);
+  const metadataFor = (id) => {
+    if (provider === "anthropic") return claudeModels.find((m) => m.id === id);
+    const model = openaiModels.find((m) => m.id === id) || {};
+    return deepseek ? { ...model, deepseek_pricing_model: model.deepseek_pricing_model } : model;
+  };
   const runModel = provider === "anthropic" ? runAnthropic : runOpenAI;
   const tried = new Set();
   let model = settings.model || (provider === "anthropic" ? CLAUDE_MODELS[0].id : "");
@@ -471,6 +502,7 @@ export async function runDirect({ settings, system, chat, userText, images, serv
         onError(e);
         e.logged = true;
         failure = e;
+        if (deepseek && Number(e.status || e.statusCode) === 402) e.noModelFallback = true;
         if (message.text?.trim() || message.tools?.length || message.cards?.length) throw e;
         if (normalized.kind !== "network" && normalized.kind !== "overloaded") break;
         if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 350));
@@ -478,6 +510,7 @@ export async function runDirect({ settings, system, chat, userText, images, serv
     }
     if (!failure) return;
     const kind = failure.normalized.kind;
+    if (failure.noModelFallback) throw failure;
     if (!["rate_limit", "quota", "overloaded", "network"].includes(kind)) throw failure;
     lastError = failure;
     let alternatives = [];

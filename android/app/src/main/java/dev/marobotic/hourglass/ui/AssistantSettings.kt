@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import dev.marobotic.hourglass.data.Repo
 import org.json.JSONArray
 import org.json.JSONObject
@@ -49,6 +50,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
     var engine by remember { mutableStateOf("free") }
     var model by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
+    var deepSeekPriceLine by remember { mutableStateOf("") }
     var apiModels by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var key by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
@@ -59,6 +61,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
     var saving by remember { mutableStateOf(false) }
 
     fun hasKey(): Boolean = s?.optJSONObject("has_key")?.optBoolean(if (engine == "openai") "openai:$baseUrl" else engine) == true
+    fun isDeepSeek(): Boolean = engine == "openai" && baseUrl.contains("api.deepseek.com")
     fun loadModels() {
         apiModels = emptyList()
         repo.assistant("GET", "/models?base_url=" + Uri.encode(baseUrl)) { d, _ ->
@@ -76,6 +79,13 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
             if (engine == "openai") loadModels()
         }
     }
+    LaunchedEffect(engine, baseUrl) {
+        deepSeekPriceLine = ""
+        while (isDeepSeek()) {
+            repo.assistant("GET", "/deepseek-pricing") { d, _ -> deepSeekPriceLine = d?.optString("line").orEmpty() }
+            delay(60_000)
+        }
+    }
     fun modelOptions(): List<Pair<String, String>> {
         val d = s ?: return emptyList()
         return when (engine) {
@@ -87,6 +97,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
     fun modelLabel(m: JSONObject): String = buildString {
         append(m.optString("name").ifBlank { m.optString("id") })
         m.optString("note").takeIf { it.isNotBlank() }?.let { append("  · ").append(it) }
+        if (m.has("supports_tools") && !m.optBoolean("supports_tools")) append("  · tools unsupported")
         m.optLong("context_window").takeIf { it > 0 }?.let { n -> append("  · ").append(if (n >= 1_000_000) "${n / 1_000_000}M" else "${n / 1000}k") }
         m.optJSONObject("pricing")?.let { p ->
             if (!p.isNull("input") && !p.isNull("output")) append("  · $").append("%.3g".format(p.optDouble("input") * 1_000_000)).append("/$").append("%.3g".format(p.optDouble("output") * 1_000_000)).append(" per 1M")
@@ -164,7 +175,8 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                 }
                 if (engine != "free" && (engine != "claude" || pasteToken)) {
                     T(if (engine == "claude") "CLAUDE TOKEN" else "API KEY", 11, HColors.muted, spacing = 1.0)
-                    Field(key, { key = it }, if (hasKey()) "Saved ✓ (paste a new one to replace it)" else if (engine == "anthropic") "sk-ant-api…" else if (engine == "claude") "sk-ant-oat…" else "Your API key", password = true)
+                    Field(key, { key = it }, if (hasKey()) "Saved ✓ (paste a new one to replace it)" else if (engine == "anthropic") "sk-ant-api…" else if (engine == "claude") "sk-ant-oat…" else if (isDeepSeek()) "DeepSeek API key" else "Your API key", password = true)
+                    if (isDeepSeek()) T("Get a DeepSeek API key", 11, HColors.muted, modifier = Modifier.clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://platform.deepseek.com/api_keys"))) })
                 }
                 T("MODEL", 11, HColors.muted, spacing = 1.0)
                 val opts = modelOptions()
@@ -178,6 +190,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                         for ((label, id) in opts) DropdownMenuItem(text = { T(label, 13, if (id == current) HColors.fg else HColors.muted) }, onClick = { model = id; open = false })
                     }
                 }
+                if (isDeepSeek() && deepSeekPriceLine.isNotBlank()) T(deepSeekPriceLine, 11, HColors.faint)
                 if (engine == "free" && s?.optJSONObject("free_model_discovery")?.optString("status") == "discovery failed")
                     T("Model discovery failed; showing the configured fallback models.", 12, HColors.faint)
                 if (note.isNotBlank()) T(note, 12, HColors.muted)

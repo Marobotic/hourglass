@@ -29,6 +29,22 @@ test("recognizes OpenRouter quota and OpenAI key errors from provider response b
   assert.doesNotMatch(auth.message, /sk-secret/);
 });
 
+test("normalizes captured DeepSeek balance and rate-limit responses", () => {
+  const quota = normalizeEngineError({ status: 402, body: { error: { code: "insufficient_balance", message: "Insufficient Balance" } } }, {
+    provider: "deepseek", status: 402, body: { error: { code: "insufficient_balance", message: "Insufficient Balance" } },
+  });
+  assert.equal(quota.kind, "quota");
+  assert.equal(quota.message, "DeepSeek balance is empty");
+  assert.equal("resets_at" in quota, false);
+  const limited = normalizeEngineError({ status: 429, message: "Too Many Requests" }, {
+    provider: "deepseek", status: 429, headers: new Headers({ "retry-after": "9" }),
+    body: { error: { code: "rate_limit_exceeded", message: "Too Many Requests" } },
+  });
+  assert.equal(limited.kind, "rate_limit");
+  assert.equal(limited.retry_after_s, 9);
+  assert.equal(limited.message, "DeepSeek is rate limited. Try again shortly.");
+});
+
 test("normalizes Claude subscription JSON errors, overloaded responses, network errors, and bad requests", () => {
   const claude = normalizeEngineError({ message: "Claude Code error", data: { message: "OAuth token has expired" } }, { provider: "claude" });
   assert.equal(claude.kind, "auth");

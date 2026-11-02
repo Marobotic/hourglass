@@ -14,6 +14,7 @@ struct AssistantSettingsSheet: View {
     @State private var model = ""
     @State private var baseUrl = ""
     @State private var apiModels: [[String: Any]] = []
+    @State private var deepSeekPriceLine = ""
     @State private var key = ""
     @State private var code = ""
     @State private var signin = "" // "", starting, waiting, finishing
@@ -24,6 +25,7 @@ struct AssistantSettingsSheet: View {
 
     private func list(_ k: String) -> [[String: Any]] { s?[k] as? [[String: Any]] ?? [] }
     private var hasKey: Bool { ((s?["has_key"] as? [String: Any])?[engine == "openai" ? "openai:" + baseUrl : engine] as? Bool) ?? false }
+    private var isDeepSeek: Bool { engine == "openai" && baseUrl.contains("api.deepseek.com") }
     private var claudeReady: Bool { s?["claude_ready"] as? Bool ?? false }
     private var options: [(String, String)] {
         switch engine {
@@ -35,6 +37,7 @@ struct AssistantSettingsSheet: View {
     private func modelLabel(_ m: [String: Any]) -> String {
         var label = m["name"] as? String ?? m["id"] as? String ?? ""
         if let note = m["note"] as? String, !note.isEmpty { label += "  · " + note }
+        if (m["supports_tools"] as? Bool) == false { label += "  · tools unsupported" }
         if let context = m["context_window"] as? Int, context > 0 { label += context >= 1_000_000 ? "  · \(context / 1_000_000)M" : "  · \(context / 1000)k" }
         if let pricing = m["pricing"] as? [String: Double], let input = pricing["input"], let output = pricing["output"] {
             label += String(format: "  · $%.3g/$%.3g per 1M", input * 1_000_000, output * 1_000_000)
@@ -148,8 +151,9 @@ struct AssistantSettingsSheet: View {
 
                     if engine != "free" && (engine != "claude" || pasteToken) {
                         label(engine == "claude" ? "CLAUDE TOKEN" : "API KEY")
-                        SecureField("", text: $key, prompt: Text(hasKey ? "Saved ✓ (paste a new one to replace it)" : engine == "anthropic" ? "sk-ant-api…" : engine == "claude" ? "sk-ant-oat…" : "Your API key").foregroundStyle(H.faint))
+                        SecureField("", text: $key, prompt: Text(hasKey ? "Saved ✓ (paste a new one to replace it)" : engine == "anthropic" ? "sk-ant-api…" : engine == "claude" ? "sk-ant-oat…" : isDeepSeek ? "DeepSeek API key" : "Your API key").foregroundStyle(H.faint))
                             .font(H.mono(14)).foregroundStyle(H.fg).padding(10).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                        if isDeepSeek, let url = URL(string: "https://platform.deepseek.com/api_keys") { Link("Get a DeepSeek API key", destination: url).font(H.mono(11)).foregroundStyle(H.muted) }
                     }
 
                     label("MODEL")
@@ -164,6 +168,7 @@ struct AssistantSettingsSheet: View {
                         .padding(12).overlay(Rectangle().stroke(H.border, lineWidth: 1))
                     }
                     .disabled(options.isEmpty)
+                    if isDeepSeek && !deepSeekPriceLine.isEmpty { T(deepSeekPriceLine, 11, H.faint) }
 
                     if engine == "free", (s?["free_model_discovery"] as? [String: Any])?["status"] as? String == "discovery failed" {
                         T("Model discovery failed; showing the configured fallback models.", 12, H.faint)
@@ -199,6 +204,13 @@ struct AssistantSettingsSheet: View {
         }
         .preferredColorScheme(.dark)
         .task { await load() }
+        .task(id: baseUrl) {
+            deepSeekPriceLine = ""
+            while isDeepSeek && !Task.isCancelled {
+                if let d = try? await store.assistant("GET", "/deepseek-pricing") { deepSeekPriceLine = d["line"] as? String ?? "" }
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
         .onDisappear { if !signin.isEmpty { Task { _ = try? await store.assistant("POST", "/claude/login/cancel") } } }
     }
 
