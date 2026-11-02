@@ -29,25 +29,55 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
   const calls = join(root, "calls.jsonl");
   const fake = join(root, "fake-helper.mjs");
   const folder = join(root, "pair");
+  const folder2 = join(root, "pair-two");
+  const children = [];
   await mkdir(folder);
+  await mkdir(folder2);
   await writeFile(join(folder, "ok.txt"), "ok");
   await writeFile(join(folder, "pending.txt"), "pending");
-  await writeFile(fake, `import { appendFileSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs'; const args=process.argv.slice(2); if(args[0]==='serve'){appendFileSync(${JSON.stringify(calls)},JSON.stringify({args})+'\\n');const control=args[args.indexOf('--control')+1];console.log(JSON.stringify({ok:true,connected:true}));setInterval(()=>{const f=control+'/request.json';if(!existsSync(f))return;try{const q=JSON.parse(readFileSync(f,'utf8'));const input=JSON.parse(readFileSync(q.json,'utf8'));appendFileSync(${JSON.stringify(calls)},JSON.stringify({args:['status','--json',q.json],input})+'\\n');writeFileSync(control+'/response-'+q.id+'.json',JSON.stringify({ok:true,updated:2}));unlinkSync(f)}catch{}},25)}else{appendFileSync(${JSON.stringify(calls)},JSON.stringify({args})+'\\n');console.log(JSON.stringify({ok:true}))}`);
+  await writeFile(join(folder2, "ok-two.txt"), "ok");
+  await writeFile(fake, `import { appendFileSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs'; const args=process.argv.slice(2); if(args[0]==='serve'){const roots=JSON.parse(readFileSync(args[args.indexOf('--roots')+1],'utf8'));appendFileSync(${JSON.stringify(calls)},JSON.stringify({args,roots})+'\\n');const control=args[args.indexOf('--control')+1];console.log(JSON.stringify({ok:true,connected:true}));setInterval(()=>{const f=control+'/request.json';if(!existsSync(f))return;try{const q=JSON.parse(readFileSync(f,'utf8'));const input=JSON.parse(readFileSync(q.json,'utf8'));appendFileSync(${JSON.stringify(calls)},JSON.stringify({args:['status','--json',q.json],pair:q.pair,input})+'\\n');writeFileSync(control+'/response-'+q.id+'.json',JSON.stringify({ok:true,updated:2}));unlinkSync(f)}catch{}},25)}else{appendFileSync(${JSON.stringify(calls)},JSON.stringify({args})+'\\n');console.log(JSON.stringify({ok:true}))}`);
   try {
-    const helper = createExplorerStatus({ dataDir: root, sidecarDir: root, platform: "win32", env: { HOURGLASS_EXPLORER_STATUS: "on" }, spawnImpl: (_exe, args, options) => spawn(process.execPath, [fake, ...args], options) });
+    const helper = createExplorerStatus({ dataDir: root, sidecarDir: root, platform: "win32", env: { HOURGLASS_EXPLORER_STATUS: "on" }, spawnImpl: (_exe, args, options) => { const child = spawn(process.execPath, [fake, ...args], options); if (args[0] === "serve") children.push(child); return child; } });
     const pair = { id: "pair-1", local: folder, syncedFilePaths: new Map([["ok.txt", "file-1"]]), syncedFolderPaths: new Map() };
+    const pair2 = { id: "pair-2", local: folder2, syncedFilePaths: new Map([["ok-two.txt", "file-2"]]), syncedFolderPaths: new Map() };
     await helper.register(pair);
+    await helper.register(pair2);
     assert.equal(await helper.connect(pair), true);
+    assert.equal(await helper.connect(pair2), true);
+    assert.equal(children.length, 1);
+    children[0].kill();
+    await new Promise((resolve) => setTimeout(resolve, 1250));
+    assert.equal(await helper.connect(pair), true);
+    assert.equal(children.length, 2);
     await helper.status(pair);
+    await helper.status(pair2);
+    await helper.shutdown();
     await helper.unregister(pair);
+    await helper.unregister(pair2);
     const recorded = (await readFile(calls, "utf8")).trim().split("\n").map(JSON.parse);
     assert.equal(recorded[0].args[0], "register");
-    assert.equal(recorded[1].args[0], "serve");
-    assert.equal(recorded[2].args[0], "status");
-    assert.ok(recorded[2].args[recorded[2].args.indexOf("--json") + 1].startsWith(tmpdir()));
-    assert.equal(recorded[3].args[0], "unregister");
-    // The helper owns and removes the transient input file after it exits.
-    await assert.rejects(readFile(recorded[1].args[recorded[1].args.indexOf("--json") + 1]));
-    assert.deepEqual(recorded[2].input, { in_sync: ["ok.txt"], not_in_sync: ["pending.txt"] });
-  } finally { await rm(root, { recursive: true, force: true }); }
+    assert.equal(recorded[1].args[0], "register");
+    const serves = recorded.filter((row) => row.args[0] === "serve");
+    assert.equal(serves.length, 2);
+    assert.ok(serves.every((row) => row.roots.length === 2));
+    const statuses = recorded.filter((row) => row.args[0] === "status");
+    assert.equal(statuses.length, 2);
+    assert.ok(statuses.every((row) => row.args[row.args.indexOf("--json") + 1].startsWith(tmpdir())));
+    assert.deepEqual(statuses.map((row) => row.pair), ["pair-1", "pair-2"]);
+    // The sidecar removes transient roots config after stopping the helper.
+    await assert.rejects(readFile(serves.at(-1).args[serves.at(-1).args.indexOf("--roots") + 1]));
+    assert.deepEqual(statuses[0].input, { in_sync: ["ok.txt"], not_in_sync: ["pending.txt"] });
+    assert.deepEqual(statuses[1].input, { in_sync: ["ok-two.txt"], not_in_sync: [] });
+  } finally { for (const child of children) child.kill(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("missing helper is logged and reported without throwing", async () => {
+  const errors = [];
+  const helper = createExplorerStatus({ sidecarDir: process.cwd(), platform: "win32", spawnImpl: () => { throw new Error("helper missing"); }, logger: (...args) => errors.push(args) });
+  const pair = { id: "missing", local: process.cwd() };
+  assert.equal(await helper.register(pair), false);
+  assert.equal(await helper.connect(pair), false);
+  assert.equal(await helper.status(pair), false);
+  assert.ok(errors.length);
 });

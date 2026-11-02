@@ -20,8 +20,7 @@ enum Command {
         path: String,
     },
     Serve {
-        root: String,
-        pair: String,
+        roots: String,
         control: String,
     },
     List,
@@ -98,8 +97,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             path: value("--path")?,
         }),
         "serve" => Ok(Command::Serve {
-            root: value("--root")?,
-            pair: value("--pair")?,
+            roots: value("--roots")?,
             control: value("--control")?,
         }),
         "list" => Ok(Command::List),
@@ -363,15 +361,25 @@ mod cloud_files {
 
     #[derive(Deserialize)]
     struct ServeRequest {
+        pair: String,
         id: String,
         json: String,
     }
 
-    fn serve(root: &str, pair: &str, control: &str) -> Result<ResultJson, String> {
-        let root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
-        let full = root.to_string_lossy();
-        let path = full.strip_prefix("\\\\?\\").unwrap_or(&full);
-        let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+    #[derive(Deserialize)]
+    struct ServeRoot {
+        pair: String,
+        path: String,
+    }
+
+    fn serve(roots_file: &str, control: &str) -> Result<ResultJson, String> {
+        let roots: Vec<ServeRoot> = serde_json::from_slice(
+            &std::fs::read(roots_file).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        if roots.is_empty() {
+            return Err("serve requires at least one root".into());
+        }
         let callbacks = [
             CF_CALLBACK_REGISTRATION {
                 Type: CF_CALLBACK_TYPE_FETCH_DATA,
@@ -387,19 +395,24 @@ mod cloud_files {
             },
         ];
         let _apartment = RoApartment::init().map_err(|error| error.to_string())?;
-        let _connection = unsafe {
-            CfConnectSyncRoot(
-                PCWSTR(wide.as_ptr()),
-                callbacks.as_ptr(),
-                None,
-                CF_CONNECT_FLAG_NONE,
-            )
+        let mut connected = Vec::new();
+        for root in roots {
+            let canonical = std::fs::canonicalize(&root.path).map_err(|error| error.to_string())?;
+            let full = canonical.to_string_lossy();
+            let path = full.strip_prefix("\\\\?\\").unwrap_or(&full);
+            let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+            let connection = unsafe {
+                CfConnectSyncRoot(
+                    PCWSTR(wide.as_ptr()),
+                    callbacks.as_ptr(),
+                    None,
+                    CF_CONNECT_FLAG_NONE,
+                )
+            }
+            .map_err(|error| format!("{}: {error}", canonical.display()))?;
+            connected.push((root.pair, canonical, connection));
         }
-        .map_err(|error| error.to_string())?;
-        println!(
-            "{{\"ok\":true,\"connected\":true,\"path\":{}}}",
-            serde_json::to_string(&root.to_string_lossy()).unwrap()
-        );
+        println!("{{\"ok\":true,\"connected\":true}}");
         let request_path = Path::new(control).join("request.json");
         loop {
             if let Ok(body) = std::fs::read_to_string(&request_path) {
@@ -407,7 +420,10 @@ mod cloud_files {
                 if let Ok(request) =
                     serde_json::from_str::<ServeRequest>(body.trim_start_matches('\u{feff}'))
                 {
-                    let response = status(pair, root.to_string_lossy().as_ref(), &request.json)
+                    let response = connected.iter()
+                        .find(|(pair, _, _)| pair == &request.pair)
+                        .ok_or_else(|| format!("unconnected sync pair {}", request.pair))
+                        .and_then(|(_, root, _)| status(&request.pair, root.to_string_lossy().as_ref(), &request.json))
                         .unwrap_or_else(|error| ResultJson {
                             ok: false,
                             id: None,
@@ -711,11 +727,7 @@ mod cloud_files {
             }
             Command::Status { pair, path, json } => status(&pair, &path, &json),
             Command::Pin { path } => pin_root(&path).map_err(|error| error.to_string()),
-            Command::Serve {
-                root,
-                pair,
-                control,
-            } => serve(&root, &pair, &control),
+            Command::Serve { roots, control } => serve(&roots, &control),
             Command::List => list_roots()
                 .map(|roots| ResultJson {
                     ok: true,
@@ -810,6 +822,10 @@ mod tests {
             Command::Pin {
                 path: "C:\\sync".into()
             }
+        );
+        assert_eq!(
+            parse_args(&args(&["serve", "--roots", "roots.json", "--control", "control"])).unwrap(),
+            Command::Serve { roots: "roots.json".into(), control: "control".into() }
         );
     }
 

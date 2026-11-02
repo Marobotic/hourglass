@@ -6,7 +6,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: "0.2.21"
+    MARKETING_VERSION: "0.2.22"
     CURRENT_PROJECT_VERSION: "25"
 targets:
   Hourglass:
