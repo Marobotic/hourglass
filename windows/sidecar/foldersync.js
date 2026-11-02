@@ -339,18 +339,25 @@ export function createFolderSync({
   let syncStateCache = { file_ids: [], folder_ids: [] };
   let coveredFileIds = new Set();
 
+  function valuesOf(value) {
+    if (value instanceof Map || value instanceof Set) return value.values();
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") return Object.values(value);
+    return [];
+  }
+
   function rebuildSyncStateCache() {
     const fileIds = new Set();
     const folderIds = new Set();
     const covered = new Set();
     const rows = getRows();
     for (const pair of pairs.values()) {
-      for (const id of pair.syncedFilePaths?.values() || []) covered.add(id);
+      for (const id of valuesOf(pair.syncedFilePaths)) covered.add(id);
       for (const entry of Object.values(pair.base?.files || {})) if (entry?.file_id) covered.add(entry.file_id);
       for (const row of rows.files || []) if (fileBelongsToPair(pair, row, rows.folders || [])) covered.add(row.id);
       if (pair.paused) continue;
-      for (const id of pair.syncedFileIds || []) fileIds.add(id);
-      for (const id of pair.syncedFolderIds || []) folderIds.add(id);
+      for (const id of valuesOf(pair.syncedFileIds)) fileIds.add(id);
+      for (const id of valuesOf(pair.syncedFolderIds)) folderIds.add(id);
     }
     coveredFileIds = covered;
     syncStateCache = { file_ids: [...fileIds], folder_ids: [...folderIds] };
@@ -366,6 +373,10 @@ export function createFolderSync({
           errors: [],
           state: pair.paused ? "paused" : "idle",
           last_sync: pair.last_sync || null,
+          syncedFileIds: new Set(),
+          syncedFolderIds: new Set(),
+          syncedFilePaths: new Map(),
+          syncedFolderPaths: new Map(),
         });
       }
     } catch {}
@@ -373,8 +384,13 @@ export function createFolderSync({
 
   function save() {
     const tmp = file + ".part";
-    const saved = [...pairs.values()].map(({ errors, state, pending, syncedFileIds, syncedFolderIds, ...pair }) => pair);
-    writeFileSync(tmp, JSON.stringify(saved, null, 2) + "\n");
+    const saved = [...pairs.values()].map(({
+      errors, state, pending,
+      syncedFileIds, syncedFolderIds, syncedFilePaths, syncedFolderPaths,
+      ...pair
+    }) => pair);
+    writeFileSync(tmp, JSON.stringify(saved, (_key, value) =>
+      value instanceof Map || value instanceof Set ? undefined : value, 2) + "\n");
     renameSync(tmp, file);
   }
 

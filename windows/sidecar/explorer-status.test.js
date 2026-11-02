@@ -10,7 +10,7 @@ test("Explorer status is on by default on Windows and can be disabled", () => {
   assert.equal(explorerStatusEnabled({}, "win32"), true);
   assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "on" }, "win32"), true);
   assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "off" }, "win32"), false);
-  assert.equal(explorerStatusEnabled({}, "linux"), false);
+  assert.equal(explorerStatusEnabled({ HOURGLASS_EXPLORER_STATUS: "on" }, "linux"), false);
 });
 
 test("status listing classifies synced files and folders from the pair maps", async () => {
