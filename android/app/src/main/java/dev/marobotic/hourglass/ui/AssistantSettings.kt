@@ -86,14 +86,6 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
             delay(60_000)
         }
     }
-    fun modelOptions(): List<Pair<String, String>> {
-        val d = s ?: return emptyList()
-        return when (engine) {
-            "free" -> d.optJSONArray("free_models").objects().map { it.optString("name") to it.optString("id") }
-            "anthropic", "claude" -> d.optJSONArray("claude_models").objects().map { modelLabel(it) to it.optString("id") }
-            else -> apiModels.map { modelLabel(it) to it.optString("id") }
-        }
-    }
     fun modelLabel(m: JSONObject): String = buildString {
         append(m.optString("name").ifBlank { m.optString("id") })
         m.optString("note").takeIf { it.isNotBlank() }?.let { append("  · ").append(it) }
@@ -101,6 +93,14 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
         m.optLong("context_window").takeIf { it > 0 }?.let { n -> append("  · ").append(if (n >= 1_000_000) "${n / 1_000_000}M" else "${n / 1000}k") }
         m.optJSONObject("pricing")?.let { p ->
             if (!p.isNull("input") && !p.isNull("output")) append("  · $").append("%.3g".format(p.optDouble("input") * 1_000_000)).append("/$").append("%.3g".format(p.optDouble("output") * 1_000_000)).append(" per 1M")
+        }
+    }
+    fun modelOptions(): List<Pair<String, String>> {
+        val d = s ?: return emptyList()
+        return when (engine) {
+            "free" -> d.optJSONArray("free_models").objects().map { it.optString("name") to it.optString("id") }
+            "anthropic", "claude" -> d.optJSONArray("claude_models").objects().map { modelLabel(it) to it.optString("id") }
+            else -> apiModels.map { modelLabel(it) to it.optString("id") }
         }
     }
 
