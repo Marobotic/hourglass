@@ -48,7 +48,7 @@ import { INSTRUCTIONS } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
 import { deepSeekPriceState, isDeepSeekBaseUrl } from "./deepseek.js";
-import { mapClaudeLoginError, parseClaudeLoginUrl, parseClaudeSetupToken, stripTerminalSequences } from "./claude-login.js";
+import { claudeCliExcerpt, detectClaudeLoginPaste, mapClaudeLoginError, parseClaudeLoginUrl, parseClaudeSetupToken, redactClaudeSecrets, stripTerminalSequences } from "./claude-login.js";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
@@ -773,7 +773,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   // throwaway folder of its own. It prints a claude.com sign-in link and waits for
   // the code that page shows; given the code, it prints a long-lived token.
   const claudeLogin = (() => {
-    const live = new Map(); // email -> { child, out, url, timer }
+    const live = new Map(); // email -> { child, out, url, timer, state, message }
     // Measured link arrival is a few seconds on the VPS; retain a 45 s floor
     // for a cold CLI start and allow three times the measured startup margin.
     const LINK_TIMEOUT_MS = 45_000;
@@ -786,6 +786,15 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       try { l.child.kill("SIGKILL"); } catch {}
       try { rmSync(l.dir, { recursive: true, force: true }); } catch {}
     }
+    function status(t) {
+      const l = live.get(t.email);
+      return l ? { state: l.state, message: l.message || "" } : { state: "waiting_code", message: "Paste the code from claude.com" };
+    }
+    function beginChecking(t) {
+      let l = live.get(t.email);
+      if (!l) { l = { state: "checking", message: "Checking your Claude plan…", out: "", dir: null }; live.set(t.email, l); }
+      else { l.state = "checking"; l.message = "Checking your Claude plan…"; }
+    }
     function start(t) {
       cancel(t);
       if (!existsSync(claudeBin)) return Promise.reject(new Error("Claude Code isn't installed on the server yet."));
@@ -797,7 +806,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         env: { PATH: process.env.PATH, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, ".claude"), TERM: "xterm-256color", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
         stdio: ["pipe", "pipe", "pipe"],
       });
-      const l = { child, dir, out: "", url: null };
+      const l = { child, dir, out: "", url: null, state: "waiting_code", message: "Paste the code from claude.com" };
       // Ten minutes to sign in, then it is dropped.
       l.timer = setTimeout(() => cancel(t), 10 * 60_000);
       live.set(t.email, l);
@@ -817,10 +826,12 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         }, 200);
       });
     }
-    function finish(t, code) {
+    function exchange(t, code) {
       const l = live.get(t.email);
       if (!l) return Promise.reject(new Error("Sign-in was cancelled or expired. Start again."));
-      if (!code || code.length < 10) return Promise.reject(new Error("Paste the whole code from the claude.com page."));
+      if (!code || code.length < 10) return Promise.reject(new Error("Paste the code from the claude.com page."));
+      l.state = "connecting"; l.message = "Connecting to Claude…";
+      log(`claude login (${t.email || "owner"}): exchanging code ${String(code).slice(0, 6)}…[redacted]`);
       const before = l.out.length;
       l.child.stdin.write(code.replace(/\s+/g, "") + "\r");
       return new Promise((resolve, reject) => {
@@ -828,17 +839,27 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         const poll = setInterval(() => {
           const after = stripTerminalSequences(l.out.slice(before));
           const tok = parseClaudeSetupToken(after);
-          if (tok) { clearInterval(poll); cancel(t); return resolve(tok); }
+          if (tok) { clearInterval(poll); l.state = "checking"; l.message = "Checking your Claude plan…"; return resolve(tok); }
           const mapped = mapClaudeLoginError(after);
           if ((mapped && Date.now() - began > 2000) || childHasExited(l.child) || Date.now() - began > EXCHANGE_TIMEOUT_MS) {
             clearInterval(poll);
-            cancel(t);
-            reject(new Error(mapped || (childHasExited(l.child) ? "Claude Code closed before returning a token. Start sign-in again." : "Claude took too long to finish. Start sign-in again.")));
+            const detail = mapped || (childHasExited(l.child) ? "Claude Code closed before returning a token. Start sign-in again." : "Claude took too long to finish. Start sign-in again.");
+            reject(new Error(detail + (after ? `\n${claudeCliExcerpt(after)}` : "")));
           }
         }, 250);
       });
     }
-    return { start, finish, cancel };
+    function fail(t, error) {
+      const l = live.get(t.email);
+      log(`claude login (${t.email || "owner"}): error: ${redactClaudeSecrets(error?.message || error)}`);
+      if (l) { l.state = "error"; l.message = error?.message || String(error); clearTimeout(l.timer); try { l.child.kill("SIGKILL"); } catch {} try { rmSync(l.dir, { recursive: true, force: true }); } catch {} }
+    }
+    function connected(t) {
+      const l = live.get(t.email);
+      log(`claude login (${t.email || "owner"}): connected`);
+      if (l) { l.state = "connected"; l.message = "Connected as Claude Pro/Max"; clearTimeout(l.timer); try { l.child.kill("SIGKILL"); } catch {} try { rmSync(l.dir, { recursive: true, force: true }); } catch {} }
+    }
+    return { start, exchange, status, beginChecking, fail, connected, cancel };
   })();
 
   function childHasExited(child) { return child.exitCode !== null || child.signalCode !== null; }
@@ -854,6 +875,23 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (result.error || result.status !== 0 || !/\bOK\b/i.test(result.stdout || ""))
         throw new Error("Claude could not verify this subscription token. Sign in again or paste a fresh token.");
     } finally { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
+  }
+
+  function checkClaudeTokenAsync(token) {
+    const dir = join(accountsDir, ".claude-login-check-" + randomBytes(6).toString("hex"));
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return new Promise((resolve, reject) => {
+      const child = spawn(claudeBin, ["-p", "Reply with exactly: OK", "--output-format", "text", "--tools", ""], {
+        env: { PATH: process.env.PATH, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, ".claude"), CLAUDE_CODE_OAUTH_TOKEN: token, DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "", stderr = "", settled = false;
+      const finish = (err) => { if (settled) return; settled = true; clearTimeout(timer); try { rmSync(dir, { recursive: true, force: true }); } catch {} err ? reject(err) : resolve(); };
+      const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} finish(new Error("Claude could not verify this subscription token. Sign in again or paste a fresh token.")); }, 90_000);
+      child.stdout.on("data", (d) => { stdout += d; }); child.stderr.on("data", (d) => { stderr += d; });
+      child.on("error", () => finish(new Error("Claude could not verify this subscription token. Sign in again or paste a fresh token.")));
+      child.on("close", (code) => finish(code === 0 && /\bOK\b/i.test(stdout) ? null : new Error("Claude could not verify this subscription token. Sign in again or paste a fresh token.")));
+    });
   }
 
   /** The alarm or note a reply set or showed: "it" in the next message. */
@@ -1002,17 +1040,44 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     // (`claude setup-token`), the app opens its link, the user signs in on claude.com
     // and pastes back the code it shows; the token that comes out is saved like a pasted one.
     if (path === "/api/assistant/claude/login" && m === "POST") {
-      try { return send(res, 200, { url: await claudeLogin.start(t) }), true; }
+      try { const url = await claudeLogin.start(t); log(`claude login (${t.email || "owner"}): sign-in link ready`); return send(res, 200, { url }), true; }
       catch (e) { return send(res, 400, { error: e.message }), true; }
+    }
+    if (path === "/api/assistant/claude/login/status" && m === "GET") {
+      return send(res, 200, claudeLogin.status(t)), true;
     }
     if (path === "/api/assistant/claude/login/code" && m === "POST") {
       const b = await readJson(req);
-      try {
-        const token = await claudeLogin.finish(t, String(b.code || "").trim());
-        checkClaudeToken(token);
+      const pasted = detectClaudeLoginPaste(b.code);
+      const asyncMode = b.async === true;
+      const saveToken = async (token) => {
+        const lstatus = claudeLogin.status(t);
+        if (lstatus.state !== "checking") throw new Error("Sign-in was cancelled or expired. Start again.");
+        log(`claude login (${t.email || "owner"}): checking subscription ${redactClaudeSecrets(token)}`);
+        await checkClaudeTokenAsync(token);
         const cfg = settings.view(t);
-        return send(res, 200, settings.save(t, { engine: "claude", model: cfg.engine === "claude" ? undefined : null, key: token })), true;
-      } catch (e) { return send(res, 400, { error: e.message }), true; }
+        settings.save(t, { engine: "claude", model: cfg.engine === "claude" ? undefined : null, key: token });
+        claudeLogin.connected(t);
+      };
+      const run = async () => {
+        try {
+          let token;
+          if (pasted.kind === "token") {
+            log(`claude login (${t.email || "owner"}): checking pasted token ${redactClaudeSecrets(pasted.value)}`);
+            // A direct token creates a status session without launching a pty.
+            claudeLogin.beginChecking(t);
+            token = pasted.value;
+          } else if (pasted.kind === "code") token = await claudeLogin.exchange(t, pasted.value);
+          else throw new Error("Paste a code from claude.com, its callback URL, or an sk-ant-oat token.");
+          await saveToken(token);
+        } catch (e) { claudeLogin.fail(t, e); throw e; }
+      };
+      if (asyncMode) {
+        run().catch(() => {});
+        return send(res, 202, { state: "connecting" }), true;
+      }
+      try { await run(); return send(res, 200, settings.view(t)), true; }
+      catch (e) { return send(res, 400, { error: e.message }), true; }
     }
     if (path === "/api/assistant/claude/login/cancel" && m === "POST") {
       claudeLogin.cancel(t);

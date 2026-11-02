@@ -2,7 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mapClaudeLoginError, parseClaudeLoginUrl, parseClaudeSetupToken, stripTerminalSequences } from "../claude-login.js";
+import { claudeCliExcerpt, detectClaudeLoginPaste, mapClaudeLoginError, parseClaudeLoginUrl, parseClaudeSetupToken, redactClaudeSecrets, stripTerminalSequences } from "../claude-login.js";
+
+test("paste field accepts code, code with state, callback URL, and setup-token", () => {
+  assert.deepEqual(detectClaudeLoginPaste(" fake-code-123 "), { kind: "code", value: "fake-code-123" });
+  assert.deepEqual(detectClaudeLoginPaste("abc123#state-456"), { kind: "code", value: "abc123#state-456" });
+  assert.deepEqual(detectClaudeLoginPaste("https://platform.claude.com/oauth/code/callback?code=abc123&state=state456"), { kind: "code", value: "abc123#state456" });
+  assert.deepEqual(detectClaudeLoginPaste("sk-ant-oat01-LOCAL_FAKE_TOKEN"), { kind: "token", value: "sk-ant-oat01-LOCAL_FAKE_TOKEN" });
+});
+
+test("CLI error excerpts redact tokens, codes, and oauth state", () => {
+  const out = claudeCliExcerpt("OAuth failed\nsk-ant-oat01-LOCAL_SECRET\n?state=verylongsecretstate\nfakecode123#fakestate");
+  assert.match(out, /sk-ant…\[redacted\]/);
+  assert.doesNotMatch(out, /LOCAL_SECRET|verylongsecretstate|fakecode123|fakestate/);
+  assert.match(redactClaudeSecrets("sk-ant-oat01-abc"), /^sk-ant…\[redacted\]$/);
+});
 
 for (const version of ["2.1.303", "2.1.316"]) {
   test(`Claude ${version} captured setup-token output contains a usable link`, () => {
@@ -33,5 +47,6 @@ test("URL on its own line stops before ordinary next-line text", () => {
 test("error mapping requires actual auth failure wording", () => {
   assert.equal(mapClaudeLoginError("No error occurred; token setup continues."), null);
   assert.match(mapClaudeLoginError("Invalid code. Please try again."), /wasn't accepted/);
+  assert.match(mapClaudeLoginError("OAuth error: That code wasn't accepted. It may be incomplete, expired, already used, or from an earlier sign-in attempt."), /wasn't accepted/);
   assert.match(mapClaudeLoginError("The code has expired"), /expired/);
 });

@@ -612,6 +612,7 @@ final class Store: ObservableObject {
         var comps = URLComponents(url: base.appendingPathComponent("api/assistant" + (parts.first ?? "")), resolvingAgainstBaseURL: false)!
         if parts.count > 1 { comps.percentEncodedQuery = parts[1] }
         var req = request(comps.url!)
+        if path == "/claude/login/code" { req.timeoutInterval = 210 }
         req.httpMethod = method
         if method == "POST" {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")

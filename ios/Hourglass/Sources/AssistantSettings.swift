@@ -18,7 +18,7 @@ struct AssistantSettingsSheet: View {
     @State private var key = ""
     @State private var code = ""
     @State private var signin = "" // "", starting, waiting, finishing
-    @State private var pasteToken = false
+    @State private var signinMessage = "Paste the code from claude.com"
     @State private var error = ""
     @State private var note = ""
     @State private var saving = false
@@ -131,28 +131,23 @@ struct AssistantSettingsSheet: View {
                             }
                             if hasKey && signin.isEmpty { T("✓ Connected as Claude Pro/Max", 12, H.teal) }
                         }
-                        if signin == "waiting" || signin == "finishing" {
-                            T(signin == "finishing" ? "Connecting… Checking the subscription token with Claude." : "Paste the code from claude.com, including any #state part. Spaces and line breaks are okay.", 12, H.muted)
-                            field("Paste the code from claude.com", text: $code)
-                            HButton(signin == "finishing" ? "Connecting…" : "Finish", primary: true, enabled: signin == "waiting" && !code.trimmingCharacters(in: .whitespaces).isEmpty) {
-                                error = ""; signin = "finishing"
+                        if signin == "waiting" || signin == "connecting" || signin == "checking" {
+                            T(signin == "waiting" ? "Paste the code from claude.com" : signin == "connecting" ? "Connecting…" : "Checking your Claude plan…", 12, H.muted)
+                            field("Code, callback URL, or sk-ant-oat token", text: $code)
+                            HButton(signin == "waiting" ? "Connect" : "Connecting…", primary: true, enabled: signin == "waiting" && !code.trimmingCharacters(in: .whitespaces).isEmpty) {
+                                error = ""; signin = "connecting"
                                 Task {
                                     do {
-                                        let d = try await store.assistant("POST", "/claude/login/code", ["code": code.trimmingCharacters(in: .whitespaces)])
-                                        signin = ""; code = ""
-                                        s?["has_key"] = d["has_key"]
-                                        note = "Connected as Claude Pro/Max ✓"
+                                        let d = try await store.assistant("POST", "/claude/login/code", ["code": code.trimmingCharacters(in: .whitespaces), "async": true])
+                                        signin = "connecting"
                                     } catch { signin = ""; self.error = error.localizedDescription }
                                 }
                             }
                         }
-                        if signin.isEmpty {
-                            Button { pasteToken.toggle() } label: { T(pasteToken ? "▴ Paste a token instead" : "▾ Or paste a token from claude setup-token", 11, H.faint) }
-                        }
                         if !claudeReady { T("Claude Code isn't installed on the server yet: this choice will work once it is.", 12, H.gold) }
                     }
 
-                    if engine != "free" && (engine != "claude" || pasteToken) {
+                    if engine != "free" && engine != "claude" {
                         label(engine == "claude" ? "CLAUDE TOKEN" : "API KEY")
                         if engine == "claude" { T("On your own PC, run claude setup-token in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints.", 12, H.faint) }
                         SecureField("", text: $key, prompt: Text(hasKey ? "Saved ✓ (paste a new one to replace it)" : engine == "anthropic" ? "sk-ant-api…" : engine == "claude" ? "sk-ant-oat…" : isDeepSeek ? "DeepSeek API key" : "Your API key").foregroundStyle(H.faint))
@@ -213,6 +208,17 @@ struct AssistantSettingsSheet: View {
             while isDeepSeek && !Task.isCancelled {
                 if let d = try? await store.assistant("GET", "/deepseek-pricing") { deepSeekPriceLine = d["line"] as? String ?? "" }
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
+        .task(id: signin) {
+            while ["waiting", "connecting", "checking"].contains(signin) {
+                try? await Task.sleep(for: .seconds(1))
+                guard let d = try? await store.assistant("GET", "/claude/login/status") else { continue }
+                let state = d["state"] as? String ?? ""
+                if state == "connected" { signin = ""; code = ""; note = d["message"] as? String ?? "Connected as Claude Pro/Max"; await load() }
+                else if state == "error" { signin = ""; error = d["message"] as? String ?? "Sign-in failed." }
+                else if state == "waiting_code" { signin = "waiting" }
+                else if !state.isEmpty { signin = state }
             }
         }
         .onDisappear { if !signin.isEmpty { Task { _ = try? await store.assistant("POST", "/claude/login/cancel") } } }

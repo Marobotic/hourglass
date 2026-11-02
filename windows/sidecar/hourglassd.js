@@ -232,7 +232,8 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
   for (let attempt = 0; ; attempt++) {
     try {
       const sentAt = Date.now();
-      r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
+      const timeout = path === "/api/assistant/claude/login/code" ? 210000 : raw ? 120000 : 15000;
+      r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(timeout) });
       learnClock(r, sentAt);
       if (sync.state === "offline") scheduleSync(0);
       break;

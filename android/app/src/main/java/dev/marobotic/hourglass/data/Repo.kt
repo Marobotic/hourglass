@@ -868,7 +868,11 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = method
         c.connectTimeout = 8000
-        c.readTimeout = if (raw != null) 120000 else 15000
+        c.readTimeout = when {
+            url.contains("/api/assistant/claude/login/code") -> 210000
+            raw != null -> 120000
+            else -> 15000
+        }
         if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
         c.setRequestProperty("x-hourglass-device", DEVICE_HEADER)
         c.setRequestProperty("x-timezone", zone.id)

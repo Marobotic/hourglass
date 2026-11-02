@@ -158,24 +158,27 @@ Modal {
     // Claude plan: sign in in the browser. The server runs Claude Code's own sign-in;
     // claude.com shows a code at the end, which goes back here.
     property string signin: ""       // "", "starting", "waiting" (browser open), "finishing"
-    property bool pasteToken: false
+    property string signinMessage: "Paste the code from claude.com"
+    Timer { id: claudePoll; interval: 1000; repeat: true; onTriggered: Api.request("GET", "/api/assistant/claude/login/status", null, (d) => {
+        if (!d) return;
+        dlg.signin = d.state === "waiting_code" ? "waiting" : d.state; dlg.signinMessage = d.message || "";
+        if (d.state === "connected") { stop(); dlg.signin = ""; dlg.codeField.text = ""; dlg.load(); dlg.note = d.message; }
+        else if (d.state === "error") { stop(); dlg.signin = ""; dlg.error = d.message; }
+    }, true) }
     function startSignin() {
         error = ""; note = ""; signin = "starting";
         Api.request("POST", "/api/assistant/claude/login", {}, (d, err) => {
             if (!d) { dlg.signin = ""; dlg.error = err || "Could not start the sign-in."; return; }
-            dlg.signin = "waiting";
+            dlg.signin = "waiting"; dlg.signinMessage = "Paste the code from claude.com"; claudePoll.start();
             if (!Qt.openUrlExternally(d.url)) { dlg.signin = ""; dlg.error = "Could not open claude.com. Open the link again or paste a token instead."; Api.request("POST", "/api/assistant/claude/login/cancel", {}, () => {}, true); return; }
             codeField.forceActiveFocus();
         }, true);
     }
     function finishSignin() {
-        error = ""; signin = "finishing";
-        Api.request("POST", "/api/assistant/claude/login/code", { code: codeField.text.trim() }, (d, err) => {
+        error = ""; signin = "connecting";
+        Api.request("POST", "/api/assistant/claude/login/code", { code: codeField.text.trim(), async: true }, (d, err) => {
             if (!d) { dlg.signin = ""; dlg.error = err || "Could not finish the sign-in."; return; }
-            dlg.signin = "";
-            codeField.text = "";
-            dlg.s.has_key = d.has_key;
-            dlg.note = "Connected as Claude Pro/Max ✓";
+            dlg.signin = "connecting"; dlg.signinMessage = "Connecting…";
         }, true);
     }
     onClosed: if (signin !== "") { Api.request("POST", "/api/assistant/claude/login/cancel", {}, () => {}, true); signin = ""; }
@@ -201,30 +204,24 @@ Modal {
             }
         }
         Text {
-            visible: dlg.signin === "waiting" || dlg.signin === "finishing"
+            visible: dlg.signin === "waiting" || dlg.signin === "connecting" || dlg.signin === "checking"
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: dlg.signin === "finishing" ? "Connecting… Checking the subscription token with Claude." : "Paste the code from claude.com (including any #state part). Spaces and line breaks are okay."
+            text: dlg.signin === "waiting" ? "Paste the code from claude.com" : dlg.signin === "connecting" ? "Connecting…" : dlg.signin === "checking" ? "Checking your Claude plan…" : dlg.signinMessage
             color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12
         }
         RowLayout {
-            visible: dlg.signin === "waiting" || dlg.signin === "finishing"
+            visible: dlg.signin === "waiting" || dlg.signin === "connecting" || dlg.signin === "checking"
             Layout.fillWidth: true
             spacing: 8
-            Field { id: codeField; Layout.fillWidth: true; placeholderText: "Paste the code from claude.com"; onAccepted: if (text.trim() !== "") dlg.finishSignin() }
-            Btn { text: dlg.signin === "finishing" ? "Connecting…" : "Finish"; kind: "primary"; enabled: dlg.signin === "waiting" && codeField.text.trim() !== ""; onClicked: dlg.finishSignin() }
-        }
-        Text {
-            visible: dlg.signin === ""
-            text: dlg.pasteToken ? "▴ Paste a token instead" : "▾ Or paste a token from claude setup-token"
-            color: tokHover.containsMouse ? Theme.fg : Theme.faint; font.family: Theme.mono; font.pixelSize: 11
-            MouseArea { id: tokHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: dlg.pasteToken = !dlg.pasteToken }
+            Field { id: codeField; Layout.fillWidth: true; placeholderText: "Code, callback URL, or sk-ant-oat token"; onAccepted: if (text.trim() !== "") dlg.finishSignin() }
+            Btn { text: dlg.signin === "waiting" ? "Connect" : dlg.signin === "checking" ? "Checking…" : "Connecting…"; kind: "primary"; enabled: dlg.signin === "waiting" && codeField.text.trim() !== ""; onClicked: dlg.finishSignin() }
         }
     }
 
     // The key or token.
     ColumnLayout {
-        visible: dlg.needsKey && (dlg.engine !== "claude" || dlg.pasteToken)
+        visible: dlg.needsKey && dlg.engine !== "claude"
         Layout.fillWidth: true
         spacing: 6
         Text {

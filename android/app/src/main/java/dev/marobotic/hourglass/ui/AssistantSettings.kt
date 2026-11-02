@@ -55,7 +55,6 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
     var key by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var signin by remember { mutableStateOf("") } // "", starting, waiting, finishing
-    var pasteToken by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
@@ -77,6 +76,21 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
             model = d.optString("model")
             baseUrl = d.optString("base_url").ifBlank { d.optJSONArray("presets").objects().firstOrNull()?.optString("base_url").orEmpty() }
             if (engine == "openai") loadModels()
+        }
+    }
+    LaunchedEffect(signin) {
+        while (signin in listOf("waiting", "connecting", "checking")) {
+            delay(1000)
+            repo.assistant("GET", "/claude/login/status") { d, _ ->
+                val state = d?.optString("state").orEmpty()
+                if (state == "error") { error = d.optString("message"); signin = "" }
+                else if (state == "connected") {
+                    note = d.optString("message"); signin = ""; code = ""
+                    repo.assistant("GET", "/settings") { settings, _ -> if (settings != null) s = settings }
+                }
+                else if (state == "waiting_code") signin = "waiting"
+                else if (state.isNotBlank()) signin = state
+            }
         }
     }
     LaunchedEffect(engine, baseUrl) {
@@ -158,23 +172,20 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                         }
                         if (hasKey() && signin.isEmpty()) { Spacer(Modifier.width(10.dp)); T("✓ Connected as Claude Pro/Max", 12, HColors.teal) }
                     }
-                    if (signin == "waiting" || signin == "finishing") {
-                        T(if (signin == "finishing") "Connecting… Checking the subscription token with Claude." else "Paste the code from claude.com, including any #state part. Spaces and line breaks are okay.", 12, HColors.muted)
-                        Field(code, { code = it }, "Code from claude.com")
-                        HButton(if (signin == "finishing") "Connecting…" else "Finish", primary = true, enabled = signin == "waiting" && code.isNotBlank()) {
-                            error = ""; signin = "finishing"
-                            repo.assistant("POST", "/claude/login/code", JSONObject().put("code", code.trim())) { d, err ->
+                    if (signin == "waiting" || signin == "connecting" || signin == "checking") {
+                        T(if (signin == "waiting") "Paste the code from claude.com" else if (signin == "connecting") "Connecting…" else "Checking your Claude plan…", 12, HColors.muted)
+                        Field(code, { code = it }, "Code, callback URL, or sk-ant-oat token")
+                        HButton(if (signin == "waiting") "Connect" else "Connecting…", primary = true, enabled = signin == "waiting" && code.isNotBlank()) {
+                            error = ""; signin = "connecting"
+                            repo.assistant("POST", "/claude/login/code", JSONObject().put("code", code.trim()).put("async", true)) { d, err ->
                                 if (d == null) { signin = ""; error = err ?: "Could not finish the sign-in."; return@assistant }
-                                signin = ""; code = ""
-                                s?.put("has_key", d.optJSONObject("has_key"))
-                                note = "Connected as Claude Pro/Max ✓"
+                                signin = "connecting"
                             }
                         }
                     }
-                    if (signin.isEmpty()) T(if (pasteToken) "▴ Paste a token instead" else "▾ Or paste a token from claude setup-token", 11, HColors.faint, modifier = Modifier.clickable { pasteToken = !pasteToken })
                     if (s?.optBoolean("claude_ready") == false) T("Claude Code isn't installed on the server yet: this choice will work once it is.", 12, HColors.gold)
                 }
-                if (engine != "free" && (engine != "claude" || pasteToken)) {
+                if (engine != "free" && engine != "claude") {
                     T(if (engine == "claude") "CLAUDE TOKEN" else "API KEY", 11, HColors.muted, spacing = 1.0)
                     if (engine == "claude") T("On your own PC, run claude setup-token in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints.", 12, HColors.faint)
                     Field(key, { key = it }, if (hasKey()) "Saved ✓ (paste a new one to replace it)" else if (engine == "anthropic") "sk-ant-api…" else if (engine == "claude") "sk-ant-oat…" else if (isDeepSeek()) "DeepSeek API key" else "Your API key", password = true)
