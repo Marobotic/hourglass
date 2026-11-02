@@ -86,6 +86,81 @@ async function savedPair({ temp, root, id = "pair-1", folderId = "folder-root", 
   return { data, pair };
 }
 
+test("legacy runtime maps saved as objects load and start safely", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-sync-legacy-runtime-maps-"));
+  const data = join(temp, "data");
+  const root = join(temp, "local");
+  await mkdir(data, { recursive: true });
+  await mkdir(root);
+  await writeFile(join(data, "syncfolders.json"), JSON.stringify([{
+    id: "pair-legacy", local: root, folder_id: "folder-root", paused: false,
+    base: { files: {}, folders: {} }, syncedFilePaths: {}, syncedFolderPaths: {},
+    syncedFileIds: {}, syncedFolderIds: {},
+  }]));
+
+  let startedPairs;
+  const engine = createFolderSync({
+    dataDir: data, driveDir: join(temp, "drive"), getRows: () => ({ files: [], folders: [] }),
+    syncOnce: async () => {}, upload: async () => {}, download: async () => {}, removeLocal: async () => {},
+    watchFactory: fakeWatch, deferStart: true, onStarted: (pairs) => { startedPairs = pairs; },
+  });
+  try {
+    assert.deepEqual(engine.syncState(), { file_ids: [], folder_ids: [] });
+    assert.doesNotThrow(() => engine.start());
+    assert.equal(startedPairs.length, 1);
+    assert.ok(startedPairs[0].syncedFilePaths instanceof Map);
+    assert.ok(startedPairs[0].syncedFolderPaths instanceof Map);
+    assert.ok(startedPairs[0].syncedFileIds instanceof Set);
+    assert.ok(startedPairs[0].syncedFolderIds instanceof Set);
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("saving runtime maps omits them and the saved pairs load and start again", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-sync-runtime-roundtrip-"));
+  const data = join(temp, "data");
+  const root = join(temp, "local");
+  await mkdir(data, { recursive: true });
+  await mkdir(root);
+  const pair = (id) => ({
+    id, local: root, folder_id: "folder-root", paused: true,
+    base: { files: {}, folders: {} }, syncedFilePaths: {}, syncedFolderPaths: {},
+    syncedFileIds: {}, syncedFolderIds: {},
+  });
+  await writeFile(join(data, "syncfolders.json"), JSON.stringify([pair("keep"), pair("remove")]));
+  const options = {
+    dataDir: data, driveDir: join(temp, "drive"), getRows: () => ({ files: [], folders: [] }),
+    syncOnce: async () => {}, upload: async () => {}, download: async () => {}, removeLocal: async () => {},
+    watchFactory: fakeWatch, deferStart: true,
+  };
+  const first = createFolderSync(options);
+  try {
+    assert.equal(first.remove("remove"), true);
+  } finally {
+    first.stop();
+  }
+
+  const saved = JSON.parse(await readFile(join(data, "syncfolders.json"), "utf8"));
+  assert.equal(saved.length, 1);
+  for (const key of ["syncedFilePaths", "syncedFolderPaths", "syncedFileIds", "syncedFolderIds"]) {
+    assert.equal(Object.hasOwn(saved[0], key), false);
+  }
+
+  let startedPairs;
+  const second = createFolderSync({ ...options, onStarted: (pairs) => { startedPairs = pairs; } });
+  try {
+    assert.doesNotThrow(() => second.start());
+    assert.equal(startedPairs.length, 1);
+    assert.ok(startedPairs[0].syncedFilePaths instanceof Map);
+    assert.ok(startedPairs[0].syncedFileIds instanceof Set);
+  } finally {
+    second.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("confirmed IDs survive unchanged periodic passes and watcher invalidation is path-scoped", async () => {
   const temp = await mkdtemp(join(tmpdir(), "hg-folder-sync-state-cache-"));
   const root = join(temp, "local");
