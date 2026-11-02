@@ -273,6 +273,23 @@ mod cloud_files {
         }
         let folder = operation.GetResults()?;
         let id = root_id(pair)?;
+        if let Ok(existing) =
+            StorageProviderSyncRootManager::GetSyncRootInformationForId(&HSTRING::from(id.as_str()))
+        {
+            let existing_folder: StorageFolder = existing.Path()?.cast()?;
+            let existing_path = existing_folder.Path()?.to_string_lossy();
+            if std::fs::canonicalize(&existing_path).ok().as_ref() == Some(&root_path) {
+                return Ok(ResultJson {
+                    ok: true,
+                    id: Some(id),
+                    path: Some(root_path.to_string_lossy().into_owned()),
+                    roots: None,
+                    updated: None,
+                    errors: None,
+                });
+            }
+            StorageProviderSyncRootManager::Unregister(&HSTRING::from(id.as_str()))?;
+        }
         let info = StorageProviderSyncRootInfo::new()?;
         info.SetId(&HSTRING::from(id.as_str()))?;
         info.SetPath(&folder)?;
