@@ -22,6 +22,11 @@ struct AssistantView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importing = false
     @State private var settingsOpen = false
+    @State private var driveOpen = false
+    @State private var driveItems: [[String: Any]] = []
+    @State private var driveFolder = ""
+    @State private var driveCourse = ""
+    @State private var mode = "auto"
     @State private var showSteps = true              // "What it's doing" under Working
     @State private var openSteps: Set<String> = []   // finished answers whose steps are shown
     @State private var now = Date()
@@ -69,6 +74,7 @@ struct AssistantView: View {
             let c = try await store.assistant("GET")
             problem = nil
             withAnimation(.easeOut(duration: 0.22)) { chat = c }
+            if let value = c["mode"] as? String { mode = value }
             if !ready {
                 seen = Set(messages(c).map(key))
                 ready = true
@@ -116,6 +122,27 @@ struct AssistantView: View {
     }
     private func set(_ id: UUID, _ change: (inout Attachment) -> Void) {
         if let i = attachments.firstIndex(where: { $0.id == id }) { change(&attachments[i]) }
+    }
+
+    private func setMode(_ value: String) {
+        Task { do { let d = try await store.assistantMode(value); mode = d["mode"] as? String ?? value; await load() }
+            catch { problem = error.localizedDescription } }
+    }
+    private func loadDrive(_ folder: String = "", _ course: String = "") {
+        driveFolder = folder; driveCourse = course
+        var args: [String: Any] = [:]
+        if !course.isEmpty { args["course_id"] = course } else if !folder.isEmpty { args["folder_id"] = folder }
+        Task { do {
+            let d = try await store.assistantAction("list_drive", args)
+            driveItems = (d["courses"] as? [[String: Any]] ?? []).map { ["kind":"course", "id":$0["id"] ?? "", "name":$0["name"] ?? ""] }
+                + (d["folders"] as? [[String: Any]] ?? []).map { ["kind":"folder", "id":$0["id"] ?? "", "name":$0["name"] ?? ""] }
+                + (d["files"] as? [[String: Any]] ?? []).map { ["kind":"file", "id":$0["id"] ?? "", "name":$0["name"] ?? "file", "mime":$0["mime"] ?? ""] }
+        } catch { problem = error.localizedDescription } }
+    }
+    private func attachDrive(_ item: [String: Any]) {
+        guard let id = item["id"] as? String, !attachments.contains(where: { $0.fileId == id }) else { return }
+        attachments.append(Attachment(name: item["name"] as? String ?? "file", mime: item["mime"] as? String ?? "", fileId: id))
+        driveOpen = false
     }
 
     var body: some View {
@@ -170,6 +197,7 @@ struct AssistantView: View {
                                 let k = key(m)
                                 Message(m: m, opener: opener, now: now, stepsShown: openSteps.contains(k),
                                         canShowSteps: !(serverBusy && i == messages(chat).count - 1),
+                                        onAction: { id, decision in Task { do { _ = try await store.assistantActionDecision(id, decision); await load() } catch { problem = error.localizedDescription } } },
                                         onToggleSteps: { withAnimation(.easeOut(duration: 0.2)) { if openSteps.contains(k) { openSteps.remove(k) } else { openSteps.insert(k) } } })
                                     .modifier(Rise(animate: ready && !seen.contains(k)))
                                     .onAppear { seen.insert(k) }
@@ -201,11 +229,27 @@ struct AssistantView: View {
                 }
             }
 
+            // Permission mode mirrors the desktop assistant.
+            HStack(spacing: 6) {
+                ForEach(Array([("ask", "Ask"), ("auto", "Auto"), ("dangerous", "Dangerous")].enumerated()), id: \.offset) { _, pair in
+                    let value = pair.0, title = pair.1
+                    Button { setMode(value) } label: {
+                        T(title, 11, mode == value && value == "dangerous" ? .white : mode == value ? H.accent : H.muted, bold: mode == value)
+                            .padding(.horizontal, 9).padding(.vertical, 5)
+                            .background(mode == value && value == "dangerous" ? H.accent : .clear)
+                            .overlay(Rectangle().stroke(mode == value ? H.accent : H.border, lineWidth: 1))
+                    }.disabled(busy)
+                }
+                Spacer()
+            }.padding(.horizontal, 14).padding(.top, 4)
+            if mode == "dangerous" { T("⚠ Changes apply immediately", 11, H.accent).padding(.horizontal, 14) }
+
             // The message box
             HStack(alignment: .bottom, spacing: 8) {
                 Menu {
                     Button { importing = true } label: { Label("Files", systemImage: "doc") }
                     PhotosPicker(selection: $photoItems, matching: .images) { Label("Photos", systemImage: "photo") }
+                    Button { driveOpen = true; loadDrive() } label: { Label("From Drive", systemImage: "externaldrive") }
                 } label: { Image(systemName: "paperclip").font(.system(size: 18)).foregroundStyle(H.muted).frame(width: 36, height: 44) }
                 .disabled(!enabled || busy)
                 TextField("", text: $input, prompt: Text(busy ? "Working on it…" : "Ask Hourglass…").foregroundStyle(H.faint), axis: .vertical)
@@ -227,7 +271,20 @@ struct AssistantView: View {
         .toolbar(.hidden, for: .navigationBar)
         .quickLookPreview($opener.url)
         .fullScreenCover(item: $opener.viewing) { set in MediaViewer(set: set, opener: opener).environmentObject(store) }
-        .sheet(isPresented: $settingsOpen) { AssistantSettingsSheet(onSaved: { Task { await load() } }).environmentObject(store) }
+        .fullScreenCover(isPresented: $settingsOpen) { AssistantSettingsSheet(onSaved: { Task { await load() } }).environmentObject(store) }
+        .sheet(isPresented: $driveOpen) {
+            NavigationStack {
+                List {
+                    if !driveFolder.isEmpty || !driveCourse.isEmpty { Button("← Drive root") { loadDrive() } }
+                    ForEach(Array(driveItems.enumerated()), id: \.offset) { _, item in
+                        Button { let kind = item["kind"] as? String ?? "file"; if kind == "file" { attachDrive(item) } else if kind == "course" { loadDrive("", item["id"] as? String ?? "") } else { loadDrive(item["id"] as? String ?? "", "") } } label: {
+                            Label(item["name"] as? String ?? "File", systemImage: (item["kind"] as? String) == "file" ? "doc" : "folder")
+                        }
+                    }
+                }.navigationTitle(driveCourse.isEmpty ? "Choose a Drive file" : "Course Drive")
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { driveOpen = false } } }
+            }.preferredColorScheme(.dark)
+        }
         // A clock for timer cards and "Working N s".
         .task { while !Task.isCancelled { try? await Task.sleep(nanoseconds: 1_000_000_000); now = Date() } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
@@ -271,6 +328,7 @@ private struct Message: View {
     let now: Date
     let stepsShown: Bool
     let canShowSteps: Bool
+    let onAction: (String, String) -> Void
     let onToggleSteps: () -> Void
 
     var body: some View {
@@ -297,7 +355,12 @@ private struct Message: View {
                         ToolLine(label: t["label"] as? String ?? "", status: t["status"] as? String ?? "")
                     }
                     // What it did, drawn.
-                    ForEach(Array((m["cards"] as? [[String: Any]] ?? []).enumerated()), id: \.offset) { _, c in ResultCard(info: c, now: now) }
+                    ForEach(Array((m["cards"] as? [[String: Any]] ?? []).enumerated()), id: \.offset) { _, c in
+                        let kind = c["kind"] as? String ?? ""
+                        if kind == "action" { AssistantActionCard(info: c, onAction: onAction) }
+                        else if kind == "file" { AssistantFileCard(info: c) }
+                        else { ResultCard(info: c, now: now) }
+                    }
                     if !text.isEmpty { NoteBodyView(text: text, open: { opener.open($0, store) }) }
                     if let usage = m["usage"] as? [String: Any] {
                         let input = usage["input_tokens"] as? Int
@@ -322,6 +385,32 @@ private struct Message: View {
             }
             .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+private struct AssistantActionCard: View {
+    let info: [String: Any]
+    let onAction: (String, String) -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            T(info["summary"] as? String ?? "Action", 12, H.fg)
+            if (info["status"] as? String) == "pending" {
+                HStack(spacing: 8) {
+                    HButton("Apply", primary: true) { onAction(info["id"] as? String ?? "", "apply") }
+                    HButton("Skip") { onAction(info["id"] as? String ?? "", "skip") }
+                }
+            } else { T((info["status"] as? String ?? "").uppercased(), 10, H.muted) }
+        }.padding(10).background(H.surface).overlay(Rectangle().stroke((info["status"] as? String) == "pending" ? H.accent : H.border, lineWidth: 1))
+    }
+}
+
+private struct AssistantFileCard: View {
+    let info: [String: Any]
+    var body: some View {
+        let state = info["state"] as? String ?? "changed"
+        let label = info["label"] as? String ?? "Drive file"
+        let title = state == "read" ? "Read" : state == "created" ? "Created" : state == "deleted" ? "Deleted" : "Changed"
+        AttachmentChip(name: label, mime: "application/octet-stream", note: title + " · " + fmtBytes(info["size"]), onRemove: nil)
     }
 }
 
@@ -387,6 +476,10 @@ private struct Working: View {
     let now: Date
     @Binding var showSteps: Bool
     var body: some View {
+        let tools = current?["tools"] as? [[String: Any]] ?? []
+        let running = tools.reversed().first { ($0["status"] as? String) == "running" }
+        let toolName = (running?["tool"] as? String ?? "").lowercased()
+        let verb = toolName.range(of: "read|get|list", options: .regularExpression) != nil ? "Reading" : toolName.range(of: "search|find", options: .regularExpression) != nil ? "Searching" : toolName.range(of: "edit|write|move|add|update|set|remove|delete|restore", options: .regularExpression) != nil ? "Editing" : running == nil ? "Simmering" : "Running"
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
                 TimelineView(.animation) { tl in
@@ -403,9 +496,9 @@ private struct Working: View {
                     guard let started = (current?["time"] as? Double) ?? (current?["time"] as? Int).map(Double.init), started > 0 else { return "" }
                     return " \(max(0, Int((now.timeIntervalSince1970 * 1000 - started) / 1000))) s"
                 }()
-                T("Working" + secs, 13, H.muted)
+                T(verb + "…" + secs, 13, H.muted)
                 if current != nil {
-                    Button { withAnimation(.easeOut(duration: 0.2)) { showSteps.toggle() } } label: { T((showSteps ? "▴" : "▾") + " What it's doing", 12, H.faint) }
+                    Button { withAnimation(.easeOut(duration: 0.2)) { showSteps.toggle() } } label: { T((showSteps ? "▴ " : "▾ ") + (showSteps ? "Simmering" : "What it's doing") + secs, 12, H.faint) }
                 }
             }
             if showSteps, let steps = current?["steps"] as? [[String: Any]], !steps.isEmpty { StepList(steps: steps) }

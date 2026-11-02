@@ -623,6 +623,28 @@ final class Store: ObservableObject {
         return (try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any] ?? [:]
     }
 
+    // Read-only assistant companion action used by the Drive attachment picker.
+    func assistantAction(_ name: String, _ args: [String: Any] = [:]) async throws -> [String: Any] {
+        guard signedIn, let base = URL(string: server) else {
+            throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "Sign in to use the assistant."])
+        }
+        var req = request(base.appendingPathComponent("api/actions/\(name)"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: args)
+        let r = try await URLSession.shared.data(for: req)
+        try check(r)
+        return (try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any] ?? [:]
+    }
+
+    func assistantMode(_ mode: String) async throws -> [String: Any] {
+        try await assistant("POST", "/mode", ["mode": mode])
+    }
+
+    func assistantActionDecision(_ id: String, _ decision: String) async throws -> [String: Any] {
+        try await assistant("POST", "/actions/\(id)/\(decision)", [:])
+    }
+
     func signIn(email: String, password: String, path: String = "auth/login") async throws {
         guard let base = URL(string: server) else { return }
         var req = URLRequest(url: base.appendingPathComponent(path), timeoutInterval: 15)
