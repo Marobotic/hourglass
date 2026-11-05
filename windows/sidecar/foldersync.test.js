@@ -223,8 +223,10 @@ test("confirmed IDs survive unchanged periodic passes and watcher invalidation i
     assert.deepEqual([...engine.syncState().file_ids].sort(), ["id-a", "id-b"]);
     assert.deepEqual([...engine.syncState().folder_ids].sort(), ["folder-a", "folder-b", "folder-root"]);
 
+    const syncCallsBeforeEdit = syncCalls;
     await writeFile(a, "a real edit with a new size");
     watchChanged("change", "a/one.txt");
+    await waitFor(() => syncCalls > syncCallsBeforeEdit && engine.list()[0].state !== "syncing", 3000);
     await waitFor(() => !engine.syncState().file_ids.includes("id-a"));
     assert.deepEqual(engine.syncState().file_ids, ["id-b"]);
     assert.deepEqual(engine.syncState().folder_ids, ["folder-b"]);
