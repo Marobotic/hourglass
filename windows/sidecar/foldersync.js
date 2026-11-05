@@ -307,6 +307,11 @@ export function fullySyncedIds(pair, local, remote, base = pair.base || {}) {
   return { fileIds, folderIds, filePaths, folderPaths };
 }
 
+const stableJSON = (value) => JSON.stringify(value, (_key, item) =>
+  item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
+    : item);
+
 export function createFolderSync({
   dataDir,
   driveDir,
@@ -379,6 +384,8 @@ export function createFolderSync({
           syncedFolderIds: new Set(),
           syncedFilePaths: new Map(),
           syncedFolderPaths: new Map(),
+          localFileStats: new Map(),
+          directoryContents: new Map(),
         });
       }
     } catch {}
@@ -389,6 +396,7 @@ export function createFolderSync({
     const saved = [...pairs.values()].map(({
       errors, state, pending,
       syncedFileIds, syncedFolderIds, syncedFilePaths, syncedFolderPaths,
+      localFileStats, directoryContents,
       ...pair
     }) => pair);
     writeFileSync(tmp, JSON.stringify(saved, (_key, value) =>
@@ -479,30 +487,77 @@ export function createFolderSync({
     if (!started || stopped) return;
     try {
       watchers.get(pair.id)?.close();
+      async function unchangedFilesystemEvent(path) {
+        const key = path.toLowerCase();
+        if (path) {
+          const prior = pair.localFileStats?.get(key);
+          if (prior) {
+            try {
+              const current = await stat(join(pair.local, ...path.split("/")));
+              return current.size === prior.size && current.mtimeMs === prior.mtimeMs;
+            } catch { return false; }
+          }
+          const contents = pair.directoryContents?.get(key);
+          if (contents) {
+            try {
+              const entries = await readdir(join(pair.local, ...path.split("/")), { withFileTypes: true });
+              const current = entries
+                .filter((entry) => !ignored(entry.name) && (entry.isFile() || entry.isDirectory())
+                  && !within(driveDir, join(pair.local, ...path.split("/"), entry.name)))
+                .map((entry) => entry.name.toLowerCase())
+                .sort();
+              return current.length === contents.length && current.every((name, index) => name === contents[index]);
+            } catch { return false; }
+          }
+          return false;
+        }
+
+        // A null filename can mean the watcher overflowed. Only ignore it if
+        // the full content snapshot still matches, including file mtimes.
+        const rootContents = pair.directoryContents?.get("");
+        if (!rootContents) return false;
+        try {
+          const entries = await readdir(pair.local, { withFileTypes: true });
+          const current = entries
+            .filter((entry) => !ignored(entry.name) && (entry.isFile() || entry.isDirectory())
+              && !within(driveDir, join(pair.local, entry.name)))
+            .map((entry) => entry.name.toLowerCase())
+            .sort();
+          if (current.length !== rootContents.length || !current.every((name, index) => name === rootContents[index])) return false;
+          for (const [relativePath, prior] of pair.localFileStats || []) {
+            const item = await stat(join(pair.local, ...relativePath.split("/"))).catch(() => null);
+            if (!item || item.size !== prior.size || item.mtimeMs !== prior.mtimeMs) return false;
+          }
+          return true;
+        } catch { return false; }
+      }
       const watcher = watchFactory(pair.local, { recursive: true }, (_event, filename) => {
         const path = filename == null ? "" : String(filename).replace(/\\/g, "/").replace(/^\.\//, "");
-        if (!path) {
-          pair.syncedFilePaths = new Map();
-          pair.syncedFolderPaths = new Map();
-        } else {
-          const knownFiles = pair.syncedFilePaths || new Map();
-          const knownFolders = pair.syncedFolderPaths || new Map();
-          const directory = knownFolders.has(path)
-            || [...knownFiles.keys(), ...knownFolders.keys()].some((item) => item.startsWith(`${path}/`));
-          for (const item of knownFiles.keys()) {
-            if (item === path || (directory && item.startsWith(`${path}/`))) knownFiles.delete(item);
+        void unchangedFilesystemEvent(path).then((unchanged) => {
+          if (unchanged || stopped || !pairs.has(pair.id)) return;
+          if (!path) {
+            pair.syncedFilePaths = new Map();
+            pair.syncedFolderPaths = new Map();
+          } else {
+            const knownFiles = pair.syncedFilePaths || new Map();
+            const knownFolders = pair.syncedFolderPaths || new Map();
+            const directory = knownFolders.has(path)
+              || [...knownFiles.keys(), ...knownFolders.keys()].some((item) => item.startsWith(`${path}/`));
+            for (const item of knownFiles.keys()) {
+              if (item === path || (directory && item.startsWith(`${path}/`))) knownFiles.delete(item);
+            }
+            for (const item of knownFolders.keys()) {
+              const ancestor = !item || path === item || path.startsWith(`${item}/`);
+              if (ancestor || (directory && item.startsWith(`${path}/`))) knownFolders.delete(item);
+            }
+            pair.syncedFilePaths = knownFiles;
+            pair.syncedFolderPaths = knownFolders;
           }
-          for (const item of knownFolders.keys()) {
-            const ancestor = !item || path === item || path.startsWith(`${item}/`);
-            if (ancestor || (directory && item.startsWith(`${path}/`))) knownFolders.delete(item);
-          }
-          pair.syncedFilePaths = knownFiles;
-          pair.syncedFolderPaths = knownFolders;
-        }
-        pair.syncedFileIds = new Set(pair.syncedFilePaths?.values() || []);
-        pair.syncedFolderIds = new Set(pair.syncedFolderPaths?.values() || []);
-        rebuildSyncStateCache();
-        schedule(pair, 2000);
+          pair.syncedFileIds = new Set(pair.syncedFilePaths?.values() || []);
+          pair.syncedFolderIds = new Set(pair.syncedFolderPaths?.values() || []);
+          rebuildSyncStateCache();
+          schedule(pair, 2000);
+        }).catch(() => schedule(pair, 2000));
       });
       watcher.on("error", (error) => pause(pair, "root_unreadable", error.message));
       watchers.set(pair.id, watcher);
@@ -526,10 +581,16 @@ export function createFolderSync({
   async function scan(root, prior = {}) {
     const files = {};
     const folders = {};
+    const directoryContents = new Map();
     const pending = [];
 
     async function walk(directory, relPath = "") {
       const entries = await readdir(directory, { withFileTypes: true });
+      directoryContents.set(relPath.toLowerCase(), entries
+        .filter((entry) => !ignored(entry.name) && (entry.isFile() || entry.isDirectory())
+          && !within(driveDir, join(directory, entry.name)))
+        .map((entry) => entry.name.toLowerCase())
+        .sort());
       for (const entry of entries) {
         if (ignored(entry.name)) continue;
         const absolute = join(directory, entry.name);
@@ -579,7 +640,7 @@ export function createFolderSync({
     }
 
     await walk(root);
-    return { files, folders, pending };
+    return { files, folders, pending, directoryContents };
   }
 
   function remoteTree(folderId, courseId = null) {
@@ -969,16 +1030,21 @@ export function createFolderSync({
           base.files[path] = pair.base.files[path];
         }
       }
+      const baseChanged = stableJSON(base) !== stableJSON(pair.base || {});
       pair.base = base;
       const synced = fullySyncedIds(pair, afterLocal, remote, base);
       pair.syncedFileIds = synced.fileIds;
       pair.syncedFolderIds = synced.folderIds;
       pair.syncedFilePaths = synced.filePaths;
       pair.syncedFolderPaths = synced.folderPaths;
+      pair.localFileStats = new Map(Object.entries(afterLocal.files).map(([path, item]) => [
+        path.toLowerCase(), { size: item.size, mtimeMs: item.mtime },
+      ]));
+      pair.directoryContents = afterLocal.directoryContents;
       pair.last_sync = clock();
       pair.state = pair.errors.length ? "error" : "idle";
       pair.reason = null;
-      save();
+      if (baseChanged) save();
       rebuildSyncStateCache();
       if (local.pending.length || afterLocal.pending.length) schedule(pair, 2000);
     } catch (error) {
@@ -993,6 +1059,8 @@ export function createFolderSync({
         pair.syncedFolderIds = new Set();
         pair.syncedFilePaths = new Map();
         pair.syncedFolderPaths = new Map();
+        pair.localFileStats = new Map();
+        pair.directoryContents = new Map();
         pair.state = "error";
         pair.errors = [{ path: pair.local, error: error.message }];
         emit(pair);
@@ -1067,6 +1135,8 @@ export function createFolderSync({
       last_sync: null,
       mode: "two-way",
       course_id: null,
+      localFileStats: new Map(),
+      directoryContents: new Map(),
     };
     pairs.set(pair.id, pair);
     rebuildSyncStateCache();
@@ -1084,6 +1154,7 @@ export function createFolderSync({
     const pair = {
       id: randomUUID(), local: resolve(localRoot), folder_id: folderId, course_id: courseId,
       mode: "pull", paused: false, base: { files: {}, folders: {} }, state: "idle", errors: [], last_sync: null,
+      localFileStats: new Map(), directoryContents: new Map(),
     };
     pairs.set(pair.id, pair);
     rebuildSyncStateCache();

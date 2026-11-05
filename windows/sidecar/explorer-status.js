@@ -45,6 +45,7 @@ export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, en
   const exe = join(sidecarDir, "..", "bin", "hourglass-shell.exe");
   const icon = join(sidecarDir, "..", "hourglass.ico");
   const registered = new Map();
+  const lastListings = new Map();
   let connection = null, signature = "", starting = null, stopping = false;
   let requestQueue = Promise.resolve();
   const errorCachePath = join(dataDir, "explorer-status-errors.json");
@@ -92,11 +93,43 @@ export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, en
       const listing = await makeStatusListing(pair);
       const cache = await errorCache;
       const currentErrors = listing.errors || [];
-      const currentSet = new Set(currentErrors.map((path) => path.toLowerCase()));
-      const existing = new Set([...listing.in_sync, ...listing.not_in_sync].map((path) => path.toLowerCase()));
-      const clearErrors = (cache[pair.id] || []).filter((path) => existing.has(path.toLowerCase()) && !currentSet.has(path.toLowerCase()));
-      if (clearErrors.length) listing.clear_errors = clearErrors;
-      await writeFile(json, JSON.stringify(listing), "utf8");
+      const keyOf = (path) => path.replaceAll("\\", "/").toLowerCase();
+      const currentErrorsByKey = new Set(currentErrors.map(keyOf));
+      const existing = new Set([...listing.in_sync, ...listing.not_in_sync].map(keyOf));
+      const previousErrors = new Set((cache[pair.id] || []).map(keyOf));
+      const clearErrors = (cache[pair.id] || []).filter((path) => existing.has(keyOf(path)) && !currentErrorsByKey.has(keyOf(path)));
+      const setErrors = currentErrors.filter((path) => !previousErrors.has(keyOf(path)));
+      const currentStates = new Map();
+      for (const path of listing.in_sync) currentStates.set(keyOf(path), { path, inSync: true });
+      for (const path of listing.not_in_sync) currentStates.set(keyOf(path), { path, inSync: false });
+      const previousStates = lastListings.get(pair.id);
+      const delta = { in_sync: [], not_in_sync: [] };
+      for (const [key, item] of currentStates) {
+        if (!previousStates || previousStates.get(key)?.inSync !== item.inSync) {
+          delta[item.inSync ? "in_sync" : "not_in_sync"].push(item.path);
+        }
+      }
+      // Setting an error icon requires the item itself in the request, even if
+      // its in-sync classification was already not_in_sync.
+      for (const path of setErrors) {
+        const item = currentStates.get(keyOf(path));
+        if (item && previousStates?.get(keyOf(path))?.inSync === item.inSync) {
+          delta[item.inSync ? "in_sync" : "not_in_sync"].push(item.path);
+        }
+      }
+      if (setErrors.length) delta.errors = setErrors;
+      if (clearErrors.length) delta.clear_errors = clearErrors;
+      if (!delta.in_sync.length && !delta.not_in_sync.length && !delta.errors?.length && !delta.clear_errors?.length) {
+        if (JSON.stringify(cache[pair.id] || []) !== JSON.stringify(currentErrors)) {
+          cache[pair.id] = currentErrors;
+          const cacheTemp = `${errorCachePath}.${randomUUID()}.tmp`;
+          await writeFile(cacheTemp, JSON.stringify(cache), "utf8");
+          await rename(cacheTemp, errorCachePath);
+        }
+        lastListings.set(pair.id, currentStates);
+        return true;
+      }
+      await writeFile(json, JSON.stringify(delta), "utf8");
       await writeFile(request, JSON.stringify({ pair: pair.id, id: requestId, json }), "utf8");
       const requestTimeout = Math.max(30000, Number(env.HOURGLASS_EXPLORER_STATUS_TIMEOUT_MS) || 600000);
       const deadline = Date.now() + requestTimeout;
@@ -108,7 +141,8 @@ export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, en
           const cacheTemp = `${errorCachePath}.${randomUUID()}.tmp`;
           await writeFile(cacheTemp, JSON.stringify(cache), "utf8");
           await rename(cacheTemp, errorCachePath);
-          logger("Explorer sync status updated", pair.id, JSON.stringify(result));
+          lastListings.set(pair.id, currentStates);
+          logger("Explorer sync status updated", pair.id, `updated ${Number(result.updated) || 0}, errors ${result.errors?.length || 0}`);
           return true;
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
@@ -188,6 +222,7 @@ export function createExplorerStatus({ dataDir = tmpdir(), sidecarDir = here, en
     try {
       if (registered.has(id)) await call(["unregister", "--pair", id]);
       registered.delete(id);
+      lastListings.delete(id);
       if (registered.size) await startServe();
       return true;
     } catch (error) { logger("Explorer sync root unregister failed", id, error.message); return false; }

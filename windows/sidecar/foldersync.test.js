@@ -216,11 +216,80 @@ test("confirmed IDs survive unchanged periodic passes and watcher invalidation i
     await waitFor(() => syncCalls >= 4 && engine.list()[0].state !== "syncing");
     assert.deepEqual([...engine.syncState().file_ids].sort(), ["id-a", "id-b"]);
 
+    // Cloud Files status updates change attributes, not content. The watcher
+    // must leave the confirmed sync maps alone for those notifications.
     watchChanged("change", "a/one.txt");
+    await pause(50);
+    assert.deepEqual([...engine.syncState().file_ids].sort(), ["id-a", "id-b"]);
+    assert.deepEqual([...engine.syncState().folder_ids].sort(), ["folder-a", "folder-b", "folder-root"]);
+
+    await writeFile(a, "a real edit with a new size");
+    watchChanged("change", "a/one.txt");
+    await waitFor(() => !engine.syncState().file_ids.includes("id-a"));
     assert.deepEqual(engine.syncState().file_ids, ["id-b"]);
     assert.deepEqual(engine.syncState().folder_ids, ["folder-b"]);
-    watchChanged("rename", null);
-    assert.deepEqual(engine.syncState(), { file_ids: [], folder_ids: [] });
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("an unchanged pass does not rewrite syncfolders.json", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-noop-save-"));
+  const root = join(temp, "local");
+  const data = join(temp, "data");
+  await mkdir(root);
+  const engine = createFolderSync({
+    dataDir: data, driveDir: join(temp, "drive"),
+    getRows: () => ({ folders: [{ id: "folder-root", name: "Drive" }], files: [] }),
+    syncOnce: async () => {}, upload: async () => {}, download: async () => {}, removeLocal: async () => {},
+    watchFactory: fakeWatch,
+  });
+  try {
+    const pair = engine.add(root, "folder-root");
+    await waitFor(() => engine.list()[0].last_sync !== null);
+    const file = join(data, "syncfolders.json");
+    const before = await stat(file);
+    await engine.run(pair.id);
+    const after = await stat(file);
+    assert.equal(after.mtimeMs, before.mtimeMs);
+  } finally {
+    engine.stop();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("attribute-only watcher events are ignored while a real edit still schedules a pass", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "hg-folder-watch-attributes-"));
+  const root = join(temp, "local");
+  await mkdir(root);
+  const target = join(root, "known.txt");
+  await writeFile(target, "stable contents");
+  const sha256 = createHash("sha256").update("stable contents").digest("hex");
+  let watchChanged;
+  let passStarts = 0;
+  const engine = createFolderSync({
+    dataDir: join(temp, "data"), driveDir: join(temp, "drive"),
+    getRows: () => ({ folders: [{ id: "folder-root", name: "Drive" }], files: [
+      { id: "known-file", name: "known.txt", folder_id: "folder-root", sha256 },
+    ] }),
+    syncOnce: async () => {}, upload: async () => {}, download: async () => {}, removeLocal: async () => {},
+    signedIn: () => true,
+    onState: (state) => { if (state.state === "syncing") passStarts++; },
+    watchFactory: (_path, _options, callback) => { watchChanged = callback; return fakeWatch(); },
+  });
+  try {
+    engine.add(root, "folder-root");
+    await waitFor(() => engine.list()[0].last_sync !== null);
+    const initialPasses = passStarts;
+    watchChanged("change", "known.txt");
+    await pause(150);
+    assert.equal(passStarts, initialPasses, "an attribute-only event does not start a sync pass");
+
+    await writeFile(target, "contents changed for real");
+    watchChanged("change", "known.txt");
+    await waitFor(() => passStarts > initialPasses, 3000);
+    assert.ok(passStarts > initialPasses, "a real edit still schedules a sync pass");
   } finally {
     engine.stop();
     await rm(temp, { recursive: true, force: true });

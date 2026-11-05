@@ -386,13 +386,42 @@ New-ItemProperty -Path $nav.PSPath -Name 'SortOrderIndex' -Value 65 -PropertyTyp
         Ok(Handle(handle))
     }
 
-    fn set_item(path: &Path, in_sync: bool) -> windows::core::Result<bool> {
+    #[derive(Debug, PartialEq, Eq)]
+    enum SetItemResult {
+        Changed,
+        Unchanged,
+        Skipped,
+    }
+
+    fn current_in_sync_state(handle: HANDLE) -> windows::core::Result<Option<bool>> {
+        let mut info = CF_PLACEHOLDER_BASIC_INFO::default();
+        match unsafe {
+            CfGetPlaceholderInfo(
+                handle,
+                CF_PLACEHOLDER_INFO_BASIC,
+                (&mut info as *mut CF_PLACEHOLDER_BASIC_INFO).cast(),
+                std::mem::size_of::<CF_PLACEHOLDER_BASIC_INFO>() as u32,
+                None,
+            )
+        } {
+            Ok(()) => Ok(Some(info.InSyncState == CF_IN_SYNC_STATE_IN_SYNC)),
+            // An ordinary file inside a sync root has not been converted to a
+            // Cloud Files placeholder yet. It still needs the conversion path.
+            Err(error) if error.code().0 as u32 == 0x8007_0178 => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn set_item(path: &Path, in_sync: bool) -> windows::core::Result<SetItemResult> {
         let meta =
             std::fs::symlink_metadata(path).map_err(|_| windows::core::Error::from_thread())?;
         if meta.file_type().is_symlink() {
-            return Ok(false);
+            return Ok(SetItemResult::Skipped);
         }
         let mut handle = open_item(path, meta.is_dir())?;
+        if current_in_sync_state(handle.0)? == Some(in_sync) {
+            return Ok(SetItemResult::Unchanged);
+        }
         let state = if in_sync {
             CF_IN_SYNC_STATE_IN_SYNC
         } else {
@@ -438,28 +467,7 @@ New-ItemProperty -Path $nav.PSPath -Name 'SortOrderIndex' -Value 65 -PropertyTyp
                 None,
             );
         }
-        Ok(true)
-    }
-
-    fn read_item_state(path: &Path) -> windows::core::Result<ItemState> {
-        let meta =
-            std::fs::symlink_metadata(path).map_err(|_| windows::core::Error::from_thread())?;
-        let handle = open_item(path, meta.is_dir())?;
-        let mut info = CF_PLACEHOLDER_BASIC_INFO::default();
-        unsafe {
-            CfGetPlaceholderInfo(
-                handle.0,
-                CF_PLACEHOLDER_INFO_BASIC,
-                (&mut info as *mut CF_PLACEHOLDER_BASIC_INFO).cast(),
-                std::mem::size_of::<CF_PLACEHOLDER_BASIC_INFO>() as u32,
-                None,
-            )?;
-        }
-        Ok(ItemState {
-            path: path.to_string_lossy().into_owned(),
-            in_sync: info.InSyncState == CF_IN_SYNC_STATE_IN_SYNC,
-            pin_state: info.PinState.0,
-        })
+        Ok(SetItemResult::Changed)
     }
 
     fn pin_root(path: &str) -> windows::core::Result<ResultJson> {
@@ -855,19 +863,13 @@ Remove-Item -LiteralPath ('HKCU:\Software\Classes\CLSID\' + $clsid) -Recurse -Fo
         }
         items.sort_by_key(|(path, _, _)| path.components().count());
         let mut converted = 0usize;
-        let mut states = Vec::new();
         for (target, in_sync, relative) in items {
             match set_item(&target, in_sync) {
-                Ok(true) => {
+                Ok(SetItemResult::Changed) => {
                     converted += 1;
-                    match read_item_state(&target) {
-                        Ok(state) => states.push(state),
-                        Err(error) => {
-                            errors.push(format!("{}: read state: {error}", target.display()))
-                        }
-                    }
                 }
-                Ok(false) => errors.push(format!(
+                Ok(SetItemResult::Unchanged) => {}
+                Ok(SetItemResult::Skipped) => errors.push(format!(
                     "{}: skipped symbolic link or another provider's reparse point",
                     target.display()
                 )),
@@ -885,7 +887,7 @@ Remove-Item -LiteralPath ('HKCU:\Software\Classes\CLSID\' + $clsid) -Recurse -Fo
             path: Some(root.to_string_lossy().into_owned()),
             roots: None,
             updated: Some(converted),
-            states: Some(states),
+            states: None,
             errors: (!errors.is_empty()).then_some(errors),
         })
     }

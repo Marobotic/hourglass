@@ -61,6 +61,7 @@ test("helper receives register, per-file status JSON and unregister calls", asyn
     pair.errors = [];
     await helper.status(pair);
     await helper.status(pair2);
+    await helper.status(pair2);
     await helper.shutdown();
     await helper.unregister(pair);
     await helper.unregister(pair2);

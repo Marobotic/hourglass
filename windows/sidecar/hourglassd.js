@@ -1127,6 +1127,7 @@ async function uploadFolderFile(file, { name, folder_id, existing }) {
     if (!response.ok) throw new Error(row.error || `upload failed (${response.status})`);
     endUpload(upload);
     store.write("files", row, { mode: "remote" });
+    log("sync upload complete", name, `${size} bytes`);
     return row;
   } catch (error) {
     endUpload(upload, error.message);
