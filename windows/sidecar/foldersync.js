@@ -323,7 +323,9 @@ export function createFolderSync({
   onPassComplete = () => {},
   onStarted = () => {},
   watchFactory = watch,
-  intervalMs = 30000,
+  // Recursive fs.watch handles normal local edits immediately. Keep a slower
+  // full scan as recovery for dropped or unsupported filesystem notifications.
+  intervalMs = 5 * 60 * 1000,
   clock = () => Date.now(),
   deferStart = false,
 }) {

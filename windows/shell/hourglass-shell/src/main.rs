@@ -586,7 +586,10 @@ New-ItemProperty -Path $nav.PSPath -Name 'SortOrderIndex' -Value 65 -PropertyTyp
                     let _ = std::fs::rename(&temp_path, &response_path);
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // Requests are infrequent and the sidecar waits up to ten minutes
+            // for a response. Avoid waking ten times a second just to ask
+            // Windows whether a request file exists.
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
 

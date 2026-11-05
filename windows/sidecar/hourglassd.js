@@ -836,11 +836,11 @@ async function watchDrive() {
     watching = false;
   }
 }
-// Every few seconds the copies this PC has are checked; with none there is
-// nothing that could have changed here, so the tick is free.
+// Cached Drive files are user-edited outside Hourglass. Check them every 30
+// seconds; folder sync itself is driven by fs.watch below.
 setInterval(() => {
   if (Object.keys(index).length) watchDrive().catch((e) => log("drive watch:", e.message));
-}, 3000);
+}, 30000);
 
 // GET /thumbs/<id>?k=<FILE_KEY>[&size=big]: a small JPEG for the file list
 // (big: 480 px, for the gallery), made on the server, so listing a folder never
