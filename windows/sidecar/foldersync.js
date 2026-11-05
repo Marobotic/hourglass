@@ -875,6 +875,7 @@ export function createFolderSync({
     pair.errors = [];
     pair.pending = 0;
     emit(pair);
+    let passCompleted = false;
 
     try {
       if (!existsSync(pair.local)) {
@@ -1044,6 +1045,7 @@ export function createFolderSync({
       pair.last_sync = clock();
       pair.state = pair.errors.length ? "error" : "idle";
       pair.reason = null;
+      passCompleted = true;
       if (baseChanged) save();
       rebuildSyncStateCache();
       if (local.pending.length || afterLocal.pending.length) schedule(pair, 2000);
@@ -1070,7 +1072,7 @@ export function createFolderSync({
       running.delete(id);
       emit(pair);
       runQueuedResolution();
-      Promise.resolve(onPassComplete(pair)).catch(() => {});
+      Promise.resolve(onPassComplete(pair, { completed: passCompleted })).catch(() => {});
     }
   }
 

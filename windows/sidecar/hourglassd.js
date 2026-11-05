@@ -1192,8 +1192,12 @@ const explorerStatus = createExplorerStatus({ dataDir: DATA_DIR, logger: (...arg
 function scheduleExplorerPair(pair, register = false) {
   if (!explorerStatus.enabled) return;
   void (async () => {
-    if (register && !await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) return;
-    if (register && pair.mode === "pull") await explorerStatus.registerNavigation(coursesRootForPair(pair));
+    if (register) {
+      if (!await explorerStatus.register({ ...pair, name: explorerPairLabel(pair) })) return;
+      if (pair.mode === "pull") await explorerStatus.registerNavigation(coursesRootForPair(pair));
+      await explorerStatus.connect(pair);
+      return;
+    }
     if (await explorerStatus.connect(pair)) await explorerStatus.status(pair);
   })().catch((error) => log("Explorer sync status task failed", pair.id, error.message));
 }
@@ -1209,9 +1213,7 @@ function scheduleExplorerStartup(pairs) {
         if (pair.mode === "pull") await explorerStatus.registerNavigation(coursesRootForPair(pair));
       }
     }
-    if (registered.length && await explorerStatus.connect(registered[0])) {
-      for (const pair of registered) await explorerStatus.status(pair);
-    }
+    if (registered.length) await explorerStatus.connect(registered[0]);
   })().catch((error) => log("Explorer sync startup failed", error.message));
 }
 const explorerPairLabel = (pair) => pair.mode === "pull"
@@ -1236,7 +1238,7 @@ const folderSync = createFolderSync({
   deviceName: () => decodeURIComponent(deviceName()),
   signedIn: () => !!config().token && sync.state === "synced",
   onPairAdded: (pair) => scheduleExplorerPair(pair, true),
-  onPassComplete: (pair) => scheduleExplorerPair(pair),
+  onPassComplete: (pair, outcome) => outcome?.completed && scheduleExplorerPair(pair),
   onStarted: (pairs) => scheduleExplorerStartup(pairs),
   maxFile: async () => (await remote("/api/drive/usage")).max_file || Infinity,
   deferStart: true,

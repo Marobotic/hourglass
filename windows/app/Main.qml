@@ -402,7 +402,6 @@ ApplicationWindow {
                             spacing: 2
                             Text {
                                 text: "● LIVE"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.Bold; font.letterSpacing: 1
-                                SequentialAnimation on opacity { running: liveCard.visible && app.inUse; loops: Animation.Infinite; NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine } NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine } }
                             }
                             Text { Layout.fillWidth: true; text: parent.parent.a ? parent.parent.a.title : ""; color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 14 }
                         }
@@ -487,29 +486,8 @@ ApplicationWindow {
                             id: syncDot
                             width: 7; height: 7; radius: 0
                             color: parent.st === "synced" ? Theme.teal : parent.st === "offline" ? Theme.orange : Theme.faint
-                            // Synced: a ring ripples out now and then. Offline: the dot blinks.
-                            // Both only while someone is looking at the window.
-                            Rectangle {
-                                id: ripple
-                                anchors.centerIn: parent
-                                width: 7; height: 7
-                                color: "transparent"; border.width: 1; border.color: syncDot.color
-                                opacity: 0
-                                SequentialAnimation {
-                                    running: syncDot.parent.st === "synced" && app.inUse
-                                    loops: Animation.Infinite
-                                    ParallelAnimation {
-                                        NumberAnimation { target: ripple; property: "scale"; from: 1; to: 2.8; duration: 1100; easing.type: Easing.OutCubic }
-                                        NumberAnimation { target: ripple; property: "opacity"; from: 0.8; to: 0; duration: 1100 }
-                                    }
-                                    PauseAnimation { duration: 1800 }
-                                }
-                            }
-                            SequentialAnimation on opacity {
-                                running: syncDot.parent.st === "offline" && app.inUse
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
-                            }
+                            // Keep sync status static; perpetual status animation
+                            // kept the visible window rendering while otherwise idle.
                         }
                         Text {
                             visible: !app.narrow
