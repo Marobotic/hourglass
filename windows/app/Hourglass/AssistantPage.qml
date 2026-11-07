@@ -30,6 +30,10 @@ Item {
     property string chatJson: ""     // what `chat` was made from: a poll that changed nothing rebuilds nothing
     property var attachments: []     // [{ key, name, mime, id?, error? }] waiting to be sent
     property var info: null          // { thumb_base, key }: previews of attached pictures
+    property var modelSettings: null
+    property var modelChoices: []
+    property string modelError: ""
+    property bool modelsLoading: false
     readonly property bool uploading: attachments.some(a => !a.id && !a.error)
 
     readonly property bool busy: sending || chat.busy || pending !== ""
@@ -245,6 +249,37 @@ Item {
         if (page.chat.engine === "openai") return "API · " + (m || "pick a model");
         return "Free · " + (shortName || "auto");
     }
+    function modelLabel(m) {
+        let label = m.name || m.id;
+        if (m.note) label += "  · " + m.note;
+        if (m.supports_tools === false) label += "  · tools unsupported";
+        if (m.context_window) label += "  · " + (m.context_window >= 1000000 ? (m.context_window / 1000000).toFixed(1).replace(/\.0$/, "") + "M" : Math.round(m.context_window / 1000) + "k");
+        return label;
+    }
+    function openModelMenu() {
+        modelError = ""; modelChoices = []; modelsLoading = true;
+        modelSettings = null; modelMenu.open();
+        Api.request("GET", "/api/assistant/settings", null, (d, err) => {
+            if (!d) { modelError = err || "Could not load models."; modelsLoading = false; return; }
+            modelSettings = d;
+            if (d.engine === "free") { modelChoices = d.free_models || []; modelsLoading = false; }
+            else if (d.engine === "claude" || d.engine === "anthropic") { modelChoices = d.claude_models || []; modelsLoading = false; }
+            else Api.request("GET", "/api/assistant/models?base_url=" + encodeURIComponent(d.base_url || ""), null, (m, modelErr) => {
+                modelChoices = m && m.models ? m.models : [];
+                modelError = m && m.error ? m.error : modelErr || "";
+                modelsLoading = false;
+            }, true);
+        }, true);
+    }
+    function selectModel(id) {
+        const body = { engine: modelSettings.engine, model: id };
+        if (modelSettings.engine === "openai") body.base_url = modelSettings.base_url;
+        modelError = "";
+        Api.request("POST", "/api/assistant/settings", body, (d, err) => {
+            if (!d) { modelError = err || "Could not save the model."; return; }
+            modelMenu.close(); page.load();
+        }, true);
+    }
     function usageCaption(u) {
         if (!u) return "";
         const parts = [];
@@ -264,17 +299,37 @@ Item {
 
     Popup {
         id: modelMenu
-        width: 300; padding: 10
+        parent: modelChip; x: 0; y: -height - 6   // above the chip
+        width: 340; height: Math.min(460, modelMenuList.implicitHeight + 20); padding: 10
         background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: 4 }
-        ColumnLayout {
-            width: parent.width; spacing: 8
-            Text { text: "MODEL"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 10; font.letterSpacing: 1.2 }
-            Text { text: page.engineLabel(); color: Theme.fg; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 13 }
-            Btn { Layout.fillWidth: true; text: "Model and provider settings…"; icon: "gear"; onClicked: { modelMenu.close(); aiSettings.open(); } }
+        ScrollView {
+            anchors.fill: parent; clip: true
+            ColumnLayout {
+                id: modelMenuList
+                width: modelMenu.width - 20; spacing: 3
+                Text { text: "MODEL · " + (page.modelSettings ? page.modelSettings.engine.toUpperCase() : ""); color: Theme.faint; font.family: Theme.mono; font.pixelSize: 10; font.letterSpacing: 1.2 }
+                Text { visible: page.modelsLoading; text: "Loading models…"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                Text { visible: !page.modelsLoading && page.modelChoices.length === 0 && page.modelError === ""; text: "No models available."; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
+                Repeater {
+                    model: page.modelChoices
+                    delegate: Rectangle {
+                        required property var modelData
+                        Layout.fillWidth: true; implicitHeight: 42
+                        color: modelChoiceHover.containsMouse ? Theme.surface2 : "transparent"
+                        Text { anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 8; anchors.rightMargin: 28; text: page.modelLabel(modelData); color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
+                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 8; text: "✓"; visible: page.modelSettings && (page.modelSettings.model || (page.modelChoices[0] || {}).id) === modelData.id; color: Theme.accent; font.pixelSize: 15 }
+                        MouseArea { id: modelChoiceHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.selectModel(modelData.id) }
+                    }
+                }
+                Text { visible: page.modelError !== ""; text: page.modelError; color: Theme.accent; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 12 }
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                Btn { Layout.fillWidth: true; text: "Change AI…"; icon: "gear"; onClicked: { modelMenu.close(); aiSettings.open(); } }
+            }
         }
     }
     Popup {
         id: modeMenu
+        parent: modeChip; x: 0; y: -height - 6
         width: 250; padding: 6
         background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: 4 }
         ColumnLayout {
@@ -818,12 +873,14 @@ Item {
             Layout.fillWidth: true
             spacing: 8
             Rectangle {
+                id: modelChip
                 implicitWidth: Math.min(300, modelChipLabel.implicitWidth + 20); implicitHeight: 30
                 color: Theme.surface2; border.width: 1; border.color: modelHover.containsMouse ? Theme.accent : Theme.border
                 Text { id: modelChipLabel; anchors.centerIn: parent; text: page.engineLabel() + "  ▾"; color: Theme.fg; elide: Text.ElideRight; width: Math.min(270, implicitWidth); font.family: Theme.mono; font.pixelSize: 11 }
-                MouseArea { id: modelHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: modelMenu.open() }
+                MouseArea { id: modelHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.openModelMenu() }
             }
             Rectangle {
+                id: modeChip
                 implicitWidth: modeChipLabel.implicitWidth + 22; implicitHeight: 30
                 color: page.mode === "dangerous" ? Theme.accent : Theme.surface2
                 border.width: 1; border.color: page.mode === "dangerous" ? Theme.accent : modeHoverChip.containsMouse ? Theme.accent : Theme.border
