@@ -38,7 +38,7 @@
 // account. The key is the server's own, separate from the user's AI link.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chownSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { opencodeAccountDirectories, opencodeAccountOwnedPaths, opencodeProfileEnv, opencodeRunArgs, parseOpencodeModels } from "./opencode.js";
 import { isSharedFreeQuotaError, normalizeEngineError } from "./engine-errors.js";
@@ -374,7 +374,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
 
   // --- running opencode ---------------------------------------------------------
 
-  function command(dirs, unit, args, program = bin, env = opencodeProfileEnv(dirs)) {
+  function command(dirs, unit, args, program = bin, env = opencodeProfileEnv(dirs), visible = []) {
     const viaNode = /\.m?js$/.test(program);
     const exe = viaNode ? process.execPath : program;
     const exeArgs = viaNode ? [program, ...args] : args;
@@ -384,9 +384,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const p = [
       `User=${SANDBOX_USER}`, `Group=${SANDBOX_USER}`,
       ...Object.entries(env).map(([k, v]) => `Environment=${k}=${v}`), `WorkingDirectory=${dirs.work}`,
-      // Only this account's folder exists under /var/lib; /opt and homes are hidden.
+      // Only this account's folder exists under /var/lib; /opt is empty but for the
+      // programs the run needs (Claude Code is installed there), and homes are hidden.
       "TemporaryFileSystem=/var/lib", `BindPaths=${dirs.dir}`, `ReadWritePaths=${dirs.dir}`,
-      "InaccessiblePaths=-/opt", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "PrivateDevices=yes",
+      "TemporaryFileSystem=/opt:ro", ...visible.map((v) => `BindReadOnlyPaths=${v}`), "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "PrivateDevices=yes",
       "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectControlGroups=yes",
       // Nothing on localhost but DNS: Hourglass is reached through its public URL.
       "IPAddressDeny=localhost", "IPAddressAllow=127.0.0.53",
@@ -560,7 +561,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
     // A tiny shell reads the token into the environment, then becomes Claude Code.
     const sh = `CLAUDE_CODE_OAUTH_TOKEN="$(cat ${JSON.stringify(tokenFile)})" exec "$0" "$@"`;
-    const { file, args: cmdArgs, options } = command(dirs, unit, ["-c", sh, claudeBin, ...args], "/bin/sh", env);
+    const { file, args: cmdArgs, options } = command(dirs, unit, ["-c", sh, claudeBin, ...args], "/bin/sh", env, claudeInstallDirs());
     return new Promise((resolve) => {
       const child = spawn(file, cmdArgs, { ...options, stdio: ["pipe", "pipe", "pipe"] });
       const entry = running.get(t.email);
@@ -943,6 +944,11 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     }
     return { start, exchange, status, beginChecking, fail, connected, cancel };
   })();
+
+  // Claude Code installed under /opt (e.g. /opt/claude-latest): the sandbox sees that folder, read-only.
+  function claudeInstallDirs() {
+    try { const m = realpathSync(claudeBin).match(/^\/opt\/[^/]+/); return m ? [m[0]] : []; } catch { return []; }
+  }
 
   function childHasExited(child) { return child.exitCode !== null || child.signalCode !== null; }
 
