@@ -299,6 +299,7 @@ Item {
 
     Popup {
         id: modelMenu
+        parent: modelChip; x: 0; y: -height - 6   // above the chip
         width: 340; height: Math.min(460, modelMenuList.implicitHeight + 20); padding: 10
         background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: 4 }
         ScrollView {
@@ -316,7 +317,7 @@ Item {
                         Layout.fillWidth: true; implicitHeight: 42
                         color: modelChoiceHover.containsMouse ? Theme.surface2 : "transparent"
                         Text { anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 8; anchors.rightMargin: 28; text: page.modelLabel(modelData); color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
-                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 8; text: "✓"; visible: page.modelSettings && page.modelSettings.model === modelData.id; color: Theme.accent; font.pixelSize: 15 }
+                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 8; text: "✓"; visible: page.modelSettings && (page.modelSettings.model || (page.modelChoices[0] || {}).id) === modelData.id; color: Theme.accent; font.pixelSize: 15 }
                         MouseArea { id: modelChoiceHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.selectModel(modelData.id) }
                     }
                 }
@@ -328,6 +329,7 @@ Item {
     }
     Popup {
         id: modeMenu
+        parent: modeChip; x: 0; y: -height - 6
         width: 250; padding: 6
         background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: 4 }
         ColumnLayout {
@@ -871,12 +873,14 @@ Item {
             Layout.fillWidth: true
             spacing: 8
             Rectangle {
+                id: modelChip
                 implicitWidth: Math.min(300, modelChipLabel.implicitWidth + 20); implicitHeight: 30
                 color: Theme.surface2; border.width: 1; border.color: modelHover.containsMouse ? Theme.accent : Theme.border
                 Text { id: modelChipLabel; anchors.centerIn: parent; text: page.engineLabel() + "  ▾"; color: Theme.fg; elide: Text.ElideRight; width: Math.min(270, implicitWidth); font.family: Theme.mono; font.pixelSize: 11 }
                 MouseArea { id: modelHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.openModelMenu() }
             }
             Rectangle {
+                id: modeChip
                 implicitWidth: modeChipLabel.implicitWidth + 22; implicitHeight: 30
                 color: page.mode === "dangerous" ? Theme.accent : Theme.surface2
                 border.width: 1; border.color: page.mode === "dangerous" ? Theme.accent : modeHoverChip.containsMouse ? Theme.accent : Theme.border
