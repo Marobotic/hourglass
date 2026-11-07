@@ -134,9 +134,11 @@ struct AssistantView: View {
         if !course.isEmpty { args["course_id"] = course } else if !folder.isEmpty { args["folder_id"] = folder }
         Task { do {
             let d = try await store.assistantAction("list_drive", args)
-            driveItems = (d["courses"] as? [[String: Any]] ?? []).map { ["kind":"course", "id":$0["id"] ?? "", "name":$0["name"] ?? ""] }
-                + (d["folders"] as? [[String: Any]] ?? []).map { ["kind":"folder", "id":$0["id"] ?? "", "name":$0["name"] ?? ""] }
-                + (d["files"] as? [[String: Any]] ?? []).map { ["kind":"file", "id":$0["id"] ?? "", "name":$0["name"] ?? "file", "mime":$0["mime"] ?? ""] }
+            // Typed one list at a time: as one expression it is too slow for the type checker.
+            let courses: [[String: Any]] = (d["courses"] as? [[String: Any]] ?? []).map { ["kind": "course", "id": $0["id"] ?? "", "name": $0["name"] ?? ""] }
+            let folders: [[String: Any]] = (d["folders"] as? [[String: Any]] ?? []).map { ["kind": "folder", "id": $0["id"] ?? "", "name": $0["name"] ?? ""] }
+            let files: [[String: Any]] = (d["files"] as? [[String: Any]] ?? []).map { ["kind": "file", "id": $0["id"] ?? "", "name": $0["name"] ?? "file", "mime": $0["mime"] ?? ""] }
+            driveItems = courses + folders + files
         } catch { problem = error.localizedDescription } }
     }
     private func attachDrive(_ item: [String: Any]) {
@@ -331,6 +333,19 @@ private struct Message: View {
     let onAction: (String, String) -> Void
     let onToggleSteps: () -> Void
 
+    // "120 in · 45 out  ·  300 cached  ·  $0.0012  ·  3.5% context"; "" when there is nothing to say.
+    static func usageCaption(_ usage: [String: Any]) -> String {
+        let input = usage["input_tokens"] as? Int
+        let output = usage["output_tokens"] as? Int
+        let cached = (usage["cache_read_input_tokens"] as? Int ?? 0) + (usage["cache_creation_input_tokens"] as? Int ?? 0)
+        var parts: [String] = []
+        if input != nil || output != nil { parts.append("\(input ?? 0) in · \(output ?? 0) out") }
+        if cached > 0 { parts.append("\(cached) cached") }
+        if let cost = usage["cost"] as? Double { parts.append(String(format: "$%.4f", cost)) }
+        if let percent = usage["context_percent"] as? Double { parts.append(String(format: "%.1f", percent).replacingOccurrences(of: "\\.0$", with: "", options: .regularExpression) + "% context") }
+        return parts.joined(separator: "  ·  ")
+    }
+
     var body: some View {
         let text = m["text"] as? String ?? ""
         if m["role"] as? String == "user" {
@@ -362,16 +377,8 @@ private struct Message: View {
                         else { ResultCard(info: c, now: now) }
                     }
                     if !text.isEmpty { NoteBodyView(text: text, open: { opener.open($0, store) }) }
-                    if let usage = m["usage"] as? [String: Any] {
-                        let input = usage["input_tokens"] as? Int
-                        let output = usage["output_tokens"] as? Int
-                        let cached = (usage["cache_read_input_tokens"] as? Int ?? 0) + (usage["cache_creation_input_tokens"] as? Int ?? 0)
-                        var parts: [String] = []
-                        if input != nil || output != nil { parts.append("\(input ?? 0) in · \(output ?? 0) out") }
-                        if cached > 0 { parts.append("\(cached) cached") }
-                        if let cost = usage["cost"] as? Double { parts.append(String(format: "$%.4f", cost)) }
-                        if let percent = usage["context_percent"] as? Double { parts.append(String(format: "%.1f", percent).replacingOccurrences(of: "\\.0$", with: "", options: .regularExpression) + "% context") }
-                        if !parts.isEmpty { T(parts.joined(separator: "  ·  "), 10, H.faint) }
+                    if let usage = m["usage"] as? [String: Any], !Self.usageCaption(usage).isEmpty {
+                        T(Self.usageCaption(usage), 10, H.faint)
                     }
                     if let e = m["error"] as? String, !e.isEmpty { T(e, 13, H.accent) }
                     // How it got there.
