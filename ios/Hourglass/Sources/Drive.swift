@@ -197,11 +197,14 @@ struct DriveView: View {
             let p = k.split(separator: ":", maxSplits: 1).map(String.init)
             guard p.count == 2 else { continue }
             if p[0] == "file" {
-                if let course { store.setFileCourse(p[1], course) } else { store.setFileFolder(p[1], folder) }
+                let destinationCourse = course ?? folder.flatMap { id in store.folders.first { $0.id == id }?.course_id }
+                store.setFileFolder(p[1], folder, course: destinationCourse)
                 moved = true
-            } else if p[0] == "folder", course == nil {
+            } else if p[0] == "folder" {
                 if p[1] == folder { continue }
-                if store.moveFolder(p[1], into: folder) { moved = true } else { status = "A folder can't go inside itself." }
+                let destinationCourse = folder.flatMap { id in store.folders.first { $0.id == id }?.course_id }
+                let targetCourse = course ?? destinationCourse
+                if store.moveFolder(p[1], into: folder, course: targetCourse) { moved = true } else { status = "A folder can't go inside itself." }
             }
         }
         return moved
@@ -243,14 +246,12 @@ struct DriveView: View {
                 if folderId != nil || courseId != nil {
                     // Drop on the back arrow: one folder up.
                     Button { up(view) } label: { Image(systemName: "chevron.left").foregroundStyle(H.fg).frame(width: 40, height: 40) }
-                        .dropDestination(for: String.self) { keys, _ in courseId == nil && drop(keys, into: view.path.dropLast().last?.id) }
+                    .dropDestination(for: String.self) { keys, _ in drop(keys, into: view.path.dropLast().last?.id, course: courseId) }
                 }
                 T(view.course?.name ?? view.folder?.name ?? "Drive", 22, bold: true, lines: 1)
                 Spacer()
-                if courseId == nil {
-                    Button { ask("New folder") { n in if !n.isEmpty { store.addFolder(n, parent: folderId) } } } label: {
-                        Image(systemName: "folder.badge.plus").foregroundStyle(H.muted).frame(width: 40, height: 40)
-                    }
+                Button { ask("New folder") { n in if !n.isEmpty { store.addFolder(n, parent: folderId, course: courseId) } } } label: {
+                    Image(systemName: "folder.badge.plus").foregroundStyle(H.muted).frame(width: 40, height: 40)
                 }
                 Button { importing = true } label: { Image(systemName: "square.and.arrow.up").foregroundStyle(H.muted).frame(width: 40, height: 40) }
             }
@@ -371,7 +372,7 @@ struct DriveView: View {
                 }
                 ForEach(view.courses, id: \.0.id) { c, n in
                     row("graduationcap", c.name, "\(n) file\(n == 1 ? "" : "s")", Color(hex: c.color)) { courseId = c.id }
-                        .dropDestination(for: String.self) { keys, _ in drop(keys.filter { $0.hasPrefix("file:") }, into: nil, course: c.id) }
+                    .dropDestination(for: String.self) { keys, _ in drop(keys, into: nil, course: c.id) }
                 }
                 LazyVGrid(columns: cols, spacing: 8) {
                     ForEach(ds, id: \.0.id) { d, n in
@@ -390,7 +391,7 @@ struct DriveView: View {
                         }
                         .buttonStyle(.plain)
                         .draggable(dragKey("folder", d.id))
-                        .dropDestination(for: String.self) { keys, _ in drop(keys, into: d.id) }
+                        .dropDestination(for: String.self) { keys, _ in drop(keys, into: d.id, course: d.course_id) }
                         .contextMenu { folderMenu(d) }
                     }
                 }
@@ -451,12 +452,12 @@ struct DriveView: View {
                 }
                 ForEach(view.courses, id: \.0.id) { c, n in
                     row("graduationcap", c.name, "\(n) file\(n == 1 ? "" : "s")", Color(hex: c.color)) { courseId = c.id }
-                        .dropDestination(for: String.self) { keys, _ in drop(keys.filter { $0.hasPrefix("file:") }, into: nil, course: c.id) }
+                        .dropDestination(for: String.self) { keys, _ in drop(keys, into: nil, course: c.id) }
                 }
                 ForEach(folders(view), id: \.0.id) { d, n in
                     row("folder", d.name, "\(n) item\(n == 1 ? "" : "s")", H.gold, shared: shares[d.id] != nil) { folderId = d.id }
                         .draggable(dragKey("folder", d.id))
-                        .dropDestination(for: String.self) { keys, _ in drop(keys, into: d.id) }
+                        .dropDestination(for: String.self) { keys, _ in drop(keys, into: d.id, course: d.course_id) }
                         .contextMenu { folderMenu(d) }
                 }
                 ForEach(files(view)) { f in
@@ -508,7 +509,10 @@ extension DriveView {
     }
 
     private func up(_ view: Store.DriveView) {
-        if courseId != nil { courseId = nil } else { folderId = view.path.dropLast().last?.id }
+        if courseId != nil {
+            if !view.path.isEmpty { folderId = view.path.dropLast().last?.id }
+            else { courseId = nil; folderId = nil }
+        } else { folderId = view.path.dropLast().last?.id }
     }
 
     private func ask(_ title: String, _ initial: String = "", _ done: @escaping (String) -> Void) {

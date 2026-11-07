@@ -231,7 +231,7 @@ export const TOOLS = [
   {
     name: "list_drive",
     title: "List Drive",
-    description: "The user's Drive: folders and files in one folder (omit folder_id for the top). Files are downloaded at GET /api/files/<id>/raw.",
+    description: "The user's Drive: folders and files in one folder (omit folder_id for the top). A course has its own Drive folder (course_id), which can hold folders too: give course_id and folder_id together to look inside one. Files are downloaded at GET /api/files/<id>/raw.",
     input: { folder_id: z.string().optional(), course_id: z.string().optional().describe("A course's Drive folder") },
     readOnly: true,
     run: (s, a) => s.listDrive(a),
@@ -253,15 +253,15 @@ export const TOOLS = [
   {
     name: "move_folder",
     title: "Move Drive folder",
-    description: "Put a Drive folder inside another folder (parent_id), or at the top (parent_id null). A folder can't go inside itself.",
-    input: { folder_id: z.string(), parent_id: z.string().nullable().optional() },
+    description: "Put a Drive folder inside another folder (parent_id), at the top (parent_id null), or at a course's top (course_id). Everything in it goes along. A folder can't go inside itself.",
+    input: { folder_id: z.string(), parent_id: z.string().nullable().optional(), course_id: z.string().optional().describe("Into this course's Drive folder") },
     run: (s, a) => s.moveFolder(a),
   },
   {
     name: "add_folder",
     title: "Add Drive folder",
-    description: "Make a folder in the user's Drive, at the top or inside parent_id.",
-    input: { name: z.string(), parent_id: z.string().optional() },
+    description: "Make a folder in the user's Drive: at the top, inside parent_id, or in a course's Drive folder (course_id).",
+    input: { name: z.string(), parent_id: z.string().optional(), course_id: z.string().optional().describe("Make it in this course's Drive folder") },
     run: (s, a) => s.addFolder(a),
   },
   {

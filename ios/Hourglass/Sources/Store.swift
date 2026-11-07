@@ -161,7 +161,17 @@ final class Store: ObservableObject {
         let fs = files.map { f -> DriveFile in var f = f; if let c = f.course_id, !known.contains(c) { f.course_id = nil }; return f }
         let byName: (String, String) -> Bool = { $0.lowercased() < $1.lowercased() }
         if let courseId {
-            return DriveView(course: course(courseId), files: fs.filter { $0.course_id == courseId }.sorted { byName($0.name, $1.name) })
+            var path: [Folder] = []
+            var current = folderId.flatMap { id in folders.first { $0.id == id && $0.course_id == courseId } }
+            while let folder = current {
+                path.insert(folder, at: 0)
+                current = folder.parent_id.flatMap { parent in folders.first { $0.id == parent && $0.course_id == courseId } }
+            }
+            return DriveView(
+                folder: path.last, course: course(courseId), path: path,
+                folders: folders.filter { $0.course_id == courseId && $0.parent_id == folderId }.sorted { byName($0.name, $1.name) }
+                    .map { folder in (folder, folders.filter { $0.course_id == courseId && $0.parent_id == folder.id }.count + fs.filter { $0.course_id == courseId && $0.folder_id == folder.id }.count) },
+                files: fs.filter { $0.course_id == courseId && $0.folder_id == folderId }.sorted { byName($0.name, $1.name) })
         }
         var path: [Folder] = []
         var f = folderId.flatMap { id in folders.first { $0.id == id } }
@@ -169,8 +179,8 @@ final class Store: ObservableObject {
         return DriveView(
             folder: path.last, course: nil, path: path,
             courses: folderId == nil ? courses.map { c in (c, fs.filter { $0.course_id == c.id }.count) } : [],
-            folders: folders.filter { $0.parent_id == folderId }.sorted { byName($0.name, $1.name) }
-                .map { d in (d, folders.filter { $0.parent_id == d.id }.count + fs.filter { $0.folder_id == d.id }.count) },
+            folders: folders.filter { $0.course_id == nil && $0.parent_id == folderId }.sorted { byName($0.name, $1.name) }
+                .map { d in (d, folders.filter { $0.course_id == nil && $0.parent_id == d.id }.count + fs.filter { $0.folder_id == d.id }.count) },
             files: fs.filter { $0.course_id == nil && $0.folder_id == folderId }.sorted { byName($0.name, $1.name) })
     }
 
@@ -187,7 +197,7 @@ final class Store: ObservableObject {
         changed(); return f
     }
     @discardableResult
-    func addFolder(_ name: String, parent: String?) -> Folder { save(Folder(name: name.trimmingCharacters(in: .whitespaces), parent_id: parent)) }
+    func addFolder(_ name: String, parent: String?, course: String? = nil) -> Folder { save(Folder(name: name.trimmingCharacters(in: .whitespaces), parent_id: parent, course_id: course)) }
     // A folder goes with everything in it.
     func removeFolder(_ id: String) {
         for sub in folders where sub.parent_id == id { removeFolder(sub.id) }
@@ -204,24 +214,38 @@ final class Store: ObservableObject {
         if course != nil { f.folder_id = nil }
         save(f)
     }
-    func setFileFolder(_ id: String, _ folder: String?) {
+    func setFileFolder(_ id: String, _ folder: String?, course: String? = nil) {
         guard var f = file(id) else { return }
-        f.folder_id = folder; f.course_id = nil
+        f.folder_id = folder; f.course_id = course
         save(f)
     }
 
     // A folder into another (nil = the top). Never into itself or one of its
     // own folders: false then, and nothing changes.
     @discardableResult
-    func moveFolder(_ id: String, into parent: String?) -> Bool {
+    func moveFolder(_ id: String, into parent: String?, course: String? = nil) -> Bool {
         var p = parent
         while let cur = p {
             if cur == id { return false }
             p = folders.first { $0.id == cur }?.parent_id
         }
         guard var d = folders.first(where: { $0.id == id }) else { return false }
+        let destinationCourse = course ?? parent.flatMap { parentId in folders.first { $0.id == parentId }?.course_id }
+        func moveContents(_ folderId: String) {
+            guard var folder = folders.first(where: { $0.id == folderId }) else { return }
+            folder.course_id = destinationCourse
+            save(folder)
+            for var file in files where file.folder_id == folderId {
+                file.course_id = destinationCourse
+                save(file)
+            }
+            for child in folders where child.parent_id == folderId { moveContents(child.id) }
+        }
         d.parent_id = parent
+        d.course_id = destinationCourse
         save(d)
+        for var file in files where file.folder_id == id { file.course_id = destinationCourse; save(file) }
+        for child in folders where child.parent_id == id { moveContents(child.id) }
         return true
     }
 
@@ -376,7 +400,8 @@ final class Store: ObservableObject {
         let folderId = (note != nil && course == nil) ? await attachmentsFolder() : folder
         var comps = URLComponents(url: base.appendingPathComponent("api/files/upload"), resolvingAgainstBaseURL: false)!
         var q = [URLQueryItem(name: "name", value: fileName), URLQueryItem(name: "mime", value: mime)]
-        if let course { q.append(URLQueryItem(name: "course", value: course)) } else if let folderId { q.append(URLQueryItem(name: "folder", value: folderId)) }
+        if let course { q.append(URLQueryItem(name: "course", value: course)) }
+        if let folderId { q.append(URLQueryItem(name: "folder", value: folderId)) }
         if let note { q.append(URLQueryItem(name: "note", value: note)) }
         comps.queryItems = q
         var req = request(comps.url!)

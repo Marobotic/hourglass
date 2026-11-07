@@ -110,9 +110,13 @@ export const TABLES = {
   // Drive: folders (nested by parent_id) and files. A file's bytes live on
   // the server (GET /api/files/<id>/raw); the row syncs. note_id: attached to
   // a note (shown in it as ![name](hgfile:<id>) or [name](hgfile:<id>)).
+  // course_id: a folder inside that course's Drive folder (parent_id: another
+  // of the course's folders, or null at its top); the files in it keep the
+  // course_id too.
   folders: [
     ["name", "text", ""],
     ["parent_id", "text", null],
+    ["course_id", "text", null],
   ],
   files: [
     ["name", "text", ""],

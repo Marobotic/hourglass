@@ -157,20 +157,22 @@ final class ShareModel: ObservableObject {
         listing = true
         defer { listing = false }
         var args: [String: Any] = [:]
-        if let courseId { args["course_id"] = courseId } else if let folderId { args["folder_id"] = folderId }
+        if let courseId { args["course_id"] = courseId }
+        if let folderId { args["folder_id"] = folderId }
         do {
             let r = try await action("list_drive", args) as? [String: Any] ?? [:]
             let courses = (r["courses"] as? [[String: Any]] ?? []).map { c in
                 Entry(id: c["id"] as? String ?? "", name: c["name"] as? String ?? "", detail: count(c["items"], "file"), color: c["color"] as? String, isCourse: true)
             }
-            let folders = (r["folders"] as? [[String: Any]] ?? []).map { f in
+            let folderRows = (r["folders"] as? [[String: Any]] ?? []).filter { courseId != nil || $0["course_id"] == nil || $0["course_id"] is NSNull }
+            let folders = folderRows.map { f in
                 Entry(id: f["id"] as? String ?? "", name: f["name"] as? String ?? "", detail: count(f["items"], "item"), color: nil, isCourse: false)
             }
             entries = courses + folders
             otherFiles = (r["files"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
-            if courseId == nil {
-                path = (r["path"] as? [[String: Any]] ?? []).map { (id: $0["id"] as? String ?? "", name: $0["name"] as? String ?? "") }
-            }
+            var pathRows = r["path"] as? [[String: Any]] ?? []
+            if courseId != nil, pathRows.first?["course"] as? Bool == true { pathRows.removeFirst() }
+            path = pathRows.map { (id: $0["id"] as? String ?? "", name: $0["name"] as? String ?? "") }
             problem = nil
         } catch { problem = error.localizedDescription }
     }
@@ -181,22 +183,27 @@ final class ShareModel: ObservableObject {
     }
 
     func open(_ e: Entry) async {
-        if e.isCourse { courseId = e.id; courseName = e.name; folderId = nil } else { folderId = e.id; courseId = nil }
+        if e.isCourse { courseId = e.id; courseName = e.name; folderId = nil } else { folderId = e.id }
         await list()
     }
 
     func up() async {
-        if courseId != nil { courseId = nil; folderId = nil } else { folderId = path.dropLast().last?.id }
+        if courseId != nil {
+            if !path.isEmpty { folderId = path.dropLast().last?.id }
+            else { courseId = nil; folderId = nil }
+        } else { folderId = path.dropLast().last?.id }
         await list()
     }
 
     func top() async { courseId = nil; folderId = nil; await list() }
-    func go(_ id: String) async { courseId = nil; folderId = id; await list() }
+    func go(_ id: String) async { folderId = id; await list() }
+    func goCourseRoot() async { folderId = nil; await list() }
 
     func newFolder(_ name: String) async {
         do {
             var args: [String: Any] = ["name": name]
             if let folderId { args["parent_id"] = folderId }
+            if let courseId { args["course_id"] = courseId }
             let r = try await action("add_folder", args) as? [String: Any]
             if let id = r?["id"] as? String { folderId = id }
             await list()
@@ -210,7 +217,8 @@ final class ShareModel: ObservableObject {
             current = i
             do {
                 var q = [URLQueryItem(name: "name", value: f.name), URLQueryItem(name: "mime", value: UTType(filenameExtension: f.url.pathExtension)?.preferredMIMEType ?? "application/octet-stream")]
-                if let courseId { q.append(URLQueryItem(name: "course", value: courseId)) } else if let folderId { q.append(URLQueryItem(name: "folder", value: folderId)) }
+                if let courseId { q.append(URLQueryItem(name: "course", value: courseId)) }
+                if let folderId { q.append(URLQueryItem(name: "folder", value: folderId)) }
                 var r = request("api/files/upload", query: q)
                 r.httpMethod = "POST"
                 r.timeoutInterval = 900
@@ -333,7 +341,7 @@ private struct UploadView: View {
                         Button { Task { await model.up() } } label: { Image(systemName: "chevron.left").foregroundStyle(C.fg).padding(.trailing, 6) }
                     }
                     crumb("Drive", current: model.folderId == nil && model.courseId == nil) { await model.top() }
-                    if model.courseId != nil { slash; crumb(model.courseName, current: true) {} }
+                    if model.courseId != nil { slash; crumb(model.courseName, current: model.folderId == nil) { await model.goCourseRoot() } }
                     ForEach(Array(model.path.enumerated()), id: \.offset) { i, p in
                         slash
                         crumb(p.name, current: i == model.path.count - 1) { await model.go(p.id) }

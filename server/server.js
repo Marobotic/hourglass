@@ -560,9 +560,10 @@ async function driveRoutes(t, req, res, url, path) {
       return send(res, 400, { error: "empty file" }), true;
     }
     renameSync(tmp, drivePath(t, id));
-    const course = url.searchParams.get("course") || null;
+    // Into a course's folder: the file is in that course too.
+    const course = folder ? t.store.get("folders", folder).course_id ?? null : url.searchParams.get("course") || null;
     const sha256 = hash.digest("hex");
-    const row = t.store.upsert("files", { id, name, folder_id: course ? null : folder, course_id: course, size, sha256, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
+    const row = t.store.upsert("files", { id, name, folder_id: folder, course_id: course, size, sha256, mime: url.searchParams.get("mime") || mimeOf(name), note_id: url.searchParams.get("note") || null });
     versions.started(t, id, whoOf(t, req), size);
     return send(res, 201, row), true;
   }

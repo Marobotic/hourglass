@@ -19,8 +19,8 @@ export function readTree(dir) {
   return tree;
 }
 
-// Into a Drive folder (parent, null = the top) the folders come along: addFolder(name,
-// parentId) makes each one. A course or a note holds no folders (flat): every file goes
+// The folders come along (addFolder(name, parentId) makes each one; parent: where the
+// dropped folder goes, null = the top). A note holds no folders (flat): every file goes
 // straight into it. One file failing doesn't stop the rest.
 export async function uploadTree(tree, { flat = false, parent = null, addFolder, upload }) {
   const out = { folder: null, files: [], failed: [] };

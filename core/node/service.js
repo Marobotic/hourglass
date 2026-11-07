@@ -227,66 +227,95 @@ export class Service {
   // --- drive -------------------------------------------------------------------
 
   // One folder's contents (null = the top), with the path down to it. Every
-  // course has its own folder (course_id) holding the files put there; the
-  // top lists the courses and the files and folders that are in none.
+  // course has its own folder (course_id) holding the files and folders put
+  // there; the top lists the courses and the files and folders that are in none.
+  // A course's folder or file whose course is gone (archived) shows at the top.
   listDrive({ folder_id = null, course_id = null } = {}) {
-    const folders = this.store.all("folders");
     const courses = this.store.all("courses").filter((c) => !c.archived);
     const known = new Set(courses.map((c) => c.id));
-    const files = this.store.all("files").map((f) => (f.course_id && !known.has(f.course_id) ? { ...f, course_id: null } : f));
+    const homeless = (r) => (r.course_id && !known.has(r.course_id) ? { ...r, course_id: null } : r);
+    const folders = this.store.all("folders").map(homeless);
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    // A file in a folder of another course (or a gone folder) is at its course's top.
+    const files = this.store.all("files").map(homeless)
+      .map((f) => (f.course_id && f.folder_id && byId.get(f.folder_id)?.course_id !== f.course_id ? { ...f, folder_id: null } : f));
     const byName = (a, b) => a.name.localeCompare(b.name);
+    const counted = (f) => ({ ...f, items: folders.filter((x) => x.parent_id === f.id).length + files.filter((x) => x.folder_id === f.id).length });
+    const path = [];
+    for (let f = folder_id ? this.row("folders", folder_id) : null; f; f = f.parent_id ? byId.get(f.parent_id) : null) path.unshift({ id: f.id, name: f.name });
+    const here = folder_id ?? null;
     if (course_id) {
       const c = this.course(course_id);
-      return { course_id: c.id, folder_id: null, path: [{ id: c.id, name: c.name, course: true }], folders: [], courses: [],
-        files: files.filter((f) => f.course_id === c.id).sort(byName) };
+      return {
+        course_id: c.id, folder_id: here, courses: [],
+        path: [{ id: c.id, name: c.name, course: true }, ...path],
+        folders: folders.filter((f) => f.course_id === c.id && (f.parent_id ?? null) === here).sort(byName).map(counted),
+        files: files.filter((f) => f.course_id === c.id && (f.folder_id ?? null) === here).sort(byName),
+      };
     }
-    const path = [];
-    for (let f = folder_id ? this.row("folders", folder_id) : null; f; f = f.parent_id ? folders.find((x) => x.id === f.parent_id) : null) path.unshift({ id: f.id, name: f.name });
     const top = !folder_id;
     return {
-      folder_id: folder_id ?? null,
+      folder_id: here,
       course_id: null,
       courses: top ? courses.sort(byName).map((c) => ({ id: c.id, name: c.name, color: c.color, items: files.filter((f) => f.course_id === c.id).length })) : [],
       path,
-      folders: folders.filter((f) => (f.parent_id ?? null) === (folder_id ?? null)).sort(byName)
-        .map((f) => ({ ...f, items: folders.filter((x) => x.parent_id === f.id).length + files.filter((x) => x.folder_id === f.id).length })),
-      files: files.filter((f) => !f.course_id && (f.folder_id ?? null) === (folder_id ?? null)).sort(byName),
+      folders: folders.filter((f) => !f.course_id && (f.parent_id ?? null) === here).sort(byName).map(counted),
+      files: files.filter((f) => !f.course_id && (f.folder_id ?? null) === here).sort(byName),
     };
   }
 
-  // Put a file in a course's folder (or take it out with course: null).
+  // Put a file in a folder (folder_id; null = the top) or at a course's top
+  // (course; null takes it out). A folder of a course takes the file into it.
   moveFile({ file_id, course, folder_id }) {
     const f = this.row("files", file_id);
     const patch = { id: f.id };
     if (course !== undefined) {
       patch.course_id = course ? this.course(course).id : null;
-      if (patch.course_id) patch.folder_id = null;
+      patch.folder_id = null;
     }
     if (folder_id !== undefined) {
-      if (folder_id) this.row("folders", folder_id);
-      patch.folder_id = folder_id || null;
-      if (folder_id) patch.course_id = null;
+      const into = folder_id ? this.row("folders", folder_id) : null;
+      if (into && patch.course_id && into.course_id !== patch.course_id) throw new Error(`"${into.name}" is not in that course`);
+      patch.folder_id = into?.id ?? null;
+      patch.course_id = into ? into.course_id ?? null : patch.course_id ?? null;
     }
     return this.store.upsert("files", patch);
   }
 
-  // Put a folder inside another (parent_id null = the top). A folder never
-  // goes into itself or into one of its own subfolders.
-  moveFolder({ folder_id, parent_id = null }) {
+  // Put a folder inside another (parent_id null = the top, or with course_id
+  // the course's top). A folder never goes into itself or into one of its own
+  // subfolders; everything in it goes along, into the course or out of it.
+  moveFolder({ folder_id, parent_id = null, course_id }) {
     const f = this.row("folders", folder_id);
     const target = parent_id || null;
+    const all = this.store.all("folders");
+    let course = null;
     if (target) {
-      const all = this.store.all("folders");
       for (let p = this.row("folders", target); p; p = p.parent_id ? all.find((x) => x.id === p.parent_id) : null) {
         if (p.id === f.id) throw new Error(`"${f.name}" cannot go inside itself or one of its own folders`);
       }
+      course = this.row("folders", target).course_id ?? null;
+    } else if (course_id) course = this.course(course_id).id;
+    const moved = this.store.upsert("folders", { id: f.id, parent_id: target, course_id: course });
+    if ((f.course_id ?? null) !== course) {
+      const inside = (id) => {
+        for (const file of this.store.all("files").filter((x) => x.folder_id === id)) this.store.upsert("files", { id: file.id, course_id: course });
+        for (const sub of all.filter((x) => x.parent_id === id)) {
+          this.store.upsert("folders", { id: sub.id, course_id: course });
+          inside(sub.id);
+        }
+      };
+      inside(f.id);
     }
-    return this.store.upsert("folders", { id: f.id, parent_id: target });
+    return moved;
   }
 
-  addFolder({ name, parent_id = null }) {
-    if (parent_id) this.row("folders", parent_id);
-    return this.store.upsert("folders", { name: String(name ?? "").trim(), parent_id });
+  // A folder at the top, inside parent_id, or at a course's top (course_id).
+  // Inside a course's folder it is in that course too.
+  addFolder({ name, parent_id = null, course_id = null }) {
+    const parent = parent_id ? this.row("folders", parent_id) : null;
+    const course = parent ? parent.course_id ?? null : course_id ? this.course(course_id).id : null;
+    return this.store.upsert("folders", { name: String(name ?? "").trim(), parent_id: parent?.id ?? null, course_id: course });
   }
 
   // A folder goes with everything in it.

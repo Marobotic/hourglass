@@ -1020,8 +1020,8 @@ async function driveRoutes(req, res, url, path) {
   if (path === "/api/drive/info" && m === "GET") return json(res, 200, { file_base: `http://127.0.0.1:${PORT}/files/`, thumb_base: `http://127.0.0.1:${PORT}/thumbs/`, key: FILE_KEY }), true;
   if (path === "/api/drive/usage" && m === "GET") return json(res, 200, await remote("/api/drive/usage")), true;
   // Upload a file from this computer: { path, folder, course, note }. Streams to the server.
-  // A folder brings what is in it: its folders too into a Drive folder, only the files
-  // into a course or a note (they hold no folders).
+  // A folder brings what is in it: made again with its folders in the Drive or in a
+  // course (inside folder, if given); only its files go into a note.
   if (path === "/api/files/upload" && m === "POST") {
     const b = await readBody(req);
     const file = decodeURIComponent(String(b.path || "").replace(/^file:\/\/\/?/, WIN ? "" : "/"));
@@ -1034,10 +1034,10 @@ async function driveRoutes(req, res, url, path) {
     const to = { folder: b.folder || null, course: b.course || null, note: b.note || null, max };
     if (statSync(file).isDirectory()) {
       const out = await uploadTree(readTree(file), {
-        flat: !!(to.course || to.note),
+        flat: !!to.note,
         parent: to.folder,
         addFolder: async (name, parent_id) => {
-          const row = service.addFolder({ name, parent_id });
+          const row = service.addFolder({ name, parent_id, course_id: parent_id ? null : to.course });
           await syncOnce(); // the server takes no file into a folder it doesn't have
           if (store.dirtyRows().folders.some((r) => r.id === row.id)) throw new Error(`${name}: the folder could not reach the server`);
           return row;

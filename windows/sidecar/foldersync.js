@@ -653,10 +653,20 @@ export function createFolderSync({
 
     // Course files are stored with course_id rather than a folder_id. They
     // still use the same planner and local tree as ordinary folder pairs.
-    const courseFiles = courseId && allFiles.some((item) => item.course_id === courseId)
+    const courseFiles = courseId && (allFiles.some((item) => item.course_id === courseId) || allFolders.some((item) => item.course_id === courseId))
       ? allFiles.filter((item) => item.course_id === courseId && !item.deleted)
       : null;
     if (courseFiles) {
+      // The course's folders, empty ones too.
+      for (const folder of allFolders.filter((item) => item.course_id === courseId && !item.deleted)) {
+        const names = [];
+        const seen = new Set();
+        for (let x = folder; x && !seen.has(x.id); x = x.parent_id ? allFolders.find((item) => item.id === x.parent_id && !item.deleted) : null) {
+          seen.add(x.id);
+          names.unshift(x.name);
+        }
+        folders[names.join("/")] = folder.id;
+      }
       for (const row of courseFiles) {
         let parent = row.folder_id;
         const parts = [row.name];

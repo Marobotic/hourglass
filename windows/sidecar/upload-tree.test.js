@@ -83,7 +83,7 @@ test("into a Drive folder the folders come along", async () => {
   }
 });
 
-test("into a course or a note every file goes in flat", async () => {
+test("into a note every file goes in flat", async () => {
   const { root, dir } = await lectures();
   try {
     const d = drive();

@@ -145,6 +145,7 @@ struct Folder: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString.lowercased()
     var name: String = ""
     var parent_id: String?
+    var course_id: String?
     var updated_at: Int64 = 0
     var deleted: Int = 0
     var rev: Int64? = 0
