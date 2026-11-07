@@ -31,7 +31,7 @@ class Store(private val file: File) {
             // Drive: folders nest by parent_id; a file's bytes live on the server
             // (GET /api/files/<id>/raw) and only the row syncs. course_id puts it
             // in that course's folder; note_id attaches it to a note.
-            "folders" to mapOf("name" to "", "parent_id" to null),
+            "folders" to mapOf("name" to "", "parent_id" to null, "course_id" to null),
             "files" to mapOf("name" to "", "folder_id" to null, "size" to 0, "mime" to "application/octet-stream", "note_id" to null, "course_id" to null),
         )
     }
@@ -66,7 +66,10 @@ class Store(private val file: File) {
         for (name in TABLES) t.put(name, JSONArray(tables.getValue(name).values.toList()))
         val tmp = File(file.parentFile, file.name + ".tmp")
         tmp.writeText(JSONObject().put("tables", t).put("meta", meta).toString())
-        tmp.renameTo(file)
+        if (!tmp.renameTo(file)) {
+            file.delete()
+            tmp.renameTo(file)
+        }
         _version.value++
     }
 

@@ -169,13 +169,13 @@ private fun androidx.compose.foundation.layout.ColumnScope.UploadFlow(repo: Repo
         }
     }
     val placeName = when (place) { Place.Top -> "Drive"; is Place.Course -> view.course?.optString("name") ?: "Course"; is Place.Folder -> view.folder?.optString("name") ?: "Folder" }
-    fun up() { place = when (val p = place) { is Place.Folder -> view.path.dropLast(1).lastOrNull()?.let { Place.Folder(it.id) } ?: Place.Top; else -> Place.Top } }
+    fun up() { place = when (val p = place) { is Place.Folder -> view.path.dropLast(1).lastOrNull()?.let { Place.Folder(it.id) } ?: (view.course?.let { Place.Course(it.id) } ?: Place.Top); else -> Place.Top } }
     BackHandler(enabled = phase == "pick" && place != Place.Top) { up() }
 
     fun uploadNext() {
         if (current >= files.size) { phase = "done"; return }
         val f = files[current]
-        val (folder, course) = when (val p = place) { is Place.Folder -> p.id to null; is Place.Course -> null to p.id; Place.Top -> null to null }
+        val (folder, course) = when (val p = place) { is Place.Folder -> p.id to view.course?.id; is Place.Course -> null to p.id; Place.Top -> null to null }
         repo.upload(f.uri, folder, course) { _, err ->
             if (err != null) errors.add("${f.name}: $err")
             current++
@@ -197,7 +197,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.UploadFlow(repo: Repo
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (place != Place.Top) IconButton({ up() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = HColors.fg) }
                     Crumb("Drive", place == Place.Top) { place = Place.Top }
-                    view.course?.let { c -> T("  /  ", 13, HColors.faint); Crumb(c.optString("name"), true) {} }
+                    view.course?.let { c -> T("  /  ", 13, HColors.faint); Crumb(c.optString("name"), place is Place.Course) { place = Place.Course(c.id) } }
                     for (f in view.path) { T("  /  ", 13, HColors.faint); Crumb(f.optString("name"), f == view.path.last()) { place = Place.Folder(f.id) } }
                 }
                 AnimatedContent(place, transitionSpec = { (slideInHorizontally(tween(220)) { it / 6 } + fadeIn(tween(220))) togetherWith fadeOut(tween(100)) }, label = "folder", modifier = Modifier.weight(1f)) { _ ->
@@ -221,7 +221,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.UploadFlow(repo: Repo
                     }
                 }
                 Row(Modifier.fillMaxWidth().background(HColors.surface).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (place !is Place.Course) HButton("New folder", icon = Icons.Outlined.CreateNewFolder) { naming = true }
+                    HButton("New folder", icon = Icons.Outlined.CreateNewFolder) { naming = true }
                     Spacer(Modifier.weight(1f))
                     HButton(if (files.size == 1) "Upload to $placeName" else "Upload ${files.size} to $placeName", primary = true) {
                         phase = "uploading"; current = 0; errors.clear(); uploadNext()
@@ -258,7 +258,8 @@ private fun androidx.compose.foundation.layout.ColumnScope.UploadFlow(repo: Repo
     if (naming) FolderNameDialog(onDismiss = { naming = false }) { name ->
         naming = false
         val parent = (place as? Place.Folder)?.id
-        val f = repo.addFolder(name, parent)
+        val course = (place as? Place.Course)?.id ?: view.course?.id
+        val f = repo.addFolder(name, parent, course)
         repo.syncNow() // the server checks the folder exists before taking an upload into it
         version++
         place = Place.Folder(f.id)

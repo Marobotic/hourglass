@@ -218,17 +218,21 @@ fun DriveScreen(nav: Nav, version: Int) {
     // The server's disk barely moves: read it every minute (and the links with it).
     LaunchedEffect(Unit) { while (true) { loadShares(); repo.driveUsage { usage = it }; delay(60000) } }
 
-    fun up() { if (courseId != null) courseId = null else folderId = view.path.dropLast(1).lastOrNull()?.id }
+    fun up() {
+        if (folderId != null) folderId = view.path.dropLast(1).lastOrNull()?.id
+        else if (courseId != null) courseId = null
+    }
     BackHandler(enabled = folderId != null || courseId != null) { up() }
 
     // A dragged "file:<id>" / "folder:<id>" into a folder (null = the top) or a course.
     fun drop(what: String, intoFolder: String?, intoCourse: String? = null): Boolean {
         val (table, id) = what.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "" } }
         when {
+            table == "file" && intoFolder != null -> repo.setFileFolder(id, intoFolder)
             table == "file" && intoCourse != null -> repo.setFileCourse(id, intoCourse)
-            table == "file" -> repo.setFileFolder(id, intoFolder)
+            table == "file" -> repo.setFileFolder(id, null)
             table == "folder" && id == intoFolder -> return false
-            table == "folder" -> if (!repo.moveFolder(id, intoFolder)) { status = "A folder can't go inside itself."; return false }
+            table == "folder" -> if (!repo.moveFolder(id, intoFolder, intoCourse)) { status = "A folder can't go inside itself."; return false }
             else -> return false
         }
         status = null
@@ -302,11 +306,13 @@ fun DriveScreen(nav: Nav, version: Int) {
         Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (folderId != null || courseId != null) {
                 // Drop on the back arrow: one folder up.
-                val (mod, over) = dropTarget(view.path.dropLast(1).lastOrNull()?.id) { drop(it, view.path.dropLast(1).lastOrNull()?.id) }
+                val upFolder = view.path.dropLast(1).lastOrNull()?.id
+                val upCourse = if (folderId != null) courseId else null
+                val (mod, over) = dropTarget(upFolder, upCourse) { drop(it, upFolder, upCourse) }
                 IconButton({ up() }, mod.background(if (over) HColors.accent.copy(alpha = 0.3f) else Color.Transparent)) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Up", tint = HColors.fg) }
             } else Spacer(Modifier.width(12.dp))
-            T(view.course?.optString("name") ?: view.folder?.optString("name") ?: "Drive", 22, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
-            if (courseId == null) IconButton({ naming = "New folder" to { n: String -> if (n.isNotBlank()) repo.addFolder(n, folderId) } }) {
+            T(view.folder?.optString("name") ?: view.course?.optString("name") ?: "Drive", 22, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
+            IconButton({ naming = "New folder" to { n: String -> if (n.isNotBlank()) repo.addFolder(n, folderId, courseId) } }) {
                 Icon(Icons.Outlined.CreateNewFolder, "New folder", tint = HColors.muted)
             }
             IconButton({ pick.launch(arrayOf("*/*")) }) { Icon(Icons.Outlined.Upload, "Upload", tint = HColors.muted) }
@@ -368,11 +374,11 @@ fun DriveScreen(nav: Nav, version: Int) {
         ) {
             if (empty) item(span = { GridItemSpan(maxLineSpan) }) { T(if (courseId != null) "Nothing in this course's folder yet. Upload files here, or attach them to its notes." else "Empty. Upload files or make a folder.", 13, HColors.faint, modifier = Modifier.padding(8.dp)) }
             items(view.courses, key = { "c" + it.first.id }, span = { GridItemSpan(maxLineSpan) }) { (c, n) ->
-                val (mod, over) = dropTarget(intoCourse = c.id) { what -> what.startsWith("file:") && drop(what, null, c.id) }
+                val (mod, over) = dropTarget(intoCourse = c.id) { what -> drop(what, null, c.id) }
                 DriveRow("details", Icons.Outlined.School, c.optString("name"), "$n file" + if (n == 1) "" else "s", hex(c.optString("color")), modifier = mod, highlight = over) { courseId = c.id }
             }
             items(folders, key = { "d" + it.first.id }) { (d, n) ->
-                val (mod, over) = dropTarget(d.id) { drop(it, d.id) }
+                val (mod, over) = dropTarget(d.id, d.str("course_id") ?: courseId) { drop(it, d.id) }
                 DriveRow(mode, Icons.Outlined.Folder, d.optString("name"), "$n item" + if (n == 1) "" else "s", HColors.gold, modifier = mod, highlight = over,
                     shared = shares.containsKey(d.id), dragAs = "folder:${d.id}", menu = listOf(
                         (if (shares.containsKey(d.id)) "Shared · link…" else "Share link…") to { sharing = "folders" to d },
@@ -526,16 +532,19 @@ private fun DriveRow(
     }
 }
 
-// "Move to…": every folder (by its path), the top, and for a file the courses.
+// "Move to…": every folder (by its path), the top, and for a file or folder the courses.
 @Composable
 private fun MoveDialog(repo: Repo, table: String, row: JSONObject, onDismiss: () -> Unit, onPick: (String?, String?) -> Unit) {
     val all = remember { repo.folders() }
     val byId = remember(all) { all.associateBy { it.id } }
+    val courses = remember { repo.courses() }
+    val coursesById = remember(courses) { courses.associateBy { it.id } }
     fun pathOf(f: JSONObject): String {
         val names = mutableListOf<String>()
         var x: JSONObject? = f
         var n = 0
         while (x != null && n++ < 20) { names.add(0, x.optString("name")); x = x.str("parent_id")?.let { byId[it] } }
+        f.str("course_id")?.let { cid -> coursesById[cid]?.optString("name")?.let { names.add(0, it) } }
         return names.joinToString(" / ")
     }
     fun inside(f: JSONObject): Boolean {
@@ -545,17 +554,18 @@ private fun MoveDialog(repo: Repo, table: String, row: JSONObject, onDismiss: ()
         return false
     }
     val here = if (table == "folders") row.str("parent_id") else row.str("folder_id")
+    val hereCourse = row.str("course_id")
+    val isAtDriveTop = here == null && hereCourse == null
     val choices = all.filter { !(table == "folders" && inside(it)) }.map { it.id to pathOf(it) }.sortedBy { it.second.lowercase() }
-    val courses = if (table == "files") repo.courses() else emptyList()
     AlertDialog(
         onDismissRequest = onDismiss, containerColor = HColors.surface, shape = RectangleShape,
         title = { T("Move ${row.optString("name")}", 16, bold = true, maxLines = 2) },
         text = {
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                item { MoveChoice("Top of the Drive", here == null && row.str("course_id") == null) { onPick(null, null) } }
+                item { MoveChoice("Top of the Drive", isAtDriveTop) { onPick(null, null) } }
                 items(choices, key = { it.first }) { (id, path) -> MoveChoice(path, here == id) { onPick(id, null) } }
                 if (courses.isNotEmpty()) item { T("COURSES", 11, HColors.muted, bold = true, spacing = 1.5, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
-                items(courses, key = { "c" + it.id }) { c -> MoveChoice(c.optString("name"), row.str("course_id") == c.id) { onPick(null, c.id) } }
+                items(courses, key = { "c" + it.id }) { c -> MoveChoice(c.optString("name"), here == null && hereCourse == c.id) { onPick(null, c.id) } }
             }
         },
         confirmButton = { HButton("Cancel", onClick = onDismiss) },

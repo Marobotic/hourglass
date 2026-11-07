@@ -434,28 +434,72 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     // lists the courses, then the folders and files that are in none. Same
     // rule as the server's list_drive.
     fun drive(folderId: String?, courseId: String?): DriveView {
-        val folders = folders()
-        val known = courses().map { it.id }.toSet()
-        val files = files().map { f -> if (f.str("course_id") != null && f.str("course_id") !in known) JSONObject(f.toString()).put("course_id", JSONObject.NULL) else f }
-        val byName = compareBy<JSONObject> { it.optString("name").lowercase() }
-        if (courseId != null) {
-            val c = course(courseId)
-            return DriveView(null, c, emptyList(), emptyList(), emptyList(), files.filter { it.str("course_id") == courseId }.sortedWith(byName))
+        val allFolders = folders()
+        val allCourses = courses()
+        val known = allCourses.map { it.id }.toSet()
+        val folders = allFolders.map { f ->
+            val cid = f.str("course_id")
+            if (cid != null && cid !in known) JSONObject(f.toString()).put("course_id", JSONObject.NULL) else f
         }
+        val foldersById = folders.associateBy { it.id }
+        val files = files().map { f ->
+            var row = f
+            val cid = row.str("course_id")
+            if (cid != null && cid !in known) row = JSONObject(row.toString()).put("course_id", JSONObject.NULL)
+            val effCid = row.str("course_id")
+            val fid = row.str("folder_id")
+            if (effCid != null && fid != null && foldersById[fid]?.str("course_id") != effCid) {
+                row = JSONObject(row.toString()).put("folder_id", JSONObject.NULL)
+            }
+            row
+        }
+        val byName = compareBy<JSONObject> { it.optString("name").lowercase() }
+
+        val curFolder = folderId?.let { foldersById[it] }
+        val effCourseId = courseId ?: curFolder?.str("course_id")
+
+        if (effCourseId != null) {
+            val c = course(effCourseId)
+            val path = mutableListOf<JSONObject>()
+            var f = curFolder
+            while (f != null) {
+                path.add(0, f)
+                f = f.str("parent_id")?.let { p -> foldersById[p] }
+            }
+            return DriveView(
+                folder = curFolder,
+                course = c,
+                path = path,
+                courses = emptyList(),
+                folders = folders.filter { it.str("course_id") == effCourseId && it.str("parent_id") == folderId }.sortedWith(byName)
+                    .map { d -> d to (folders.count { it.str("parent_id") == d.id } + files.count { it.str("folder_id") == d.id }) },
+                files = files.filter { it.str("course_id") == effCourseId && it.str("folder_id") == folderId }.sortedWith(byName),
+            )
+        }
+
         val path = mutableListOf<JSONObject>()
-        var f = folderId?.let { id -> folders.firstOrNull { it.id == id } }
-        while (f != null) { path.add(0, f); f = f.str("parent_id")?.let { p -> folders.firstOrNull { it.id == p } } }
+        var f = curFolder
+        while (f != null) {
+            path.add(0, f)
+            f = f.str("parent_id")?.let { p -> foldersById[p] }
+        }
         val top = folderId == null
         return DriveView(
-            folder = path.lastOrNull(), course = null, path = path,
-            courses = if (top) courses().map { c -> c to files.count { it.str("course_id") == c.id } } else emptyList(),
-            folders = folders.filter { it.str("parent_id") == folderId }.sortedWith(byName)
+            folder = curFolder,
+            course = null,
+            path = path,
+            courses = if (top) allCourses.map { c -> c to files.count { it.str("course_id") == c.id } } else emptyList(),
+            folders = folders.filter { it.str("course_id") == null && it.str("parent_id") == folderId }.sortedWith(byName)
                 .map { d -> d to (folders.count { it.str("parent_id") == d.id } + files.count { it.str("folder_id") == d.id }) },
             files = files.filter { it.str("course_id") == null && it.str("folder_id") == folderId }.sortedWith(byName),
         )
     }
 
-    fun addFolder(name: String, parentId: String?) = store.upsert("folders", mapOf("name" to name.trim(), "parent_id" to parentId))
+    fun addFolder(name: String, parentId: String?, courseId: String? = null): JSONObject {
+        val parent = parentId?.let { pid -> folders().firstOrNull { it.id == pid } }
+        val course = parent?.str("course_id") ?: courseId
+        return store.upsert("folders", mapOf("name" to name.trim(), "parent_id" to parentId, "course_id" to course))
+    }
     fun renameDrive(table: String, id: String, name: String) = store.upsert(table, mapOf("name" to name.trim()), id)
 
     // A folder goes with everything in it.
@@ -468,19 +512,42 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     // Into a course's folder (or out of it with null), or into a folder.
     fun setFileCourse(id: String, courseId: String?) = store.upsert("files", if (courseId != null) mapOf("course_id" to courseId, "folder_id" to null) else mapOf("course_id" to null), id)
-    fun setFileFolder(id: String, folderId: String?) = store.upsert("files", mapOf("folder_id" to folderId, "course_id" to null), id)
+    fun setFileFolder(id: String, folderId: String?) {
+        val into = folderId?.let { fid -> folders().firstOrNull { it.id == fid } }
+        val course = into?.str("course_id")
+        store.upsert("files", mapOf("folder_id" to folderId, "course_id" to course), id)
+    }
 
-    // A folder into another (null = the top). Never into itself or one of its
-    // own folders: false then, and nothing changes.
-    fun moveFolder(id: String, parentId: String?): Boolean {
+    // A folder into another (null = the top, or with courseId the course's top).
+    // Never into itself or one of its own folders: false then, and nothing changes.
+    // Moving a folder into a course folder or course top sets course_id on it and everything inside it.
+    fun moveFolder(id: String, parentId: String?, courseId: String? = null): Boolean {
         val all = folders()
         var p = parentId
         while (p != null) {
             if (p == id) return false
             p = all.firstOrNull { it.id == p }?.str("parent_id")
         }
-        store.upsert("folders", mapOf("parent_id" to parentId), id)
+        val targetFolder = parentId?.let { pid -> all.firstOrNull { it.id == pid } }
+        val course = targetFolder?.str("course_id") ?: courseId
+        val f = all.firstOrNull { it.id == id }
+        val oldCourse = f?.str("course_id")
+
+        store.upsert("folders", mapOf("parent_id" to parentId, "course_id" to course), id)
+        if (oldCourse != course) {
+            updateFolderCourseTree(id, course)
+        }
         return true
+    }
+
+    private fun updateFolderCourseTree(folderId: String, courseId: String?) {
+        for (file in files().filter { it.str("folder_id") == folderId }) {
+            store.upsert("files", mapOf("course_id" to courseId), file.id)
+        }
+        for (sub in folders().filter { it.str("parent_id") == folderId }) {
+            store.upsert("folders", mapOf("course_id" to courseId), sub.id)
+            updateFolderCourseTree(sub.id, courseId)
+        }
     }
 
     // Drive links ("anyone with the link can view"), kept on the server. Each
@@ -568,7 +635,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
 
     // The folder note attachments go to when the note has no course.
     private fun attachmentsFolder(): String {
-        folders().firstOrNull { it.str("parent_id") == null && it.optString("name") == "Note attachments" }?.let { return it.id }
+        folders().firstOrNull { it.str("course_id") == null && it.str("parent_id") == null && it.optString("name") == "Note attachments" }?.let { return it.id }
         val f = addFolder("Note attachments", null)
         syncOnce() // the server checks the folder exists before taking the upload
         return f.id
@@ -603,7 +670,8 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             if (maxFile > 0 && size > maxFile) error("$name is over ${maxFile / 1_048_576} MB, the most one upload can be.")
             val folder = if (noteId != null && courseId == null) attachmentsFolder() else folderId
             val q = StringBuilder("name=").append(java.net.URLEncoder.encode(name, "UTF-8")).append("&mime=").append(java.net.URLEncoder.encode(mime, "UTF-8"))
-            if (courseId != null) q.append("&course=").append(courseId) else if (folder != null) q.append("&folder=").append(folder)
+            if (courseId != null) q.append("&course=").append(courseId)
+            if (folder != null) q.append("&folder=").append(folder)
             if (noteId != null) q.append("&note=").append(noteId)
             _uploads.value = listOf(Upload(upId, name, size)) + _uploads.value.filter { it.state == "sending" || System.currentTimeMillis() - it.at < 600_000 }
             val c = URL("${BuildConfig.SERVER}/api/files/upload?$q").openConnection() as HttpURLConnection
