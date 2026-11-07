@@ -315,8 +315,8 @@ Item {
                         required property var modelData
                         Layout.fillWidth: true; implicitHeight: 42
                         color: modelChoiceHover.containsMouse ? Theme.surface2 : "transparent"
-                        Text { anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 8; rightMargin: 28 }; text: page.modelLabel(modelData); color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
-                        Text { anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 8 }; text: "✓"; visible: page.modelSettings && page.modelSettings.model === modelData.id; color: Theme.accent; font.pixelSize: 15 }
+                        Text { anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 8; anchors.rightMargin: 28; text: page.modelLabel(modelData); color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
+                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 8; text: "✓"; visible: page.modelSettings && page.modelSettings.model === modelData.id; color: Theme.accent; font.pixelSize: 15 }
                         MouseArea { id: modelChoiceHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.selectModel(modelData.id) }
                     }
                 }
