@@ -116,7 +116,9 @@ or pass -QtRoot <folder> pointing at a 6.8.3 msvc2022_64 tree.
     if ($LASTEXITCODE -ne 0) { throw 'hourglass-shell cargo build failed' }
   } finally { Pop-Location }
   New-Item -ItemType Directory -Force (Join-Path $w 'bin') | Out-Null
-  Copy-Item (Join-Path $src 'windows\shell\hourglass-shell\target\release\hourglass-shell.exe') (Join-Path $w 'bin\hourglass-shell.exe') -Force
+  # A shared CARGO_TARGET_DIR (this PC has one) puts the exe there, not beside the crate.
+  $shellTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $src 'windows\shell\hourglass-shell\target' }
+  Copy-Item (Join-Path $shellTarget 'release\hourglass-shell.exe') (Join-Path $w 'bin\hourglass-shell.exe') -Force
   Step 'Cloud Files helper (cargo)'
   Push-Location (Join-Path $src 'server')
   try {

@@ -127,7 +127,7 @@ Modal {
     Timer { id: claudePoll; interval: 1000; repeat: true; onTriggered: Api.request("GET", "/api/assistant/claude/login/status", null, (d) => {
         if (!d) return;
         dlg.signin = d.state === "waiting_code" ? "waiting" : d.state; dlg.signinMessage = d.message || "";
-        if (d.state === "connected") { stop(); dlg.signin = ""; dlg.codeField.text = ""; dlg.engine = "claude"; dlg.load(); dlg.note = d.message || "Connected as Claude Pro/Max"; }
+        if (d.state === "connected") { stop(); dlg.signin = ""; codeField.text = ""; dlg.engine = "claude"; dlg.load(); dlg.note = d.message || "Connected as Claude Pro/Max"; }
         else if (d.state === "error") { stop(); dlg.signin = ""; dlg.error = d.message; }
     }, true) }
     function startSignin() {
