@@ -19,6 +19,7 @@ import { createFolderSync } from "./foldersync.js";
 import { createExplorerStatus, coursesRootForPair } from "./explorer-status.js";
 import { validatePairFolder } from "./drive-local-paths.js";
 import { readTree, uploadTree } from "./upload-tree.js";
+import { moveFilesToRecycleBin } from "./recycle.js";
 import { legacyCoursesDirectory, migrateLegacyCoursePairs, resolveCoursesDirectory } from "./courses-paths.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, snoozeTimerId } from "../../core/index.js";
@@ -1181,46 +1182,6 @@ async function downloadFolderFile(id, target) {
   });
   if (!response.ok) throw new Error(`download failed (${response.status})`);
   await pipeline(Readable.fromWeb(response.body), createWriteStream(target));
-}
-
-async function moveFilesToRecycleBin(paths) {
-  if (!paths.length) return;
-  if (!WIN) throw new Error("Recycle Bin sync is available on Windows only.");
-
-  const encodedPaths = Buffer.from(JSON.stringify(paths), "utf8").toString("base64");
-  const command = `
-Add-Type -AssemblyName Microsoft.VisualBasic
-$paths = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPaths}')) | ConvertFrom-Json
-$files = @($paths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Container) })
-$folders = @($paths | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Sort-Object { $_.Length } -Descending)
-foreach ($path in $files) {
-  if (Test-Path -LiteralPath $path) {
-    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile([string]$path, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
-  }
-}
-foreach ($path in $folders) {
-  if (-not (Test-Path -LiteralPath $path)) { continue }
-  if (Get-ChildItem -LiteralPath $path -Force | Select-Object -First 1) { throw "Folder is not empty: $path" }
-  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory([string]$path, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
-}
-`;
-
-  await new Promise((resolve, reject) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "-"], {
-      stdio: ["pipe", "ignore", "pipe"],
-      windowsHide: true,
-    });
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.stdin.once("error", reject);
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr.trim() || "Could not move the files to the Recycle Bin."));
-    });
-    child.stdin.end(command, "utf8");
-  });
 }
 
 const explorerStatus = createExplorerStatus({ dataDir: DATA_DIR, logger: (...args) => log(...args) });
