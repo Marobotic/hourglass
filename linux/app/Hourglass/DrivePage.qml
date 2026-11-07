@@ -33,7 +33,7 @@ Item {
     property var allFolders: [] // every folder, for "Move to…"
 
     function load() {
-        const args = course ? { course_id: course } : folder ? { folder_id: folder } : {};
+        const args = course ? { course_id: course, folder_id: folder || null } : folder ? { folder_id: folder } : {};
         Api.action("list_drive", args, d => { if (d) page.drive = d; else { page.folder = ""; page.course = ""; } });
         Api.request("GET", "/api/shares", null, (list) => {
             const m = {};
@@ -93,7 +93,7 @@ Item {
         page.problem = "";
         page.busy = "Uploading " + left + (left === 1 ? " file…" : " files…");
         const folder = into !== undefined ? into : page.folder || null;
-        const course = into !== undefined ? null : page.course || null;
+        const course = page.course || null;
         for (const u of urls) {
             Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, course: course }, (f, err) => {
                 if (err) page.problem = err;
@@ -118,12 +118,12 @@ Item {
         const target = folderId || null;
         if (it.table === "folders") {
             if (it.row.id === target || (it.row.parent_id || null) === target) return;
-            Api.request("POST", "/api/actions/move_folder", { folder_id: it.row.id, parent_id: target }, (d, err) => {
+            Api.request("POST", "/api/actions/move_folder", { folder_id: it.row.id, parent_id: target, course_id: page.course || undefined }, (d, err) => {
                 if (err) page.problem = err; else page.app.showToast("Moved " + it.row.name);
                 page.load();
             }, true);
         } else {
-            if ((it.row.folder_id || null) === target && !it.row.course_id) return;
+            if ((it.row.folder_id || null) === target && (it.row.course_id || null) === (page.course || null)) return;
             Api.action("move_file", { file_id: it.row.id, folder_id: target }, () => { page.app.showToast("Moved " + it.row.name); page.load(); });
         }
     }
@@ -135,10 +135,10 @@ Item {
         const pathOf = f => { const names = []; for (let x = f, n = 0; x && n < 20; x = byId[x.parent_id], n++) names.unshift(x.name); return names.join(" / "); };
         const inside = f => { for (let x = f, n = 0; x && n < 20; x = byId[x.parent_id], n++) if (x.id === it.row.id) return true; return false; };
         const here = it.table === "folders" ? it.row.parent_id || null : it.row.folder_id || null;
-        const list = all.filter(f => !(it.table === "folders" && inside(f)))
+        const list = all.filter(f => (page.course ? f.course_id === page.course : !f.course_id) && !(it.table === "folders" && inside(f)))
             .map(f => ({ key: "into:" + f.id, label: pathOf(f), checked: here === f.id && !it.row.course_id }))
             .sort((a, b) => a.label.localeCompare(b.label));
-        return [{ key: "into:", label: "Top of the Drive", checked: !here && !it.row.course_id }, { separator: true }].concat(list);
+        return [{ key: "into:", label: page.course ? "Top of course" : "Top of the Drive", checked: !here && (it.row.course_id || null) === (page.course || null) }, { separator: true }].concat(list);
     }
     function remove(it) {
         if (it.table === "folders")
@@ -176,7 +176,7 @@ Item {
         function save() {
             const n = nameF.text.trim();
             if (!n) return;
-            if (!target) Api.action("add_folder", page.folder ? { name: n, parent_id: page.folder } : { name: n }, () => nameDlg.close());
+            if (!target) Api.action("add_folder", page.folder ? { name: n, parent_id: page.folder } : page.course ? { name: n, course_id: page.course } : { name: n }, () => nameDlg.close());
             else Api.put("/api/" + target.table + "/" + target.row.id, { name: n }, () => nameDlg.close());
         }
         footer: [Item { Layout.fillWidth: true }, Btn { text: "Cancel"; onClicked: nameDlg.close() }, Btn { kind: "primary"; text: "Save"; onClicked: nameDlg.save() }]
@@ -219,7 +219,7 @@ Item {
         id: menu
         onPicked: key => {
             const it = page.menuItem, f = it.row;
-            if (key === "open") it.table === "folders" ? page.go(f.id, "") : page.openFile(f);
+            if (key === "open") it.table === "folders" ? page.go(f.id, page.course) : page.openFile(f);
             else if (key === "preview") preview.show(f);
             else if (key === "download") page.download(f);
             else if (key === "reveal") page.reveal(f);
@@ -381,7 +381,7 @@ Item {
                     Layout.fillWidth: true
                     spacing: 8
                     Text { Layout.fillWidth: true; text: "Drive"; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 28; font.weight: Font.Bold }
-                    Btn { visible: !page.course; icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
+                    Btn { icon: "plus"; text: "New folder"; onClicked: nameDlg.ask(null) }
                     Btn { kind: "primary"; icon: "upload"; text: "Upload"; onClicked: picker.open() }
                 }
 
@@ -438,7 +438,7 @@ Item {
                                 text: modelData.name
                                 color: index === page.drive.path.length - 1 ? Theme.fg : Theme.accent
                                 font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: modelData.course ? page.go("", modelData.id) : page.go(modelData.id, "") }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: modelData.course ? page.go("", modelData.id) : page.go(modelData.id, page.course) }
                                 DropTarget { anchors.fill: parent; anchors.margins: -6; folderId: modelData.id; visible: !modelData.course && index < page.drive.path.length - 1 }
                             }
                         }
@@ -531,7 +531,7 @@ Item {
                             onCanceled: ghost.cancel()
                             onClicked: e => {
                                 if (e.button === Qt.RightButton) { page.openMenu(item.modelData, im, e.x, e.y); return; }
-                                if (item.isFolder) page.go(item.f.id, "");
+                                if (item.isFolder) page.go(item.f.id, page.course);
                                 else if (page.isImage(item.f) || page.isVideo(item.f)) preview.show(item.f);
                                 else page.openFile(item.f);
                             }
