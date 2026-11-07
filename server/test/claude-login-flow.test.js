@@ -51,7 +51,8 @@ test("Claude login status moves through waiting_code, error, checking, and conne
   };
   let ready = false;
   for (let i = 0; i < 100; i++) {
-    if (output.includes(`127.0.0.1:${port}`)) { ready = true; break; }
+    // The listen line: the assistant's own startup line names the same address earlier.
+    if (output.includes(` on http://127.0.0.1:${port}`)) { ready = true; break; }
     if (server.exitCode !== null) break;
     await wait(50);
   }
