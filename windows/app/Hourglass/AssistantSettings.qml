@@ -14,10 +14,7 @@ Modal {
 
     property var s: null            // the server's settings
     property string engine: "free"
-    property string model: ""
     property string baseUrl: ""
-    property var apiModels: []      // an OpenAI-compatible API's models
-    property string deepSeekPriceLine: ""
     property string error: ""
     property string note: ""
     property bool saving: false
@@ -33,43 +30,13 @@ Modal {
             if (!d) { dlg.error = err || "Could not load the settings."; return; }
             dlg.s = d;
             dlg.engine = d.engine;
-            dlg.model = d.model || "";
             dlg.baseUrl = d.base_url || d.presets[0].base_url;
             keyField.text = "";
-            if (dlg.engine === "openai") dlg.loadModels();
-            dlg.loadDeepSeekPrice();
         }, true);
-    }
-    function loadModels() {
-        apiModels = [];
-        Api.request("GET", "/api/assistant/models?base_url=" + encodeURIComponent(baseUrl), null, (d) => {
-            if (d && d.models) dlg.apiModels = d.models;
-            if (d && d.error && dlg.hasKey) dlg.note = d.error;
-        }, true);
-    }
-    function loadDeepSeekPrice() {
-        if (!deepSeekSelected) { deepSeekPriceLine = ""; return; }
-        Api.request("GET", "/api/assistant/deepseek-pricing", null, d => { if (d) dlg.deepSeekPriceLine = d.line || ""; }, true);
-    }
-    function modelOptions() {
-        if (!s) return [];
-        if (engine === "free") return s.free_models.map(m => ({ label: m.name, value: m.id }));
-        if (engine === "anthropic" || engine === "claude") return s.claude_models.map(m => ({ label: modelLabel(m), value: m.id }));
-        return apiModels.map(m => ({ label: modelLabel(m), value: m.id }));
-    }
-    function modelLabel(m) {
-        let label = m.name || m.id;
-        if (m.note) label += "  · " + m.note;
-        if (m.supports_tools === false) label += "  · tools unsupported";
-        if (m.context_window) label += "  · " + (m.context_window >= 1000000 ? (m.context_window / 1000000).toFixed(1).replace(/\.0$/, "") + "M" : Math.round(m.context_window / 1000) + "k");
-        if (m.pricing && m.pricing.input !== undefined && m.pricing.output !== undefined)
-            label += "  · $" + (m.pricing.input * 1000000).toPrecision(3).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") + "/$" + (m.pricing.output * 1000000).toPrecision(3).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") + " per 1M";
-        return label;
     }
     function save() {
         error = ""; saving = true;
-        const opts = modelOptions();
-        const body = { engine: engine, model: model || (opts.length ? opts[0].value : "") };
+        const body = { engine: engine };
         if (engine === "openai") body.base_url = baseUrl;
         if (keyField.text.trim() !== "") body.key = keyField.text.trim();
         Api.request("POST", "/api/assistant/settings", body, (d, err) => {
@@ -119,10 +86,8 @@ Modal {
                 onClicked: {
                     if (dlg.engine === modelData.id) return;
                     dlg.engine = modelData.id;
-                    dlg.model = "";
                     dlg.error = ""; dlg.note = "";
                     keyField.text = "";
-                    if (dlg.engine === "openai") dlg.loadModels();
                 }
             }
         }
@@ -149,10 +114,10 @@ Modal {
             spacing: 6
             Repeater {
                 model: dlg.s ? dlg.s.presets : []
-                Btn { required property var modelData; compact: true; text: modelData.name; active: dlg.baseUrl === modelData.base_url; kind: "subtle"; onClicked: { dlg.baseUrl = modelData.base_url; dlg.model = ""; dlg.loadModels(); dlg.loadDeepSeekPrice(); } }
+                Btn { required property var modelData; compact: true; text: modelData.name; active: dlg.baseUrl === modelData.base_url; kind: "subtle"; onClicked: dlg.baseUrl = modelData.base_url }
             }
         }
-        Field { Layout.fillWidth: true; text: dlg.baseUrl; placeholderText: "https://…/v1"; onEditingFinished: { if (text !== dlg.baseUrl) { dlg.baseUrl = text.trim(); dlg.model = ""; dlg.loadModels(); dlg.loadDeepSeekPrice(); } } }
+        Field { Layout.fillWidth: true; text: dlg.baseUrl; placeholderText: "https://…/v1"; onEditingFinished: dlg.baseUrl = text.trim() }
     }
 
     // Claude plan: sign in in the browser. The server runs Claude Code's own sign-in;
@@ -162,7 +127,7 @@ Modal {
     Timer { id: claudePoll; interval: 1000; repeat: true; onTriggered: Api.request("GET", "/api/assistant/claude/login/status", null, (d) => {
         if (!d) return;
         dlg.signin = d.state === "waiting_code" ? "waiting" : d.state; dlg.signinMessage = d.message || "";
-        if (d.state === "connected") { stop(); dlg.signin = ""; dlg.codeField.text = ""; dlg.load(); dlg.note = d.message; }
+        if (d.state === "connected") { stop(); dlg.signin = ""; dlg.codeField.text = ""; dlg.engine = "claude"; dlg.load(); dlg.note = d.message || "Connected as Claude Pro/Max"; }
         else if (d.state === "error") { stop(); dlg.signin = ""; dlg.error = d.message; }
     }, true) }
     function startSignin() {
@@ -259,43 +224,6 @@ Modal {
             color: Theme.gold; font.family: Theme.mono; font.pixelSize: 12
         }
     }
-
-    // The model.
-    ColumnLayout {
-        Layout.fillWidth: true
-        spacing: 6
-        Text { text: "MODEL"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 11; font.letterSpacing: 1 }
-        Picker {
-            Layout.fillWidth: true
-            options: dlg.modelOptions()
-            value: dlg.model || (options.length ? options[0].value : null)
-            onPicked: v => dlg.model = v
-        }
-        Text {
-            visible: dlg.engine === "free" && dlg.s && dlg.s.free_model_discovery.status === "discovery failed"
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            text: "Model discovery failed; showing the configured fallback models."
-            color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
-        }
-        Text {
-            visible: dlg.engine === "openai" && dlg.apiModels.length === 0
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            text: dlg.hasKey ? "Loading this API's models…" : "Save your key first, then pick a model."
-            color: Theme.faint; font.family: Theme.mono; font.pixelSize: 12
-        }
-        Text {
-            visible: dlg.deepSeekSelected && dlg.deepSeekPriceLine !== ""
-            Layout.fillWidth: true
-            text: dlg.deepSeekPriceLine
-            color: Theme.faint
-            font.family: Theme.mono
-            font.pixelSize: 11
-        }
-    }
-
-    Timer { interval: 60000; repeat: true; running: dlg.deepSeekSelected; onTriggered: dlg.loadDeepSeekPrice() }
 
     Text { visible: dlg.note !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap; text: dlg.note; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
     Text { visible: dlg.error !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap; text: dlg.error; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 13 }
