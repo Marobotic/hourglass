@@ -73,6 +73,8 @@ test("Claude login status moves through waiting_code, error, checking, and conne
   }
   assert.equal(failed.state, "error", JSON.stringify(failed));
   assert.match(failed.message, /wasn't accepted/);
+  // The whole code#state reached the CLI's exchange, submitted by an Enter of its own.
+  assert.doesNotMatch(failed.message, /full code was copied/);
   assert.doesNotMatch(failed.message, /fakecode123|fakestate/);
 
   const direct = await call("POST", "/api/assistant/claude/login/code", { code: "sk-ant-oat01-FAKE_TEST_TOKEN", async: true });

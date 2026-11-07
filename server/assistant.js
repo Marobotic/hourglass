@@ -908,10 +908,14 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const l = live.get(t.email);
       if (!l) return Promise.reject(new Error("Sign-in was cancelled or expired. Start again."));
       if (!code || code.length < 10) return Promise.reject(new Error("Paste the code from the claude.com page."));
+      if (!l.child || childHasExited(l.child)) return Promise.reject(new Error("Sign-in was cancelled or expired. Start again."));
       l.state = "connecting"; l.message = "Connecting to Claude…";
       log(`claude login (${t.email || "owner"}): exchanging code ${String(code).slice(0, 6)}…[redacted]`);
       const before = l.out.length;
-      l.child.stdin.write(code.replace(/\s+/g, "") + "\r");
+      // Claude Code reads one write as a paste, Enter and all, and never submits it.
+      // Paste the code (bracketed, as a terminal would), then press Enter on its own.
+      l.child.stdin.write("\x1b[200~" + code.replace(/\s+/g, "") + "\x1b[201~");
+      setTimeout(() => { if (!childHasExited(l.child)) l.child.stdin.write("\r"); }, 500);
       return new Promise((resolve, reject) => {
         const began = Date.now();
         const poll = setInterval(() => {
