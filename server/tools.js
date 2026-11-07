@@ -232,7 +232,7 @@ export const TOOLS = [
     name: "list_drive",
     title: "List Drive",
     description: "The user's Drive: folders and files in one folder (omit folder_id for the top). A course has its own Drive folder (course_id), which can hold folders too: give course_id and folder_id together to look inside one. Files are downloaded at GET /api/files/<id>/raw.",
-    input: { folder_id: z.string().optional(), course_id: z.string().optional().describe("A course's Drive folder") },
+    input: { folder_id: z.string().nullable().optional(), course_id: z.string().nullable().optional().describe("A course's Drive folder") },
     readOnly: true,
     run: (s, a) => s.listDrive(a),
   },

@@ -33,7 +33,7 @@ Item {
     property var allFolders: [] // every folder, for "Move to…"
 
     function load() {
-        const args = course ? { course_id: course, folder_id: folder || null } : folder ? { folder_id: folder } : {};
+        const args = course && folder ? { course_id: course, folder_id: folder } : course ? { course_id: course } : folder ? { folder_id: folder } : {};
         Api.action("list_drive", args, d => { if (d) page.drive = d; else { page.folder = ""; page.course = ""; } });
         Api.request("GET", "/api/shares", null, (list) => {
             const m = {};
@@ -86,14 +86,15 @@ Item {
         }, true);
     }
 
-    // into: a folder id to upload there instead of here.
-    function upload(urls, into) {
+    // into: a folder id to upload there instead of here (null with intoCourse: that
+    // course's top; null alone: the Drive's top). A course's folder brings its course.
+    function upload(urls, into, intoCourse) {
         if (!urls.length) return;
         let left = urls.length;
         page.problem = "";
         page.busy = "Uploading " + left + (left === 1 ? " file…" : " files…");
         const folder = into !== undefined ? into : page.folder || null;
-        const course = page.course || null;
+        const course = into !== undefined ? intoCourse || null : page.course || null;
         for (const u of urls) {
             Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, course: course }, (f, err) => {
                 if (err) page.problem = err;
@@ -113,18 +114,24 @@ Item {
     }
     function reveal(f) { Api.request("POST", "/api/files/" + f.id + "/reveal", {}, (d, err) => { if (err) page.problem = err; }, true); }
     function moveTo(f, courseId) { Api.action("move_file", { file_id: f.id, course: courseId }, () => page.load()); }
-    // A file or folder into a folder ("" = the top of the Drive).
-    function moveInto(it, folderId) {
+    // A file or folder into a folder (a course's folder takes it into the course too),
+    // or with folderId "" to the top of courseId's folder, or of the Drive.
+    function moveInto(it, folderId, courseId) {
         const target = folderId || null;
+        const course = target ? undefined : courseId || null;
+        const done = () => { page.app.showToast("Moved " + it.row.name); page.load(); };
         if (it.table === "folders") {
-            if (it.row.id === target || (it.row.parent_id || null) === target) return;
-            Api.request("POST", "/api/actions/move_folder", { folder_id: it.row.id, parent_id: target, course_id: page.course || undefined }, (d, err) => {
+            if (it.row.id === target) return;
+            if ((it.row.parent_id || null) === target && (target || (it.row.course_id || null) === course)) return;
+            const args = { folder_id: it.row.id, parent_id: target };
+            if (course) args.course_id = course;
+            Api.request("POST", "/api/actions/move_folder", args, (d, err) => {
                 if (err) page.problem = err; else page.app.showToast("Moved " + it.row.name);
                 page.load();
             }, true);
         } else {
-            if ((it.row.folder_id || null) === target && (it.row.course_id || null) === (page.course || null)) return;
-            Api.action("move_file", { file_id: it.row.id, folder_id: target }, () => { page.app.showToast("Moved " + it.row.name); page.load(); });
+            if ((it.row.folder_id || null) === target && (target || (it.row.course_id || null) === course)) return;
+            Api.action("move_file", target || !course ? { file_id: it.row.id, folder_id: target } : { file_id: it.row.id, course: course }, done);
         }
     }
     // Every folder as "Parent / Child" paths, for "Move to…". A folder can't go into itself.
@@ -224,7 +231,7 @@ Item {
             else if (key === "download") page.download(f);
             else if (key === "reveal") page.reveal(f);
             else if (key.startsWith("course:")) page.moveTo(f, key.slice(7) || null);
-            else if (key.startsWith("into:")) page.moveInto(it, key.slice(5));
+            else if (key.startsWith("into:")) page.moveInto(it, key.slice(5), page.course);
             else if (key === "share") shareDlg.ask(it);
             else if (key === "rename") nameDlg.ask(it);
             else if (key === "delete") page.remove(it);
@@ -271,6 +278,7 @@ Item {
     component DropTarget: DropArea {
         id: dt
         property string folderId: ""
+        property string courseId: "" // with folderId "": that course's top, not the Drive's
         property string exclude: "" // a folder can't go into itself
         keys: ["hg-drive", "text/uri-list"]
         onEntered: d => {
@@ -278,8 +286,8 @@ Item {
             if (!ghost.item || (ghost.item.table === "folders" && ghost.item.row.id === dt.exclude)) d.accepted = false;
         }
         onDropped: d => {
-            if (d.hasUrls) { d.accept(Qt.CopyAction); page.upload(d.urls, dt.folderId || null); return; }
-            if (ghost.item) page.moveInto(ghost.item, dt.folderId);
+            if (d.hasUrls) { d.accept(Qt.CopyAction); page.upload(d.urls, dt.folderId || null, dt.courseId); return; }
+            if (ghost.item) page.moveInto(ghost.item, dt.folderId, dt.courseId);
         }
         Rectangle { anchors.fill: parent; visible: dt.containsDrag; color: Theme.alpha(Theme.accent, 0.16); border.width: 2; border.color: Theme.accent }
     }
@@ -439,7 +447,7 @@ Item {
                                 color: index === page.drive.path.length - 1 ? Theme.fg : Theme.accent
                                 font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: modelData.course ? page.go("", modelData.id) : page.go(modelData.id, page.course) }
-                                DropTarget { anchors.fill: parent; anchors.margins: -6; folderId: modelData.id; visible: !modelData.course && index < page.drive.path.length - 1 }
+                                DropTarget { anchors.fill: parent; anchors.margins: -6; folderId: modelData.course ? "" : modelData.id; courseId: modelData.course ? modelData.id : ""; visible: index < page.drive.path.length - 1 }
                             }
                         }
                     }

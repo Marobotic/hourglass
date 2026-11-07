@@ -43,6 +43,7 @@ ApplicationWindow {
     property var settings: ({})
     property bool devLogin: false
     property string devLoginMode: "" // dev: --login create | forgot
+    property bool devNoLogin: false // dev: --no-login, pages of a signed-out test copy for screenshots
     property string scheduleMode: "week"
     property string shotPath: "" // dev: render, save a PNG, quit
     property string devOpen: ""  // dev: note | course | event | session
@@ -58,6 +59,7 @@ ApplicationWindow {
             if (app.devOpen === "event") app.editEvent(null);
             if (app.devOpen === "session") app.openSession(f);
             if (app.devOpen.startsWith("note:")) Api.get("/api/notes/" + app.devOpen.slice(5), n => app.editingNote = n);
+            if (app.devOpen.startsWith("drive:")) { const p = app.devOpen.split(":"); drivePage.go(p[2] || "", p[1] || ""); } // drive:<course>:<folder>
             if (app.devSyncLocal) {
                 if (app.devOpen === "local-picker") {
                     drivePage.localFolderPicker.currentFolder = drivePage.localUrl(app.devSyncLocal);
@@ -113,6 +115,7 @@ ApplicationWindow {
             if (a[i] === "--sync-local") devSyncLocal = a[i + 1];
             if (a[i] === "--schedule") scheduleMode = a[i + 1];
             if (a[i] === "--login") { app.devLogin = true; app.devLoginMode = a[i + 1]; }
+            if (a[i] === "--no-login") app.devNoLogin = true;
             if (a[i] === "--size") { const wh = a[i + 1].split("x"); app.width = +wh[0]; app.height = +wh[1]; }
         }
         pollState();
@@ -588,7 +591,7 @@ ApplicationWindow {
         LoginPage {
             anchors.fill: parent
             app: app
-            visible: app.loaded && (app.devLogin || (!!app.appState.account && !app.appState.account.signed_in))
+            visible: app.loaded && (app.devLogin || (!app.devNoLogin && !!app.appState.account && !app.appState.account.signed_in))
         }
     }
 
