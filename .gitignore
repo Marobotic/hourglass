@@ -16,3 +16,4 @@ windows/qt/
 android/app/hourglass.json.tmp
 tools/qmltest-live/devstack.js
 server/calls.jsonl
+android/.kotlin/
