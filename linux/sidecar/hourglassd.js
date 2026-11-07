@@ -674,6 +674,7 @@ async function driveRoutes(req, res, url, path) {
     const b = await readBody(req);
     const file = decodeURIComponent(String(b.path || "").replace(/^file:\/\/\/?/, WIN ? "" : "/"));
     if (!existsSync(file)) return json(res, 400, { error: "file not found" }), true;
+    if (statSync(file).isDirectory()) return json(res, 400, { error: `${file.split(/[\\/]/).pop()} is a folder: drop the files in it` }), true;
     const { server, token } = config();
     if (!server) return json(res, 401, { error: "sign in to upload" }), true;
     // Too big for one upload (the server says how big): say so before sending.
@@ -1001,3 +1002,6 @@ createServer((req, res) => {
 });
 
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, quitAll);
+// An error nothing else caught goes in the log; alarms and sync keep running.
+process.on("uncaughtException", (e) => log("uncaught:", e?.stack || e));
+process.on("unhandledRejection", (e) => log("unhandled rejection:", e?.stack || e));

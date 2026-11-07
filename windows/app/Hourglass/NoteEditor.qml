@@ -80,7 +80,8 @@ Rectangle {
             ed.uploading = left > 1 ? "Uploading " + left + " files…" : "Uploading…";
             for (const u of urls) {
                 Api.request("POST", "/api/files/upload", { path: u.toString(), folder: folder, course: course || null, note: ed.loadedId }, (f, err) => {
-                    if (f) ed.insertFile(f);
+                    if (f && f.files) f.files.forEach(x => ed.insertFile(x)); // a folder: each file in it
+                    else if (f) ed.insertFile(f);
                     if (--left === 0) ed.uploading = err ? err : "";
                 }, true);
             }

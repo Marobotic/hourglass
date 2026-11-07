@@ -172,6 +172,12 @@ Item {
             for (const a of added) {
                 if (!f) { page.setAttachment(a.key, { error: err || "Could not upload" }); continue; }
                 Api.request("POST", "/api/files/upload", { path: a.url, folder: f.folder_id }, (row, upErr) => {
+                    if (row && row.files) { // a folder: one attachment per file in it
+                        const i = page.attachments.findIndex(x => x.key === a.key);
+                        const each = row.files.map(r => ({ key: r.id, id: r.id, mime: r.mime, name: r.name }));
+                        if (i >= 0) page.attachments = page.attachments.slice(0, i).concat(each, page.attachments.slice(i + 1));
+                        return;
+                    }
                     page.setAttachment(a.key, row ? { id: row.id, mime: row.mime, name: row.name } : { error: upErr || "Could not upload" });
                 }, true);
             }

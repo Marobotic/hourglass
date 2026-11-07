@@ -18,6 +18,7 @@ import { Store } from "../../core/node/store.js";
 import { createFolderSync } from "./foldersync.js";
 import { createExplorerStatus, coursesRootForPair } from "./explorer-status.js";
 import { validatePairFolder } from "./drive-local-paths.js";
+import { readTree, uploadTree } from "./upload-tree.js";
 import { legacyCoursesDirectory, migrateLegacyCoursePairs, resolveCoursesDirectory } from "./courses-paths.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, snoozeTimerId } from "../../core/index.js";
@@ -954,6 +955,55 @@ function endUpload(u, error) {
   u.at = Date.now();
 }
 
+// One file to the Drive (into folder, or course; note: the note it's in), shown in the
+// upload panel while it goes. Throws an error with .status.
+async function sendFile(file, { folder, course, note, max }) {
+  const { server, token } = config();
+  const name = file.split(/[\\/]/).pop();
+  const fail = (status, error) => Object.assign(new Error(error), { status });
+  if (!server) throw fail(401, "sign in to upload");
+  const size = statSync(file).size;
+  if (max && size > max) throw fail(413, `${name} is over ${Math.round(max / 1048576)} MB, the most one upload can be.`);
+  const q = new URLSearchParams({ name });
+  if (folder) q.set("folder", folder);
+  if (course) q.set("course", course);
+  if (note) q.set("note", note);
+  const up = startUpload(name, size);
+  // A file that can't be read (locked, gone) ends its upload, not the sidecar.
+  let readError = null;
+  const src = createReadStream(file);
+  const body = src.pipe(counting(up));
+  src.on("error", (e) => { readError = e; body.destroy(e); });
+  let r, out;
+  try {
+    r = await fetch(`${server}/api/files/upload?${q}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(size), "x-hourglass-device": deviceName() },
+      body,
+      duplex: "half",
+      signal: AbortSignal.any([AbortSignal.timeout(3600000), up.ctrl.signal]),
+    });
+    out = await r.json().catch(() => ({}));
+  } catch (e) {
+    src.destroy();
+    const cancelled = up.ctrl.signal.aborted;
+    const why = cancelled ? "Cancelled" : readError ? `Could not read ${name} (${readError.code || readError.message}).` : "The upload stopped: the connection to the server dropped.";
+    endUpload(up, why);
+    throw fail(cancelled ? 499 : readError ? 400 : 503, cancelled ? `${name}: upload cancelled` : why);
+  }
+  if (!r.ok) {
+    endUpload(up, out.error || `upload failed (${r.status})`);
+    throw fail(r.status, out.error || `upload failed (${r.status})`);
+  }
+  endUpload(up);
+  // This computer keeps a copy, so it opens at once and edits sync back.
+  const f = copyPath(out);
+  mkdirSync(dirname(f), { recursive: true });
+  copyFileSync(file, f);
+  remember(out, f);
+  return out;
+}
+
 async function driveRoutes(req, res, url, path) {
   const m = req.method;
   if (path === "/api/uploads" && m === "GET") return json(res, 200, [...uploads.values()].map(uploadView)), true;
@@ -970,55 +1020,41 @@ async function driveRoutes(req, res, url, path) {
   if (path === "/api/drive/info" && m === "GET") return json(res, 200, { file_base: `http://127.0.0.1:${PORT}/files/`, thumb_base: `http://127.0.0.1:${PORT}/thumbs/`, key: FILE_KEY }), true;
   if (path === "/api/drive/usage" && m === "GET") return json(res, 200, await remote("/api/drive/usage")), true;
   // Upload a file from this computer: { path, folder, course, note }. Streams to the server.
+  // A folder brings what is in it: its folders too into a Drive folder, only the files
+  // into a course or a note (they hold no folders).
   if (path === "/api/files/upload" && m === "POST") {
     const b = await readBody(req);
     const file = decodeURIComponent(String(b.path || "").replace(/^file:\/\/\/?/, WIN ? "" : "/"));
     if (!existsSync(file)) return json(res, 400, { error: "file not found" }), true;
-    const { server, token } = config();
-    if (!server) return json(res, 401, { error: "sign in to upload" }), true;
-    // Too big for one upload (the server says how big): say so before sending.
+    if (!config().server) return json(res, 401, { error: "sign in to upload" }), true;
+    // Too big for one upload (the server says how big): said before sending.
     const max = (await remote("/api/drive/usage").catch(() => null))?.max_file;
-    if (max && statSync(file).size > max) {
-      return json(res, 413, { error: `${file.split(/[\\/]/).pop()} is over ${Math.round(max / 1048576)} MB, the most one upload can be.` }), true;
-    }
     // A folder or note made a moment ago must reach the server first.
     await syncOnce();
-    const name = file.split(/[\\/]/).pop();
-    const q = new URLSearchParams({ name });
-    if (b.folder) q.set("folder", b.folder);
-    if (b.course) q.set("course", b.course);
-    if (b.note) q.set("note", b.note);
-    const size = statSync(file).size;
-    const up = startUpload(name, size);
-    let r, out;
-    const src = createReadStream(file);
-    try {
-      r = await fetch(`${server}/api/files/upload?${q}`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": String(size), "x-hourglass-device": deviceName() },
-        body: src.pipe(counting(up)),
-        duplex: "half",
-        signal: AbortSignal.any([AbortSignal.timeout(3600000), up.ctrl.signal]),
+    const to = { folder: b.folder || null, course: b.course || null, note: b.note || null, max };
+    if (statSync(file).isDirectory()) {
+      const out = await uploadTree(readTree(file), {
+        flat: !!(to.course || to.note),
+        parent: to.folder,
+        addFolder: async (name, parent_id) => {
+          const row = service.addFolder({ name, parent_id });
+          await syncOnce(); // the server takes no file into a folder it doesn't have
+          if (store.dirtyRows().folders.some((r) => r.id === row.id)) throw new Error(`${name}: the folder could not reach the server`);
+          return row;
+        },
+        upload: (f, folder) => sendFile(f.path, { ...to, folder }),
       });
-      out = await r.json().catch(() => ({}));
+      await syncOnce();
+      if (!out.files.length && out.failed.length) return json(res, 400, { ...out, error: out.failed[0].error }), true;
+      return json(res, 200, out), true;
+    }
+    try {
+      const row = await sendFile(file, to);
+      await syncOnce();
+      return json(res, 200, row), true;
     } catch (e) {
-      src.destroy();
-      const why = up.ctrl.signal.aborted ? "Cancelled" : "The upload stopped: the connection to the server dropped.";
-      endUpload(up, why);
-      return json(res, up.ctrl.signal.aborted ? 499 : 503, { error: up.ctrl.signal.aborted ? `${name}: upload cancelled` : why }), true;
+      return json(res, e.status || 500, { error: e.message }), true;
     }
-    if (!r.ok) {
-      endUpload(up, out.error || `upload failed (${r.status})`);
-      return json(res, r.status, { error: out.error || `upload failed (${r.status})` }), true;
-    }
-    endUpload(up);
-    // This computer keeps a copy, so it opens at once and edits sync back.
-    const f = copyPath(out);
-    mkdirSync(dirname(f), { recursive: true });
-    copyFileSync(file, f);
-    remember(out, f);
-    await syncOnce();
-    return json(res, 200, out), true;
   }
   // Download (if needed) and give the local copy, to open with its app.
   const loc = /^\/api\/files\/([0-9a-f-]{36})\/local$/.exec(path);
@@ -1733,3 +1769,6 @@ createServer((req, res) => {
 });
 
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, quitAll);
+// An error nothing else caught goes in the log; alarms and sync keep running.
+process.on("uncaughtException", (e) => log("uncaught:", e?.stack || e));
+process.on("unhandledRejection", (e) => log("unhandled rejection:", e?.stack || e));
