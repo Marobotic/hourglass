@@ -43,6 +43,10 @@ jobs:
           Copy-Item assets "$d\assets" -Recurse
           Remove-Item "$d\core\test", "$d\server\test" -Recurse -Force
           foreach ($x in "app", "sidecar", "bin", "share", "tools") { Copy-Item "windows\$x" $w -Recurse -Force }
+          # The Explorer sync helper (Cloud Files): without it every synced folder is skipped.
+          cargo build --manifest-path windows\shell\hourglass-shell\Cargo.toml --release --locked
+          if ($LASTEXITCODE -ne 0) { throw "hourglass-shell build failed" }
+          Copy-Item windows\shell\hourglass-shell\target\release\hourglass-shell.exe "$w\bin"
           Copy-Item windows\Hourglass.ps1, windows\Hourglass.vbs, windows\Install.ps1, windows\hourglass.ico, windows\README.txt $w
           Copy-Item (Get-Command node).Source "$w\node\node.exe"
           # Full Nerd Font: the app's icons are Nerd Font glyphs.
@@ -58,6 +62,7 @@ jobs:
           # Hourglass.exe / hourglassd.exe: named copies, so Task Manager says Hourglass.
           & "$w\tools\brand.ps1"
           if (-not (Test-Path "$w\qt\bin\Hourglass.exe") -or -not (Test-Path "$w\node\hourglassd.exe")) { throw "branding failed" }
+          if (-not (Test-Path "$w\bin\hourglass-shell.exe")) { throw "hourglass-shell.exe missing from the package" }
           "version=$(node -p "require('fs').readFileSync('server/app.js','utf8').match(/VERSION = \x22([^\x22]+)/)[1]")" >> $env:GITHUB_ENV
 
       # Start the service with a throwaway profile (no sync, no update check) and
