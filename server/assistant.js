@@ -46,7 +46,7 @@ import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
 import { INSTRUCTIONS, TOOLS, needsApproval, runTool, toolPermission } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
-import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
+import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, apiUrl, engineEntries, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
 import { deepSeekPriceState, isDeepSeekBaseUrl } from "./deepseek.js";
 import { claudeCliExcerpt, detectClaudeLoginPaste, mapClaudeLoginError, parseClaudeLoginUrl, parseClaudeSetupToken, redactClaudeSecrets, stripTerminalSequences } from "./claude-login.js";
 
@@ -1029,7 +1029,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const live = running.get(t.email);
       const chat = live ? live.chat : loadChat(t);
       const cfg = settings.view(t);
-      return send(res, 200, { enabled: true, engine: cfg.engine, model: modelName(cfg), mode: chat.mode || "auto", busy: !!live, messages: chat.messages.map(view) }), true;
+      return send(res, 200, { enabled: true, engine: cfg.engine, engine_name: cfg.engine_name, base_url: cfg.base_url, model: modelName(cfg), mode: chat.mode || "auto", busy: !!live, messages: chat.messages.map(view) }), true;
     }
 
     if (path === "/api/assistant/mode" && m === "POST") {
@@ -1131,13 +1131,14 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         ? discovery.list.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "discovered" }))
         : models.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "configured" }));
       const claude = await claudeModelsFor(t);
-      return send(res, 200, { ...settings.view(t), engines: ENGINES, claude_models: claude.models, claude_model_source: claude.source, free_models: freeList, free_model_discovery: { status: discovery.status, configured: models }, presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
+      const cfg = settings.view(t);
+      return send(res, 200, { ...cfg, engines: engineEntries(cfg), claude_models: claude.models, claude_model_source: claude.source, free_models: freeList, free_model_discovery: { status: discovery.status, configured: models }, presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
     }
     if (path === "/api/assistant/settings" && (m === "PUT" || m === "POST")) {
       const b = await readJson(req);
       const engine = String(b.engine || settings.view(t).engine);
       if (!ENGINES.some((e) => e.id === engine)) return send(res, 400, { error: "unknown engine" }), true;
-      const base_url = b.base_url !== undefined ? String(b.base_url || "").trim().replace(/\/+$/, "") : undefined;
+      const base_url = engine === "openai" ? apiUrl(b.base_url ?? settings.view(t).base_url) : undefined;
       // https only, so the server can't be pointed at its own local services (tests run a local fake).
       if (base_url && !/^https:\/\/[^\s/]+/.test(base_url) && !(process.env.HOURGLASS_TEST_HTTP_API === "1" && /^http:\/\/127\.0\.0\.1:\d+/.test(base_url))) return send(res, 400, { error: "The API address must start with https://" }), true;
       const key = b.key !== undefined ? String(b.key || "").trim() : undefined;
@@ -1163,7 +1164,16 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         const available = await claudeModelsFor(t, cfg);
         if (!available.models.some((x) => x.id === model)) return send(res, 400, { error: "Unknown Claude model." }), true;
       }
-      return send(res, 200, settings.save(t, { engine, model, base_url, key })), true;
+      // A newly connected API must be usable immediately, before opening the model picker.
+      let selectedModel = model;
+      if (engine === "openai" && model === undefined && !settings.view(t).models[settings.keySlot(engine, base_url)]) {
+        const apiKey = key || settings.get(t).keys[settings.keySlot(engine, base_url)];
+        if (apiKey) {
+          try { selectedModel = (await listOpenAIModels({ key: apiKey, base_url }))[0]?.id; }
+          catch (e) { return send(res, 400, { error: "Could not load this API's models. Try saving again." }), true; }
+        }
+      }
+      return send(res, 200, settings.save(t, { engine, model: selectedModel, base_url, key })), true;
     }
     // Sign in with Claude in the browser: the server runs Claude Code's own sign-in
     // (`claude setup-token`), the app opens its link, the user signs in on claude.com
@@ -1184,8 +1194,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         if (lstatus.state !== "checking") throw new Error("Sign-in was cancelled or expired. Start again.");
         log(`claude login (${t.email || "owner"}): checking subscription ${redactClaudeSecrets(token)}`);
         await checkClaudeTokenAsync(token);
-        const cfg = settings.view(t);
-        settings.save(t, { engine: "claude", model: cfg.engine === "claude" ? undefined : null, key: token });
+        settings.save(t, { engine: "claude", key: token });
         claudeLogin.connected(t);
       };
       const run = async () => {
@@ -1216,6 +1225,12 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     // The models an OpenAI-compatible API offers with the saved (or given) key.
     if (path === "/api/assistant/models" && m === "GET") {
       const u = new URL(req.url, "http://x");
+      const engine = u.searchParams.get("engine") || settings.view(t).engine;
+      if (!u.searchParams.has("base_url") && engine === "free") {
+        const discovery = listFreeModels();
+        return send(res, 200, { models: (discovery.status === "discovered" ? discovery.list : models).map((id) => ({ id, name: id.replace(/^opencode\//, "") })) }), true;
+      }
+      if (!u.searchParams.has("base_url") && (engine === "claude" || engine === "anthropic")) return send(res, 200, await claudeModelsFor(t)), true;
       const base_url = (u.searchParams.get("base_url") || settings.view(t).base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "");
       const key = settings.get(t).keys[settings.keySlot("openai", base_url)];
       if (!key) return send(res, 200, { models: [], error: "Add a key for this API first." }), true;

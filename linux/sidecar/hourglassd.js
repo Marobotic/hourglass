@@ -153,7 +153,7 @@ async function remote(path, { method = "GET", body, bearer = config().token, raw
   // fails at once: try once more before telling anyone.
   for (let attempt = 0; ; attempt++) {
     try {
-      r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(raw ? 120000 : 15000) });
+      r = await fetch(SERVER + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)), signal: AbortSignal.timeout(path === "/api/assistant/claude/login/code" ? 210000 : path.startsWith("/api/assistant") ? 60000 : raw ? 120000 : 15000) });
       break;
     } catch (e) {
       const slow = e.name === "TimeoutError";

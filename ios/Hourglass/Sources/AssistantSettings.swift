@@ -58,8 +58,10 @@ struct AssistantSettingsSheet: View {
     }
     private func loadModels() async {
         apiModels = []
-        let enc = baseUrl.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+        let requestedUrl = baseUrl
+        let enc = requestedUrl.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
         if let d = try? await store.assistant("GET", "/models?base_url=" + enc) {
+            guard engine == "openai", baseUrl == requestedUrl else { return }
             apiModels = d["models"] as? [[String: Any]] ?? []
             if let e = d["error"] as? String, !e.isEmpty, hasKey { note = e }
         }
@@ -73,10 +75,10 @@ struct AssistantSettingsSheet: View {
                     if (engine == "claude" || engine == "anthropic") && (s?["claude_model_source"] as? String) == "fallback" { T("Using the default Claude model list.", 11, H.muted) }
                     ForEach(Array(list("engines").enumerated()), id: \.offset) { _, e in
                         let id = e["id"] as? String ?? ""
-                        let on = engine == id
+                        let on = engine == id && (id != "openai" || baseUrl == (e["base_url"] as? String ?? ""))
                         Button {
                             guard !on else { return }
-                            engine = id; model = ""; error = ""; note = ""; key = ""
+                            engine = id; if id == "openai" { baseUrl = e["base_url"] as? String ?? "" }; model = (s?["models"] as? [String: Any])?[id == "openai" ? "openai:" + baseUrl : id] as? String ?? ""; error = ""; note = ""; key = ""
                             if id == "openai" { Task { await loadModels() } }
                         } label: {
                             HStack(spacing: 12) {
@@ -103,7 +105,7 @@ struct AssistantSettingsSheet: View {
                             HStack(spacing: 6) {
                                 ForEach(Array(list("presets").enumerated()), id: \.offset) { _, p in
                                     let url = p["base_url"] as? String ?? ""
-                                    Button { baseUrl = url; model = ""; Task { await loadModels() } } label: {
+                                    Button { baseUrl = url; key = ""; model = (s?["models"] as? [String: Any])?["openai:" + url] as? String ?? ""; Task { await loadModels() } } label: {
                                         T(p["name"] as? String ?? "", 12, baseUrl == url ? H.fg : H.muted)
                                             .padding(.horizontal, 10).padding(.vertical, 6)
                                             .overlay(Rectangle().stroke(baseUrl == url ? H.accent : H.border, lineWidth: 1))
@@ -150,7 +152,7 @@ struct AssistantSettingsSheet: View {
                     if engine != "free" && engine != "claude" {
                         label(engine == "claude" ? "CLAUDE TOKEN" : "API KEY")
                         if engine == "claude" { T("On your own PC, run claude setup-token in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints.", 12, H.faint) }
-                        SecureField("", text: $key, prompt: Text(hasKey ? "Saved ✓ (paste a new one to replace it)" : engine == "anthropic" ? "sk-ant-api…" : engine == "claude" ? "sk-ant-oat…" : isDeepSeek ? "DeepSeek API key" : "Your API key").foregroundStyle(H.faint))
+                        SecureField("", text: $key, prompt: Text(hasKey ? "•••••••• (saved; paste to replace)" : engine == "anthropic" ? "sk-ant-api…" : engine == "claude" ? "sk-ant-oat…" : isDeepSeek ? "DeepSeek API key" : "Your API key").foregroundStyle(H.faint))
                             .font(H.mono(14)).foregroundStyle(H.fg).padding(10).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
                         if isDeepSeek, let url = URL(string: "https://platform.deepseek.com/api_keys") { Link("Get a DeepSeek API key", destination: url).font(H.mono(11)).foregroundStyle(H.muted) }
                     }
@@ -182,11 +184,12 @@ struct AssistantSettingsSheet: View {
             .navigationTitle("Assistant AI")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.foregroundStyle(H.muted) }
+                ToolbarItem(placement: .cancellationAction) { Button("← Back") { dismiss() }.keyboardShortcut(.cancelAction).foregroundStyle(H.muted) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saving ? "Checking…" : "Save") {
                         error = ""; saving = true
-                        var body: [String: Any] = ["engine": engine, "model": current]
+                        var body: [String: Any] = ["engine": engine]
+                        if !model.isEmpty { body["model"] = model }
                         if engine == "openai" { body["base_url"] = baseUrl }
                         let k = key.trimmingCharacters(in: .whitespaces)
                         if !k.isEmpty { body["key"] = k }

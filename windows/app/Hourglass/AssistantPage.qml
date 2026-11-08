@@ -252,7 +252,7 @@ Item {
         const shortName = m.replace(/^opencode\//, "").replace(/^claude-/, "").replace(/-(\d+)-(\d+)$/, " $1.$2").replace(/^./, c => c.toUpperCase());
         if (page.chat.engine === "anthropic") return "Claude API · " + shortName;
         if (page.chat.engine === "claude") return "Claude plan · " + shortName;
-        if (page.chat.engine === "openai") return "API · " + (m || "pick a model");
+        if (page.chat.engine === "openai") return (page.chat.engine_name || "API") + " · " + (m || "pick a model");
         return "Free · " + (shortName || "auto");
     }
     function modelLabel(m) {

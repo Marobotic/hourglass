@@ -124,7 +124,7 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.ok(settings.body.free_models.some((m) => m.id === "opencode/beam-free"));
   assert.ok(settings.body.free_models.every((m) => m.source === "discovered"));
   const empty = await call("GET", "/api/assistant");
-  assert.deepEqual(empty.body, { enabled: true, engine: "free", model: "fake/down", mode: "auto", busy: false, messages: [] });
+  assert.deepEqual(empty.body, { enabled: true, engine: "free", engine_name: "Free", base_url: null, model: "fake/down", mode: "auto", busy: false, messages: [] });
 
   assert.equal((await call("POST", "/api/assistant/message", { text: "Buy eggs and milk" })).status, 202);
   const chat = await waitIdle();

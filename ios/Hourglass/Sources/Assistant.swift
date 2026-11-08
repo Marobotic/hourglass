@@ -22,6 +22,10 @@ struct AssistantView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importing = false
     @State private var settingsOpen = false
+    @State private var modelSettings: [String: Any] = [:]
+    @State private var modelChoices: [[String: Any]] = []
+    @State private var modelProblem = ""
+    @State private var modelSaving = false
     @State private var driveOpen = false
     @State private var driveItems: [[String: Any]] = []
     @State private var driveFolder = ""
@@ -46,11 +50,32 @@ struct AssistantView: View {
         switch chat["engine"] as? String {
         case "anthropic": return "Claude API · " + short
         case "claude": return "Claude plan · " + short
-        case "openai": return "API · " + (m.isEmpty ? "pick a model" : m)
+        case "openai": return (chat["engine_name"] as? String ?? "API") + " · " + (m.isEmpty ? "pick a model" : m)
         default: return "Free · " + (short.isEmpty ? "auto" : short)
         }
     }
     private var serverBusy: Bool { chat["busy"] as? Bool ?? false }
+    private func loadModels() async {
+        do {
+            let cfg = try await store.assistant("GET", "/settings")
+            let engine = cfg["engine"] as? String ?? "free"
+            let query = engine == "openai" ? "?base_url=" + ((cfg["base_url"] as? String ?? "").addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "") : "?engine=" + engine
+            let result = try await store.assistant("GET", "/models" + query)
+            modelSettings = cfg
+            modelChoices = result["models"] as? [[String: Any]] ?? []
+            modelProblem = result["error"] as? String ?? ""
+        } catch { modelProblem = error.localizedDescription }
+    }
+    private func selectModel(_ id: String) {
+        var body: [String: Any] = ["engine": modelSettings["engine"] as? String ?? "free", "model": id]
+        if body["engine"] as? String == "openai" { body["base_url"] = modelSettings["base_url"] }
+        modelSaving = true
+        Task {
+            do { _ = try await store.assistant("POST", "/settings", body); await load(); await loadModels() }
+            catch { modelProblem = error.localizedDescription }
+            modelSaving = false
+        }
+    }
     // The answer being worked on: its steps show live under Working.
     private var current: [String: Any]? {
         guard serverBusy, let last = messages(chat).last, last["role"] as? String == "assistant" else { return nil }
@@ -233,6 +258,20 @@ struct AssistantView: View {
 
             // Permission mode mirrors the desktop assistant.
             HStack(spacing: 6) {
+                Menu {
+                    ForEach(Array(modelChoices.enumerated()), id: \.offset) { _, choice in
+                        let id = choice["id"] as? String ?? ""
+                        Button((modelSettings["model"] as? String == id ? "✓ " : "") + (choice["name"] as? String ?? id)) { selectModel(id) }
+                    }
+                    if !modelProblem.isEmpty { Text(modelProblem) }
+                    if modelChoices.isEmpty && modelProblem.isEmpty { Text("Loading models…") }
+                    Button("Change AI…") { settingsOpen = true }
+                } label: {
+                    T(engineLabel + " ▾", 11, H.fg, lines: 1).padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(H.surface2).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                }
+                .disabled(modelSaving)
+                .task(id: engineLabel) { await loadModels() }
                 ForEach(Array([("ask", "Ask"), ("auto", "Auto"), ("dangerous", "Dangerous")].enumerated()), id: \.offset) { _, pair in
                     let value = pair.0, title = pair.1
                     Button { setMode(value) } label: {

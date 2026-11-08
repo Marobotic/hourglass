@@ -118,7 +118,7 @@ private fun engineLabel(chat: JSONObject?): String {
     return when (chat?.optString("engine")) {
         "anthropic" -> "Claude API · $short"
         "claude" -> "Claude plan · $short"
-        "openai" -> "API · " + m.ifBlank { "pick a model" }
+        "openai" -> (chat?.optString("engine_name").orEmpty().ifBlank { "API" }) + " · " + m.ifBlank { "pick a model" }
         else -> "Free · " + short.ifBlank { "auto" }
     }
 }
@@ -140,6 +140,27 @@ fun AssistantScreen(nav: Nav) {
     var problem by remember { mutableStateOf<String?>(null) }
     var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var modelOpen by remember { mutableStateOf(false) }
+    var modelSettings by remember { mutableStateOf<JSONObject?>(null) }
+    var modelChoices by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var modelProblem by remember { mutableStateOf("") }
+    var modelsLoading by remember { mutableStateOf(false) }
+    var modelSaving by remember { mutableStateOf(false) }
+    fun openModels() {
+        modelOpen = true; modelsLoading = true; modelProblem = ""; modelChoices = emptyList(); modelSettings = null
+        repo.assistant("GET", "/settings") { settings, err ->
+            if (settings == null) { modelProblem = err ?: "Could not load models."; modelsLoading = false }
+            else {
+                modelSettings = settings
+                val query = if (settings.optString("engine") == "openai") "?base_url=" + android.net.Uri.encode(settings.optString("base_url")) else "?engine=" + settings.optString("engine")
+                repo.assistant("GET", "/models$query") { d, modelErr ->
+                    modelChoices = d?.optJSONArray("models").list()
+                    modelProblem = modelErr ?: d?.optString("error").orEmpty()
+                    modelsLoading = false
+                }
+            }
+        }
+    }
     var driveOpen by remember { mutableStateOf(false) }
     var driveEntries by remember { mutableStateOf<List<DriveEntry>>(emptyList()) }
     var driveTitle by remember { mutableStateOf("Choose a Drive file") }
@@ -362,9 +383,30 @@ fun AssistantScreen(nav: Nav) {
             else HButton("", primary = true, icon = Icons.AutoMirrored.Outlined.Send, enabled = enabled && (input.isNotBlank() || attachments.any { it.id != null }) && !uploading) { send(input) }
         }
         if (mode == "dangerous") T("Dangerous: changes and deletions apply without asking", 11, HColors.accent, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp))
-        AssistantComposerChips(engineLabel(chat), mode, onModel = { settingsOpen = true }, onMode = { next ->
+        Box {
+        AssistantComposerChips(engineLabel(chat), mode, onModel = { openModels() }, onMode = { next ->
             repo.assistantMode(next) { saved, err -> if (saved != null) { mode = saved; load() } else problem = err }
         })
+        DropdownMenu(expanded = modelOpen, onDismissRequest = { modelOpen = false }) {
+            if (modelsLoading) DropdownMenuItem(text = { T("Loading models…", 12, HColors.muted) }, onClick = {}, enabled = false)
+            for (choice in modelChoices) {
+                val id = choice.optString("id")
+                val selected = modelSettings?.optString("model") == id
+                DropdownMenuItem(text = { T((if (selected) "✓ " else "") + choice.optString("name").ifBlank { id }, 12) }, enabled = !modelSaving, onClick = {
+                    val cfg = modelSettings ?: return@DropdownMenuItem
+                    val body = JSONObject().put("engine", cfg.optString("engine")).put("model", id)
+                    if (cfg.optString("engine") == "openai") body.put("base_url", cfg.optString("base_url"))
+                    modelSaving = true
+                    repo.assistant("POST", "/settings", body) { d, err ->
+                        modelSaving = false
+                        if (d != null) { modelOpen = false; load() } else modelProblem = err ?: "Could not save model."
+                    }
+                })
+            }
+            if (modelProblem.isNotBlank()) DropdownMenuItem(text = { T(modelProblem, 12, HColors.accent) }, onClick = {}, enabled = false)
+            DropdownMenuItem(text = { T("Change AI…", 12) }, onClick = { modelOpen = false; settingsOpen = true })
+        }
+        }
     }
 }
 

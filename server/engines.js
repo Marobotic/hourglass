@@ -27,7 +27,7 @@ import { deepSeekCost, deepSeekModelPricing, deepSeekModelSupportsTools, isDeepS
 export const ENGINES = [
   { id: "free", name: "Free", note: "opencode's free models. No key needed; slower." },
   { id: "claude", name: "Claude subscription", note: "Your Claude Pro or Max plan: sign in with your Claude account." },
-  { id: "anthropic", name: "Claude API key", note: "Fastest. A key from console.anthropic.com; billed per use." },
+  { id: "anthropic", name: "Anthropic", note: "Claude API key from console.anthropic.com; billed per use." },
   { id: "openai", name: "Other API key", note: "OpenAI, OpenRouter, Gemini, Groq, or any OpenAI-compatible API." },
 ];
 
@@ -67,6 +67,23 @@ export const OPENAI_PRESETS = [
 
 const openaiModelCache = new Map();
 
+export const apiUrl = (url) => String(url || OPENAI_PRESETS[0].base_url).trim().replace(/\/+$/, "");
+export const engineSlot = (engine, url) => engine === "openai" ? `openai:${apiUrl(url)}` : engine;
+export function engineName(engine, url) {
+  return engine === "openai"
+    ? OPENAI_PRESETS.find((p) => apiUrl(p.base_url) === apiUrl(url))?.name || apiUrl(url)
+    : ENGINES.find((e) => e.id === engine)?.name || engine;
+}
+
+// Protocol ids remain compatible with older clients; URL is part of an API engine's identity.
+export function engineEntries(view) {
+  const urls = new Set([...OPENAI_PRESETS.map((p) => p.base_url), ...Object.keys(view.has_key).filter((k) => view.has_key[k] && k.startsWith("openai:")).map((k) => k.slice(7))]);
+  return [...ENGINES.filter((e) => e.id !== "openai"), ...[...urls].map((url) => ({
+    id: "openai", base_url: url, name: engineName("openai", url),
+    note: view.has_key[engineSlot("openai", url)] ? "Key saved · select to use" : "Add an API key",
+  })), { id: "openai", base_url: "", name: "Custom API", note: "Any OpenAI-compatible API address." }];
+}
+
 const TURN_SECONDS = 120;
 const MAX_STEPS = 12; // model calls in one reply (each may run several tools)
 const HISTORY_TURNS = 10; // earlier user/assistant exchanges sent along, as text
@@ -102,36 +119,48 @@ export function createSettings(dataDir) {
   };
   const file = (t) => join(t.dir, "assistant_settings.json");
   const read = (t) => {
-    try { return JSON.parse(readFileSync(file(t), "utf8")); } catch { return { engine: "free", model: null, base_url: null, keys: {} }; }
+    try {
+      const s = JSON.parse(readFileSync(file(t), "utf8"));
+      if (s.model === "null") s.model = null; // old Android JSON null coercion
+      if (s.models) s.models = Object.fromEntries(Object.entries(s.models).map(([slot, model]) => [slot, model === "null" ? null : model]));
+      // Preserve existing encrypted blobs while accepting older URL spellings.
+      s.keys = Object.fromEntries(Object.entries(s.keys || {}).map(([slot, value]) => [slot.startsWith("openai:") ? engineSlot("openai", slot.slice(7)) : slot, value]));
+      if (s.engine === "openai") s.base_url = apiUrl(s.base_url);
+      return s;
+    } catch { return { engine: "free", model: null, base_url: null, keys: {} }; }
   };
   return {
     /** What the app may see: no keys, only whether one is saved. */
     view(t) {
       const s = read(t);
-      return { engine: s.engine || "free", model: s.model || null, base_url: s.base_url || null, has_key: Object.fromEntries(Object.entries(s.keys || {}).map(([k, v]) => [k, !!v])) };
+      const models = { ...s.models, [engineSlot(s.engine || "free", s.base_url)]: s.model || null };
+      return { engine: s.engine || "free", engine_name: engineName(s.engine || "free", s.base_url), model: s.model || null, models, base_url: s.base_url || null, has_key: Object.fromEntries(Object.entries(s.keys || {}).map(([k, v]) => [k, !!v])) };
     },
     /** The full settings for running, keys opened. */
     get(t) {
       const s = read(t);
       const keys = {};
       for (const [k, v] of Object.entries(s.keys || {})) if (v) keys[k] = open(v);
-      return { engine: s.engine || "free", model: s.model || null, base_url: s.base_url || null, keys };
+      return { ...this.view(t), keys };
     },
     save(t, { engine, model, base_url, key }) {
       const s = read(t);
-      // A new engine without a model: its default (the old engine's model would not run on it).
-      if (engine && engine !== s.engine && model === undefined) s.model = null;
+      const previous = engineSlot(s.engine || "free", s.base_url);
+      s.models ||= {};
+      s.models[previous] = s.model || null;
       if (engine) s.engine = engine;
-      if (model !== undefined) s.model = model || null;
-      if (base_url !== undefined) s.base_url = base_url || null;
+      if (base_url !== undefined) s.base_url = apiUrl(base_url);
+      if (s.engine === "openai") s.base_url = apiUrl(s.base_url);
+      const slot = engineSlot(s.engine || "free", s.base_url);
+      s.model = model !== undefined ? model || null : s.models[slot] || null;
+      s.models[slot] = s.model;
       s.keys ||= {};
       // A key belongs to its engine (and for openai, its URL): switching back keeps it.
-      const slot = (engine || s.engine) === "openai" ? `openai:${s.base_url || ""}` : engine || s.engine;
       if (key !== undefined) s.keys[slot] = key ? seal(String(key).trim()) : null;
       writeFileSync(file(t), JSON.stringify(s), { mode: 0o600 });
       return this.view(t);
     },
-    keySlot: (engine, base_url) => (engine === "openai" ? `openai:${base_url || ""}` : engine),
+    keySlot: engineSlot,
   };
 }
 
@@ -440,20 +469,21 @@ export async function listOpenAIModels({ key, base_url }) {
   const cacheKey = createHash("sha256").update(`${base_url || OPENAI_PRESETS[0].base_url}\n${key}`).digest("hex");
   const cached = openaiModelCache.get(cacheKey);
   if (cached && Date.now() - cached.at < 60 * 60_000) return cached.models;
-  const res = await fetch(`${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/models`, {
-    headers: { authorization: `Bearer ${key}` },
+  const gemini = apiUrl(base_url) === OPENAI_PRESETS.find((p) => p.id === "gemini").base_url;
+  const res = await fetch(gemini ? "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000" : `${apiUrl(base_url)}/models`, {
+    headers: gemini ? { "x-goog-api-key": key } : { authorization: `Bearer ${key}` },
     signal: AbortSignal.timeout(15000),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body?.error?.message || `the API said ${res.status}`), { status: res.status, headers: res.headers, body, provider: "openai" });
-  const models = (body.data || []).map((m) => {
-    const id = String(m.id).replace(/^models\//, "");
-    const context = Number(m.context_length);
+  const models = (gemini ? (body.models || []).filter((m) => m.supportedGenerationMethods?.includes("generateContent")) : body.data || []).map((m) => {
+    const id = String(m.id || m.name).replace(/^models\//, "");
+    const context = Number(m.context_length || m.inputTokenLimit);
     const input = Number(m.pricing?.prompt);
     const output = Number(m.pricing?.completion);
     return {
       id,
-      name: String(m.name || m.display_name || id),
+      name: String(m.displayName || m.name || m.display_name || id),
       context_window: Number.isFinite(context) && context > 0 ? context : null,
       pricing: m.pricing?.prompt != null && m.pricing?.completion != null && Number.isFinite(input) && Number.isFinite(output) ? { input, output } : null,
       ...(isDeepSeekBaseUrl(base_url) ? {
@@ -475,7 +505,8 @@ export async function checkKey({ engine, key, base_url }) {
     return true;
   }
   if (engine === "openai") {
-    await listOpenAIModels({ key, base_url });
+    const models = await listOpenAIModels({ key, base_url });
+    if (!models.length) throw new Error("This API returned no models for this key.");
     return true;
   }
   if (engine === "claude") {

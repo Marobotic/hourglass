@@ -5,11 +5,10 @@ import QtQuick.Layouts
 // Which AI answers in the assistant: opencode's free models, Claude with the
 // user's subscription or API key, or another OpenAI-compatible API. The key
 // goes to the server once, stored encrypted there, and is never shown again.
-Modal {
+AssistantSettingsPage {
     id: dlg
     title: "Assistant AI"
     subtitle: "Pick who answers. Keys are stored encrypted on your account."
-    width: Math.min(560, (parent ? parent.width : 560) - 48)
     signal saved()
 
     property var s: null            // the server's settings
@@ -42,7 +41,7 @@ Modal {
         Api.request("POST", "/api/assistant/settings", body, (d, err) => {
             dlg.saving = false;
             if (!d) { dlg.error = err || "Could not save."; return; }
-            dlg.s.has_key = d.has_key;
+            dlg.s = d;
             keyField.text = "";
             dlg.saved();
             dlg.close();
@@ -56,7 +55,7 @@ Modal {
         model: dlg.s ? dlg.s.engines : []
         Rectangle {
             required property var modelData
-            readonly property bool on: dlg.engine === modelData.id
+            readonly property bool on: dlg.engine === modelData.id && (modelData.id !== "openai" || dlg.baseUrl === modelData.base_url)
             Layout.fillWidth: true
             implicitHeight: engineText.implicitHeight + 18
             color: on ? Theme.surface2 : "transparent"
@@ -84,8 +83,8 @@ Modal {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (dlg.engine === modelData.id) return;
-                    dlg.engine = modelData.id;
+                    if (on) return;
+                    dlg.engine = modelData.id; if (modelData.id === "openai") dlg.baseUrl = modelData.base_url || "";
                     dlg.error = ""; dlg.note = "";
                     keyField.text = "";
                 }
@@ -114,7 +113,7 @@ Modal {
             spacing: 6
             Repeater {
                 model: dlg.s ? dlg.s.presets : []
-                Btn { required property var modelData; compact: true; text: modelData.name; active: dlg.baseUrl === modelData.base_url; kind: "subtle"; onClicked: dlg.baseUrl = modelData.base_url }
+                Btn { required property var modelData; compact: true; text: modelData.name; active: dlg.baseUrl === modelData.base_url; kind: "subtle"; onClicked: { dlg.baseUrl = modelData.base_url; keyField.text = ""; } }
             }
         }
         Field { Layout.fillWidth: true; text: dlg.baseUrl; placeholderText: "https://…/v1"; onEditingFinished: dlg.baseUrl = text.trim() }
@@ -204,7 +203,7 @@ Modal {
             id: keyField
             Layout.fillWidth: true
             echoMode: TextInput.Password
-            placeholderText: dlg.hasKey ? "Saved ✓  (paste a new one to replace it)" : dlg.engine === "claude" ? "sk-ant-oat…" : dlg.engine === "anthropic" ? "sk-ant-api…" : "Your API key"
+            placeholderText: dlg.hasKey ? "•••••••• (saved; paste to replace)" : dlg.engine === "claude" ? "sk-ant-oat…" : dlg.engine === "anthropic" ? "sk-ant-api…" : "Your API key"
         }
         Text {
             visible: dlg.deepSeekSelected

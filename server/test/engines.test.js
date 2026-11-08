@@ -412,3 +412,38 @@ test("fast-lane answers carry cards", async () => {
   assert.equal(reply.cards[0].kind, "timer");
   assert.equal(reply.cards[0].duration_s, 600);
 });
+
+test("API entries survive reopening and model switches stay within each provider", async () => {
+  const openai = fakeUrl + "/openai";
+  const deepseek = fakeUrl + "/deepseek";
+  let r = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: deepseek + "/", key: GOOD_KEY });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.engine, "openai");
+  assert.equal(r.body.base_url, deepseek);
+  assert.equal(r.body.model, "deepseek-flash", "new API selects a real model without a second settings visit");
+  await call("POST", "/api/assistant/settings", { engine: "openai", base_url: deepseek, model: "deepseek-v4-pro" });
+  r = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: openai, key: GOOD_KEY, model: "gpt-mini" });
+  assert.equal(r.status, 200);
+  r = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: deepseek });
+  assert.equal(r.body.model, "deepseek-v4-pro");
+  const reopened = (await call("GET", "/api/assistant/settings")).body;
+  assert.equal(reopened.has_key["openai:" + deepseek], true);
+  assert.equal(reopened.has_key["openai:" + openai], true);
+  for (const name of ["DeepSeek", "OpenAI", "OpenRouter", "Google Gemini", "Groq"]) assert.ok(reopened.engines.some((e) => e.name === name));
+  assert.ok(reopened.engines.some((e) => e.base_url === deepseek));
+  assert.equal(JSON.stringify(reopened).includes(GOOD_KEY), false);
+  const choices = (await call("GET", "/api/assistant/models?base_url=" + encodeURIComponent(deepseek))).body.models;
+  assert.ok(choices.some((m) => m.id === "deepseek-v4-pro"));
+  const chat = (await call("GET", "/api/assistant")).body;
+  assert.equal(chat.engine, "openai");
+  assert.equal(chat.base_url, deepseek);
+  assert.equal(chat.model, "deepseek-v4-pro");
+  r = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: openai });
+  assert.equal(r.body.model, "gpt-mini");
+  await call("POST", "/api/assistant/settings", { engine: "anthropic", model: "claude-live-custom" });
+  assert.ok((await call("GET", "/api/assistant/models?engine=anthropic")).body.models.some((m) => m.id === "claude-live-custom"));
+  await call("POST", "/api/assistant/settings", { engine: "free", model: "opencode/big-pickle" });
+  assert.ok((await call("GET", "/api/assistant/models?engine=free")).body.models.length);
+  r = await call("POST", "/api/assistant/settings", { engine: "anthropic" });
+  assert.equal(r.body.model, "claude-live-custom");
+});

@@ -12,13 +12,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
@@ -30,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -39,6 +39,18 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private fun JSONArray?.objects(): List<JSONObject> = this?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
+
+@Composable
+private fun AssistantSettingsPage(onDismissRequest: () -> Unit, title: @Composable () -> Unit, text: @Composable () -> Unit, confirmButton: @Composable () -> Unit, dismissButton: @Composable () -> Unit) {
+    Dialog(onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxSize().background(HColors.bg).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            HButton("← Back", onClick = onDismissRequest)
+            title()
+            Box(Modifier.weight(1f).fillMaxWidth()) { text() }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { dismissButton(); Spacer(Modifier.width(12.dp)); confirmButton() }
+        }
+    }
+}
 
 // Which AI answers in the assistant (as on the desktop, AssistantSettings.qml):
 // opencode's free models, Claude with the user's plan or API key, or another
@@ -63,7 +75,9 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
     fun isDeepSeek(): Boolean = engine == "openai" && baseUrl.contains("api.deepseek.com")
     fun loadModels() {
         apiModels = emptyList()
-        repo.assistant("GET", "/models?base_url=" + Uri.encode(baseUrl)) { d, _ ->
+        val requestedUrl = baseUrl
+        repo.assistant("GET", "/models?base_url=" + Uri.encode(requestedUrl)) { d, _ ->
+            if (engine != "openai" || baseUrl != requestedUrl) return@assistant
             apiModels = d?.optJSONArray("models").objects()
             d?.optString("error")?.takeIf { it.isNotBlank() && hasKey() }?.let { note = it }
         }
@@ -73,8 +87,8 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
             if (d == null) { error = err ?: "Could not load the settings."; return@assistant }
             s = d
             engine = d.optString("engine", "free")
-            model = d.optString("model")
-            baseUrl = d.optString("base_url").ifBlank { d.optJSONArray("presets").objects().firstOrNull()?.optString("base_url").orEmpty() }
+            model = d.optString("model").takeUnless { it == "null" }.orEmpty()
+            baseUrl = d.optString("base_url").takeUnless { it == "null" }.orEmpty().ifBlank { d.optJSONArray("presets").objects().firstOrNull()?.optString("base_url").orEmpty() }
             if (engine == "openai") loadModels()
         }
     }
@@ -118,22 +132,21 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
         }
     }
 
-    AlertDialog(
+    AssistantSettingsPage(
         onDismissRequest = {
             if (signin.isNotEmpty()) repo.assistant("POST", "/claude/login/cancel") { _, _ -> }
             onDismiss()
         },
-        containerColor = HColors.surface, shape = RectangleShape,
         title = { Column { T("Assistant AI", 17, bold = true); T("Pick who answers. Keys are stored encrypted on your account.", 12, HColors.muted) } },
         text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if ((engine == "claude" || engine == "anthropic") && s?.optString("claude_model_source") == "fallback") T("Using the default Claude model list.", 11, HColors.muted)
                 for (e in s?.optJSONArray("engines").objects()) {
-                    val on = engine == e.optString("id")
+                    val on = engine == e.optString("id") && (engine != "openai" || baseUrl == e.optString("base_url"))
                     Row(
                         Modifier.fillMaxWidth().border(1.dp, if (on) HColors.accent else HColors.border).background(if (on) HColors.surface2 else Color.Transparent)
                             .clickable {
-                                if (!on) { engine = e.optString("id"); model = ""; error = ""; note = ""; key = ""; if (engine == "openai") loadModels() }
+                                if (!on) { engine = e.optString("id"); if (engine == "openai") baseUrl = e.optString("base_url"); model = s?.optJSONObject("models")?.optString(if (engine == "openai") "openai:$baseUrl" else engine).orEmpty().takeUnless { it == "null" }.orEmpty(); error = ""; note = ""; key = ""; if (engine == "openai") loadModels() }
                             }.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -149,12 +162,12 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (p in s?.optJSONArray("presets").objects()) {
                             val on = baseUrl == p.optString("base_url")
-                            Box(Modifier.border(1.dp, if (on) HColors.accent else HColors.border).clickable { baseUrl = p.optString("base_url"); model = ""; loadModels() }.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                            Box(Modifier.border(1.dp, if (on) HColors.accent else HColors.border).clickable { baseUrl = p.optString("base_url"); key = ""; model = s?.optJSONObject("models")?.optString("openai:$baseUrl").orEmpty().takeUnless { it == "null" }.orEmpty(); loadModels() }.padding(horizontal = 10.dp, vertical = 6.dp)) {
                                 T(p.optString("name"), 12, if (on) HColors.fg else HColors.muted)
                             }
                         }
                     }
-                    Field(baseUrl, { baseUrl = it.trim(); model = "" }, "Address", placeholder = "https://…/v1")
+                    Field(baseUrl, { baseUrl = it.trim(); model = ""; key = ""; apiModels = emptyList() }, "Address", placeholder = "https://…/v1")
                 }
                 if (engine == "claude") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -188,7 +201,7 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
                 if (engine != "free" && engine != "claude") {
                     T(if (engine == "claude") "CLAUDE TOKEN" else "API KEY", 11, HColors.muted, spacing = 1.0)
                     if (engine == "claude") T("On your own PC, run claude setup-token in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints.", 12, HColors.faint)
-                    Field(key, { key = it }, if (hasKey()) "Saved ✓ (paste a new one to replace it)" else if (engine == "anthropic") "sk-ant-api…" else if (engine == "claude") "sk-ant-oat…" else if (isDeepSeek()) "DeepSeek API key" else "Your API key", password = true)
+                    Field(key, { key = it }, if (hasKey()) "•••••••• (saved; paste to replace)" else if (engine == "anthropic") "sk-ant-api…" else if (engine == "claude") "sk-ant-oat…" else if (isDeepSeek()) "DeepSeek API key" else "Your API key", password = true)
                     if (isDeepSeek()) T("Get a DeepSeek API key", 11, HColors.muted, modifier = Modifier.clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://platform.deepseek.com/api_keys"))) })
                 }
                 T("MODEL", 11, HColors.muted, spacing = 1.0)
@@ -213,7 +226,8 @@ fun AssistantSettingsDialog(repo: Repo, onDismiss: () -> Unit, onSaved: () -> Un
         confirmButton = {
             HButton(if (saving) "Checking…" else "Save", primary = true, enabled = !saving && s != null && (engine == "free" || hasKey() || key.isNotBlank())) {
                 error = ""; saving = true
-                val body = JSONObject().put("engine", engine).put("model", model.ifBlank { modelOptions().firstOrNull()?.second.orEmpty() })
+                val body = JSONObject().put("engine", engine)
+                if (model.isNotBlank() && model != "null") body.put("model", model)
                 if (engine == "openai") body.put("base_url", baseUrl)
                 if (key.isNotBlank()) body.put("key", key.trim())
                 repo.assistant("POST", "/settings", body) { d, err ->
