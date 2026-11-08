@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtCore
+import "ChatMarkdown.js" as Markdown
 
 // Talk to Hourglass: the assistant runs on the server and works on this
 // account's notes, schedule, alarms and timers through the same tools any AI
@@ -127,6 +129,7 @@ Item {
             const json = JSON.stringify(d);
             if (json !== page.chatJson) { page.chatJson = json; page.chat = d; }
             if (d.mode && d.mode !== page.mode) page.mode = d.mode;
+            page.restoreDraft();
             if (!page.ready) Qt.callLater(() => page.ready = true);
             if (page.pending !== "" && (d.messages || []).some(m => m.role === "user" && m.text === page.pending)) page.pending = "";
             // Finished: pull what the assistant changed, so every page shows it.
@@ -299,12 +302,109 @@ Item {
         Api.request("POST", "/api/assistant/new", {}, () => { page.pending = ""; page.load(); }, true);
     }
 
+    // --- pictures, copy and quote, drafts --------------------------------------------
+
+    function focusComposer() { Qt.callLater(() => input.area.forceActiveFocus()); }
+
+    // Every picture in the chat, oldest first, then the ones waiting to be sent.
+    function pictures() {
+        if (!page.info) return [];
+        const out = [], seenIds = {};
+        const add = f => {
+            if (!f || !f.id || seenIds[f.id] || !/^image\//.test(f.mime || "")) return;
+            seenIds[f.id] = true;
+            out.push({ id: f.id, name: f.name || "Picture", url: page.info.file_base + f.id + "?k=" + page.info.key });
+        };
+        for (const m of page.messages) (m.files || []).forEach(add);
+        page.attachments.forEach(add);
+        return out;
+    }
+    function openImage(id) {
+        const list = pictures();
+        const at = list.findIndex(p => p.id === id);
+        if (at >= 0) lightbox.show(list, at);
+    }
+
+    // QML has no clipboard API: copy through a hidden text field.
+    function copy(text) { clip.text = text; clip.selectAll(); clip.copy(); }
+    // A message as plain text: the markdown marks go, code and table cells stay as written.
+    function plainText(md) {
+        const inline = s => s
+            .replace(/!?\[([^\]]*)\]\(([^)]*)\)/g, "$1")
+            .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+            .replace(/(\*\*|__)(.+?)\1/g, "$2")
+            .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1$2")
+            .replace(/`([^`\n]+)`/g, "$1")
+            .replace(/^\s*>\s?/gm, "");
+        return Markdown.blocks(md).map(b => b.kind === "code" ? b.text : b.kind === "table" ? b.rows.map(r => r.join("\t")).join("\n") : inline(b.text)).join("\n\n").trim();
+    }
+    function quote(text) {
+        const q = plainText(text).split("\n").map(l => "> " + l).join("\n") + "\n\n";
+        input.text = q + input.text;
+        input.area.cursorPosition = q.length;
+        focusComposer();
+    }
+    property var menuMessage: null
+    function openMessageMenu(message, pos) {
+        menuMessage = message;
+        msgMenu.show(pos.x, pos.y, message.role === "user" ? "Your message" : "Assistant", [
+            { key: "copy", label: "Copy" }, { key: "markdown", label: "Copy as Markdown" }, { key: "quote", label: "Quote in reply" }
+        ]);
+    }
+
+    // The picture on the clipboard (the background service reads it: QML can only paste text).
+    function pasteImage() {
+        Api.request("POST", "/api/clipboard/image", {}, d => { if (d && d.url) page.attach([d.url]); }, true);
+    }
+
+    // One draft per chat: the text and the files already uploaded, kept in window.ini so
+    // they survive a page switch and a restart. The chat is told apart by its first message.
+    readonly property string draftKey: { const m = chat.messages || []; return m.length ? String(m[0].id) : "new"; }
+    property string loadedDraft: ""  // the chat whose draft is in the box ("" until the first load)
+    property bool restoring: false
+    function readDrafts() { try { return JSON.parse(drafts.saved) || {}; } catch (e) { return {}; } }
+    function saveDraft() {
+        if (restoring || loadedDraft === "") return;
+        const all = readDrafts();
+        const files = attachments.filter(a => a.id).map(a => ({ key: a.key, id: a.id, name: a.name, mime: a.mime || "" }));
+        if (input.text.trim() === "" && !files.length) delete all[loadedDraft];
+        else all[loadedDraft] = { text: input.text, files: files };
+        const json = JSON.stringify(all);
+        if (json !== drafts.saved) drafts.saved = json;
+    }
+    function restoreDraft() {
+        if (draftKey === loadedDraft) return;
+        draftTimer.stop();
+        saveDraft();
+        loadedDraft = draftKey;
+        restoring = true;
+        const d = readDrafts()[draftKey];
+        input.text = d ? d.text : "";
+        attachments = d ? d.files : [];
+        restoring = false;
+    }
+    onAttachmentsChanged: if (!restoring) draftTimer.restart()
+    Timer { id: draftTimer; interval: 500; onTriggered: page.saveDraft() }
+
+    // Ctrl+K: the things you do around a chat, by name.
+    readonly property var commands: [
+        { title: "New chat", note: "Ctrl+N", enabled: page.messages.length > 0 && !page.busy, run: () => page.newChat() },
+        { title: "Switch model…", note: page.engineLabel(), enabled: true, run: () => page.openModelMenu() },
+        { title: "Mode: Ask", note: page.mode === "ask" ? "Current" : "Every change waits for approval", enabled: true, run: () => page.setMode("ask") },
+        { title: "Mode: Auto", note: page.mode === "auto" ? "Current" : "Only risky actions wait", enabled: true, run: () => page.setMode("auto") },
+        { title: "Mode: Dangerous", note: page.mode === "dangerous" ? "Current" : "Changes apply immediately", enabled: true, run: () => page.setMode("dangerous") },
+        { title: "Change AI…", note: "Engine and keys", enabled: true, run: () => aiSettings.open() },
+        { title: "Open settings", note: "", enabled: !!page.app, run: () => { const i = page.app.pages.findIndex(p => p.name === "Settings"); if (i >= 0) page.app.go(i); } }
+    ]
+    readonly property bool overlayOpen: lightbox.opened || palette.opened || modelMenu.opened || modeMenu.opened || drivePicker.opened || msgMenu.opened || aiSettings.visible
+
     Component.onCompleted: { load(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
 
     AssistantSettings { id: aiSettings; onSaved: page.load() }
 
     Popup {
         id: modelMenu
+        onClosed: page.focusComposer()
         parent: modelChip; x: 0; y: -height - 6   // above the chip
         width: 340; height: Math.min(460, modelMenuList.implicitHeight + 20); padding: 10
         background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: 4 }
@@ -335,6 +435,7 @@ Item {
     }
     Popup {
         id: modeMenu
+        onClosed: page.focusComposer()
         parent: modeChip; x: 0; y: -height - 6
         width: 250; padding: 6
         background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: 4 }
@@ -356,6 +457,7 @@ Item {
     }
     Popup {
         id: drivePicker
+        onClosed: page.focusComposer()
         width: Math.min(450, page.width - 40); height: Math.min(520, page.height - 80)
         modal: true; focus: true; closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: page.loadDrive("", "")
@@ -382,6 +484,87 @@ Item {
                     MouseArea { id: driveHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: modelData.kind === "folder" ? page.loadDrive(modelData.id, "") : modelData.kind === "course" ? page.loadDrive("", modelData.id) : page.attachDriveFile(modelData) }
                 }
             }
+        }
+    }
+
+    TextEdit { id: clip; visible: false }
+    Settings {
+        id: drafts
+        location: "file:///" + StandardPaths.writableLocation(StandardPaths.GenericDataLocation).toString().replace(/^file:\/+/, "") + "/Hourglass/window.ini"
+        category: "assistant"
+        property string saved: "{}"
+    }
+    ChatLightbox { id: lightbox; onClosed: page.focusComposer() }
+    ContextMenu {
+        id: msgMenu
+        onPicked: key => {
+            const text = page.menuMessage ? page.menuMessage.text || "" : "";
+            if (key === "copy") page.copy(page.plainText(text));
+            else if (key === "markdown") page.copy(text);
+            else if (key === "quote") page.quote(text);
+        }
+        onClosed: page.focusComposer()
+    }
+
+    Shortcut { sequence: "Escape"; enabled: page.visible && page.busy && !page.overlayOpen; onActivated: page.stop() }
+    Shortcut { sequence: "Ctrl+N"; enabled: page.visible; onActivated: { if (page.messages.length > 0 && !page.busy) page.newChat(); page.focusComposer(); } }
+    Shortcut { sequence: "Ctrl+K"; enabled: page.visible; onActivated: palette.open() }
+
+    // The command palette.
+    Popup {
+        id: palette
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2); y: Math.round(parent.height * 0.16)
+        width: Math.min(460, parent.width - 40)
+        padding: 0
+        modal: true; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        property int current: 0
+        readonly property var shown: page.commands.filter(c => c.enabled && c.title.toLowerCase().indexOf(paletteField.text.trim().toLowerCase()) >= 0)
+        function run(c) {
+            if (!c) return;
+            close();
+            Qt.callLater(c.run);
+        }
+        onOpened: { paletteField.text = ""; current = 0; paletteField.forceActiveFocus(); }
+        onClosed: page.focusComposer()
+        enter: Transition {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120 }
+            NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: 200; easing.type: Easing.OutCubic }
+        }
+        exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 80 } }
+        Overlay.modal: Rectangle { color: Theme.alpha(Theme.bg, 0.55) }
+        background: Rectangle { color: Theme.surface; border.width: 1; border.color: Theme.accent }
+        contentItem: Column {
+            TextField {
+                id: paletteField
+                width: parent.width; height: 48
+                leftPadding: 16; rightPadding: 16
+                placeholderText: "Type a command…"
+                placeholderTextColor: Theme.faint
+                color: Theme.fg
+                selectionColor: Theme.alpha(Theme.accent, 0.45); selectedTextColor: Theme.fg
+                font.family: Theme.mono; font.pixelSize: 14
+                background: Rectangle { color: "transparent"; Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: Theme.border } }
+                onTextChanged: palette.current = 0
+                Keys.onDownPressed: palette.current = Math.min(palette.current + 1, palette.shown.length - 1)
+                Keys.onUpPressed: palette.current = Math.max(palette.current - 1, 0)
+                onAccepted: palette.run(palette.shown[palette.current])
+            }
+            Repeater {
+                model: palette.shown
+                delegate: Rectangle {
+                    required property var modelData
+                    required property int index
+                    width: palette.width; height: 40
+                    color: palette.current === index || cmdHover.containsMouse ? Theme.surface2 : "transparent"
+                    Rectangle { visible: palette.current === index; width: 3; height: parent.height; color: Theme.accent }
+                    Text { anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter } text: modelData.title; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 13 }
+                    Text { anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter } text: modelData.note; color: Theme.muted; elide: Text.ElideRight; width: Math.min(implicitWidth, 220); horizontalAlignment: Text.AlignRight; font.family: Theme.mono; font.pixelSize: 11 }
+                    MouseArea { id: cmdHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: palette.run(modelData) }
+                }
+            }
+            Text { visible: palette.shown.length === 0; width: parent.width; height: 40; text: "No command matches"; color: Theme.muted; verticalAlignment: Text.AlignVCenter; leftPadding: 16; font.family: Theme.mono; font.pixelSize: 12 }
         }
     }
 
@@ -426,6 +609,8 @@ Item {
         color: Theme.surface2
         border.width: 1
         border.color: note && note !== "Uploading…" ? Theme.accent : Theme.border
+        // Under the row, so the remove button still gets its own click.
+        MouseArea { anchors.fill: parent; visible: !!chip.fileId && (!chip.removable || chip.picture); cursorShape: Qt.PointingHandCursor; onClicked: chip.activated() }
         RowLayout {
             id: chipRow
             anchors { left: parent.left; leftMargin: 6; verticalCenter: parent.verticalCenter }
@@ -450,9 +635,9 @@ Item {
             }
             Btn { visible: chip.removable; compact: true; kind: "subtle"; icon: "close"; onClicked: chip.remove() }
         }
-        MouseArea { anchors.fill: parent; visible: !!chip.fileId && !chip.removable; cursorShape: Qt.PointingHandCursor; onClicked: chip.activated() }
     }
-    onVisibleChanged: if (visible) { load(); input.area.forceActiveFocus(); }
+    onVisibleChanged: if (visible) { load(); input.area.forceActiveFocus(); } else { draftTimer.stop(); saveDraft(); }
+    Component.onDestruction: saveDraft()
     Timer {
         interval: 900
         running: page.visible && page.busy && Util.shown(page.app)
@@ -516,6 +701,8 @@ Item {
                     // Markdown joins lines; the assistant's lines are meant as lines ("Tomorrow:" then one per class).
                     readonly property string shownText: mine ? (modelData.text || "") : String(modelData.text || "").replace(/([^\n])\n(?=[^\n])/g, "$1  \n")
                     // The answer still being worked on, with nothing in it yet: the Working line shows instead.
+                    // Code and tables want the room: the bubble opens to its full width.
+                    readonly property bool rich: !mine && /^\s{0,3}(```|~~~)|^\s*\|.*\|\s*$/m.test(modelData.text || "")
                     readonly property bool empty: !mine && !modelData.text && !(modelData.tools || []).length && !(modelData.cards || []).length && !modelData.error
                     width: list.width
                     height: empty ? 0 : bubble.height
@@ -553,7 +740,8 @@ Item {
                                         Math.max(row.modelData.text !== "" ? natural.implicitWidth : 0, row.modelData.error ? naturalError.implicitWidth : 0, toolLines.implicitWidth,
                                                  (row.modelData.files || []).length ? 290 : 0,
                                                  (row.modelData.cards || []).length ? ((row.modelData.cards || []).length > 1 ? 688 : 340) : 0,
-                                                 page.openSteps[row.modelData.id] ? 620 : 0) + 32)
+                                                 page.openSteps[row.modelData.id] ? 620 : 0,
+                                                 row.rich ? row.width : 0) + 32)
                         height: body.height + 22
                         color: row.mine ? Theme.surface2 : "transparent"
                         border.width: row.mine ? 1 : 0
@@ -575,7 +763,7 @@ Item {
                                 spacing: 6
                                 Repeater {
                                     model: row.mine ? (row.modelData.files || []) : []
-                                    FileChip { required property var modelData; name: modelData.name; fileId: modelData.id; mime: modelData.mime || "" }
+                                    FileChip { required property var modelData; name: modelData.name; fileId: modelData.id; mime: modelData.mime || ""; onActivated: if (picture) page.openImage(fileId) }
                                 }
                             }
                             // What the assistant did, one line per tool.
@@ -637,17 +825,13 @@ Item {
                                     }
                                 }
                             }
-                            Text {
+                            ChatMarkdown {
                                 visible: row.modelData.text !== ""
                                 width: body.width
-                                text: row.shownText
-                                textFormat: row.mine ? Text.PlainText : Text.MarkdownText
-                                wrapMode: Text.Wrap
-                                color: Theme.fg
-                                font.family: Theme.mono
-                                font.pixelSize: 14
-                                lineHeight: 1.15
-                                onLinkActivated: link => Qt.openUrlExternally(link)
+                                text: row.modelData.text || ""
+                                plain: row.mine
+                                hardBreaks: !row.mine
+                                onCopyRequested: t => page.copy(t)
                             }
                             RowLayout {
                                 visible: !row.mine && !!row.modelData.usage && (row.modelData.usage.input_tokens !== null || row.modelData.usage.output_tokens !== null || row.modelData.usage.cost !== null || row.modelData.usage.context_percent !== null)
@@ -696,6 +880,12 @@ Item {
                                 width: body.width
                                 steps: page.thinkingSteps(row.modelData.steps)
                             }
+                        }
+                        // Right-click anywhere on a message: copy, copy as Markdown, quote.
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            onClicked: mouse => page.openMessageMenu(row.modelData, mapToItem(page, mouse.x, mouse.y))
                         }
                     }
                 }
@@ -803,6 +993,7 @@ Item {
                     note: modelData.error ? modelData.error : modelData.id ? "" : "Uploading…"
                     removable: true
                     onRemove: page.unattach(modelData.key)
+                    onActivated: if (picture) page.openImage(fileId)
                 }
             }
         }
@@ -852,6 +1043,7 @@ Item {
                         font.pixelSize: 14
                         textFormat: TextEdit.PlainText
                         selectByMouse: true
+                        onTextChanged: if (!page.restoring) draftTimer.restart()
                         topPadding: 6
                         padding: 0
                         background: null
@@ -862,6 +1054,8 @@ Item {
                         Keys.onEnterPressed: event => page.sendText(field.text)
                         Keys.onPressed: event => {
                             if (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier)) { event.accepted = true; page.cycleMode(); }
+                            // Nothing to paste as text: it may be a picture (a screenshot).
+                            if (event.matches(StandardKey.Paste) && !field.canPaste && page.chat.enabled && !page.busy) { event.accepted = true; page.pasteImage(); }
                         }
                     }
                 }
