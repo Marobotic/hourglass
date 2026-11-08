@@ -21,8 +21,11 @@ enum Md {
     static func renumber(_ text: String) -> String {
         var lines = text.components(separatedBy: "\n")
         var runs: [Int: Int] = [:] // indent -> next number
+        var inFence = false // code blocks keep their lines as written
         for i in lines.indices {
             let line = lines[i]
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { inFence.toggle(); runs = [:]; continue }
+            if inFence { continue }
             if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
             let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
             for k in runs.keys where k > indent { runs[k] = nil }
@@ -119,7 +122,50 @@ struct NoteBodyView: View {
         return (ns.substring(with: m.range(at: 1)), ns.substring(with: m.range(at: 2)))
     }
 
-    private enum Block { case picture(String, String), file(String, String), gap, heading(Int, String), bullet(Int, String), numbered(Int, String, String), task(Int, Bool, String), text(String) }
+    private enum Block { case picture(String, String), file(String, String), gap, heading(Int, String), bullet(Int, String), numbered(Int, String, String), task(Int, Bool, String), text(String), code(String), table([[String]]) }
+
+    private static let divider = try! NSRegularExpression(pattern: #"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$"#)
+
+    private static func isDivider(_ line: String) -> Bool {
+        guard line.contains("|") else { return false }
+        return Md.groups(divider, line) != nil
+    }
+
+    private static func cells(_ line: String) -> [String] {
+        var t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("|") { t.removeFirst() }
+        if t.hasSuffix("|") { t.removeLast() }
+        return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// Lines into blocks, each with the line it starts on. A fenced code block and
+    /// a table take several lines; an unclosed fence (still streaming) runs to the end.
+    private func parse(_ lines: [String]) -> [(Int, Block)] {
+        var out: [(Int, Block)] = []
+        var i = 0
+        while i < lines.count {
+            let line = lines[i]
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                var body: [String] = []
+                var j = i + 1
+                while j < lines.count && !lines[j].trimmingCharacters(in: .whitespaces).hasPrefix("```") { body.append(lines[j]); j += 1 }
+                out.append((i, Block.code(body.joined(separator: "\n"))))
+                i = j + 1
+                continue
+            }
+            if line.contains("|"), i + 1 < lines.count, Self.isDivider(lines[i + 1]) {
+                var rows: [[String]] = [Self.cells(line)]
+                var j = i + 2
+                while j < lines.count && lines[j].contains("|") && !lines[j].trimmingCharacters(in: .whitespaces).isEmpty { rows.append(Self.cells(lines[j])); j += 1 }
+                out.append((i, Block.table(rows)))
+                i = j
+                continue
+            }
+            out.append((i, block(line)))
+            i += 1
+        }
+        return out
+    }
 
     private func block(_ line: String) -> Block {
         if let m = match(Self.img, line) { return .picture(m.0, m.1) }
@@ -135,10 +181,13 @@ struct NoteBodyView: View {
 
     var body: some View {
         // Renumbering keeps every line where it is, so indexes still match the note.
-        let blocks = Md.renumber(text).components(separatedBy: "\n").map(block)
+        let blocks: [(Int, Block)] = parse(Md.renumber(text).components(separatedBy: "\n"))
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { index, b in
-                switch b {
+            ForEach(blocks.indices, id: \.self) { n in
+                let index = blocks[n].0
+                switch blocks[n].1 {
+                case .code(let c): CodeBlockView(code: c)
+                case .table(let rows): TableBlockView(rows: rows)
                 case .picture(let name, let id): NotePicture(id: id, name: name, open: open)
                 case .file(let name, let id): FileChip(name: name) { if let f = store.file(id) { open(f) } }
                 case .gap: Spacer().frame(height: 4)
@@ -151,6 +200,75 @@ struct NoteBodyView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// A fenced code block: monospace, scrolls sideways, with a copy button.
+struct CodeBlockView: View {
+    let code: String
+    @State private var copied = false
+
+    private func copy() {
+        UIPasteboard.general.string = code
+        copied = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            copied = false
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Spacer()
+                Button(action: copy) {
+                    HStack(spacing: 4) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 11))
+                        T(copied ? "Copied" : "Copy", 11, copied ? H.teal : H.muted)
+                    }
+                    .foregroundStyle(copied ? H.teal : H.muted)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code).font(H.mono(13)).foregroundStyle(H.fg)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10).padding(.bottom, 10)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(H.surface)
+        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+    }
+}
+
+// A GitHub table: a grid with a header row.
+struct TableBlockView: View {
+    let rows: [[String]]
+    private var columns: Int { rows.map { $0.count }.max() ?? 0 }
+
+    private func cell(_ r: Int, _ c: Int) -> some View {
+        let value: String = c < rows[r].count ? rows[r][c] : ""
+        let fill: Color = r == 0 ? H.surface2 : Color.clear
+        return Text(inlineMd(value)).font(H.mono(13, bold: r == 0)).foregroundStyle(H.fg)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(fill)
+            .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                ForEach(rows.indices, id: \.self) { r in
+                    GridRow {
+                        ForEach(0..<columns, id: \.self) { c in cell(r, c) }
+                    }
+                }
+            }
+        }
     }
 }
 
