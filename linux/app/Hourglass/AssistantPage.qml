@@ -37,8 +37,17 @@ Item {
     property string modelError: ""
     property bool modelsLoading: false
     readonly property bool uploading: attachments.some(a => !a.id && !a.error)
+    property string editing: ""      // id of the user message being edited ("" when none)
+    property var streamQueue: []     // live events waiting for the next redraw
+    readonly property var ctx: lastUsage()
+    readonly property real ctxPercent: ctx && ctx.context_percent !== null && ctx.context_percent !== undefined ? Number(ctx.context_percent) : -1
+    readonly property bool canSteer: chat.engine === "anthropic" || chat.engine === "openai"
+    readonly property bool hasDraft: input.text.trim() !== "" || attachments.some(a => a.id)
+    readonly property string lastAssistant: { const l = chat.messages || []; for (let i = l.length - 1; i >= 0; i--) if (l[i].role === "assistant") return String(l[i].id); return ""; }
+    // The newest assistant message that changed a Drive file and was not undone yet: that is what Undo restores.
+    readonly property string undoTarget: { const l = chat.messages || []; for (let i = l.length - 1; i >= 0; i--) if (l[i].role === "assistant" && changedFile(l[i])) return String(l[i].id); return ""; }
 
-    readonly property bool busy: sending || chat.busy || pending !== ""
+    readonly property bool busy: sending || chat.busy || pending !== "" || (chat.queue || []).length > 0
     // The second "Working 12 s" counts with: the app's clock only moves on the
     // minute unless a timer is running, and this one has to count while it works.
     property double now: Date.now()
@@ -138,24 +147,78 @@ Item {
         }, true);
     }
 
-    function sendText(text) {
+    // A message sent while a reply is running waits in the queue (greyed, with a cancel);
+    // with `steer` (engines that take it) it goes into the running reply instead.
+    function sendText(text, steer) {
         const files = page.attachments.filter(a => a.id);
         const kept = page.attachments;
         // With only files, the server says what the message is.
         const t = text.trim() || (files.length ? "(see the attached file" + (files.length > 1 ? "s)" : ")") : "");
-        if (!t || page.busy || page.uploading || !page.chat.enabled) return;
-        page.pending = t;
+        if (!t || page.sending || page.uploading || !page.chat.enabled) return;
+        if (page.editing !== "") { page.sendEdit(t, files, kept, text); return; }
+        const running = !!page.chat.busy;
+        if (!running) page.pending = t;
         page.sending = true;
         page.wasBusy = true;
         input.text = "";
         page.attachments = [];
         list.stick = true;
         list.positionViewAtBeginning();     // back down to the newest message
-        Api.request("POST", "/api/assistant/message", { text: t, files: files.map(a => a.id) }, (d, err) => {
+        const body = { text: t, files: files.map(a => a.id) };
+        if (steer && running && page.canSteer) body.steer = true;
+        Api.request("POST", "/api/assistant/message", body, (d, err) => {
             page.sending = false;
-            if (!d) { page.pending = ""; input.text = text; page.attachments = kept; return; }
+            if (!d) { if (!running) page.pending = ""; input.text = text; page.attachments = kept; return; }
+            if (d.queued) page.queueAdd(d.id, t, files.length);
             page.load();
         }, true);
+    }
+    function queueAdd(id, text, files) {
+        const c = Object.assign({}, page.chat);
+        c.queue = (c.queue || []).concat([{ id: id, at: Date.now(), text: text, files: files }]);
+        page.chat = c;
+        page.chatJson = "";
+    }
+    function cancelQueued(id) {
+        const c = Object.assign({}, page.chat);
+        c.queue = (c.queue || []).filter(q => q.id !== id);
+        page.chat = c;
+        page.chatJson = "";
+        Api.request("DELETE", "/api/assistant/queue/" + id, null, () => page.load(), true);
+    }
+
+    // Edit: the message goes back into the box; sending replaces it and everything after it.
+    function beginEdit(m) {
+        page.editing = String(m.id);
+        input.text = m.text || "";
+        input.area.cursorPosition = input.text.length;
+        focusComposer();
+    }
+    function cancelEdit() { page.editing = ""; input.text = ""; }
+    function sendEdit(t, files, kept, raw) {
+        const id = page.editing;
+        page.sending = true;
+        page.wasBusy = true;
+        input.text = "";
+        page.attachments = [];
+        page.editing = "";
+        const body = { message_id: id, text: t };
+        if (files.length) body.files = files.map(a => a.id);
+        Api.request("POST", "/api/assistant/edit", body, (d, err) => {
+            page.sending = false;
+            if (!d) { input.text = raw; page.attachments = kept; page.editing = id; return; }
+            page.load();
+        }, true);
+    }
+    function retry(id) {
+        page.wasBusy = true;
+        Api.request("POST", "/api/assistant/retry", { message_id: id }, d => { if (d) page.load(); }, true);
+    }
+    function undo() {
+        Api.request("POST", "/api/assistant/undo", {}, d => { if (d) { page.load(); Api.post("/api/sync/now", {}); } }, true);
+    }
+    function changedFile(m) {
+        return (m.cards || []).some(c => c.kind === "file" && (c.state === "changed" || c.state === "created" || c.state === "deleted"));
     }
 
     // Pictures and files for the next message: uploaded to the Drive's
@@ -200,7 +263,7 @@ Item {
         Api.request("POST", "/api/assistant/mode", { mode: next }, d => { if (d) { page.mode = d.mode; modeMenu.close(); page.load(); } }, true);
     }
     function cycleMode() {
-        const safe = ["ask", "auto"];
+        const safe = ["ask", "auto", "plan"];
         setMode(safe[(safe.indexOf(page.mode) + 1) % safe.length]);
     }
     function action(id, verb) {
@@ -232,7 +295,7 @@ Item {
         property var info: ({})
         name: info.label || "Drive file"
         fileId: info.id || ""
-        note: (info.state === "read" ? "Read · " : info.state === "created" ? "Created · " : info.state === "deleted" ? "Deleted · " : "Changed · ")
+        note: (info.state === "read" ? "Read · " : info.state === "created" ? "Created · " : info.state === "deleted" ? "Deleted · " : info.state === "undone" ? "Undone · " : "Changed · ")
             + (info.size || 0) + " bytes · +" + ((info.diff || {}).added || 0) + " / -" + ((info.diff || {}).removed || 0) + " lines"
         removable: false
         onActivated: if (page.app) page.app.page = 8
@@ -244,7 +307,8 @@ Item {
 
     function stop() { Api.request("POST", "/api/assistant/stop", {}, () => page.load(), true); }
     // "Free · big-pickle", "Claude · Haiku 5.5", "API · gpt-5-mini".
-    function engineLabel() {
+    function engineLabel() { return page.baseLabel() + (page.chat.effort ? " · " + page.chat.effort : ""); }
+    function baseLabel() {
         const m = String(page.chat.model || "");
         const shortName = m.replace(/^opencode\//, "").replace(/^claude-/, "").replace(/-(\d+)-(\d+)$/, " $1.$2").replace(/^./, c => c.toUpperCase());
         if (page.chat.engine === "anthropic") return "Claude API · " + shortName;
@@ -274,8 +338,17 @@ Item {
             }, true);
         }, true);
     }
-    function selectModel(id) {
+    // The effort saved for a model: the one in use, or the one kept for it per engine.
+    function effortFor(id) {
+        const s = page.modelSettings;
+        if (!s) return "";
+        if (s.model === id && s.effort) return s.effort;
+        for (const slot in (s.efforts || {})) if (s.efforts[slot] && s.efforts[slot][id]) return s.efforts[slot][id];
+        return "";
+    }
+    function selectModel(id, effort) {
         const body = { engine: modelSettings.engine, model: id };
+        if (effort) body.effort = effort;
         if (modelSettings.engine === "openai") body.base_url = modelSettings.base_url;
         modelError = "";
         Api.request("POST", "/api/assistant/settings", body, (d, err) => {
@@ -293,7 +366,111 @@ Item {
         return parts.join("  ·  ");
     }
     function newChat() {
-        Api.request("POST", "/api/assistant/new", {}, () => { page.pending = ""; page.load(); }, true);
+        Api.request("POST", "/api/assistant/new", {}, () => { page.pending = ""; page.editing = ""; page.load(); }, true);
+    }
+    // The newest answer that knows how full the context is.
+    function lastUsage() {
+        const l = chat.messages || [];
+        for (let i = l.length - 1; i >= 0; i--) {
+            const u = l[i].usage;
+            if (u && u.context_percent !== null && u.context_percent !== undefined) return u;
+        }
+        return null;
+    }
+    function tokens(n) {
+        n = Number(n || 0);
+        return n >= 1000000 ? (n / 1000000).toFixed(2).replace(/\.?0+$/, "") + "M" : n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+    }
+    function clockAt(ms) {
+        const d = new Date(ms);
+        return (d.toDateString() === new Date().toDateString() ? "" : d.toLocaleDateString(Qt.locale(), "ddd d MMM") + " ") + d.toLocaleTimeString(Qt.locale(), "HH:mm");
+    }
+    // "Limit reached, continues at 14:30": quiet, from the quota events.
+    readonly property var quota: chat.quota && chat.quota.state !== "ok" ? chat.quota : null
+    function quotaLine() {
+        const q = page.quota;
+        if (!q) return "";
+        return "Limit reached" + (q.resets_at ? ", continues at " + clockAt(q.resets_at) : "") + (q.message ? " · " + q.message : "");
+    }
+
+    // --- the live stream ---------------------------------------------------------------------
+
+    function onStreamEvent(name, d) {
+        page.streamQueue = page.streamQueue.concat([[name, d]]);
+        if (!flushTimer.running) flushTimer.start();
+    }
+    // Events arrive faster than they are worth drawing: they are applied together, a few times a second.
+    function flushStream() {
+        const events = page.streamQueue;
+        page.streamQueue = [];
+        if (!events.length) return;
+        const c = Object.assign({}, page.chat);
+        c.messages = (page.chat.messages || []).slice();
+        const copied = {};
+        let reload = false;
+        const msg = id => {
+            const i = c.messages.findIndex(m => m.id === id);
+            if (i < 0) return null;
+            if (!copied[id]) { c.messages[i] = Object.assign({}, c.messages[i]); copied[id] = true; }
+            return c.messages[i];
+        };
+        for (const ev of events) {
+            const name = ev[0], d = ev[1];
+            if (name === "ready") {
+                Object.assign(c, { enabled: d.enabled, engine: d.engine, model: d.model, effort: d.effort, state: d.state, busy: d.busy, queued: d.queued });
+            } else if (name === "state") {
+                Object.assign(c, { state: d.state, busy: d.busy, queued: d.queued });
+                reload = true;      // the queue and the finished answer's cards come with the snapshot
+            } else if (name === "message_start") {
+                c.busy = true; c.state = "busy";
+                const known = c.messages.some(m => m.id === d.user_message_id);
+                if (d.user_message_id && !known) {
+                    // The question first, so the answer never lands above it: the box's text, or the next in the queue.
+                    const q = (c.queue || [])[0];
+                    const text = page.pending !== "" ? page.pending : q ? q.text : null;
+                    if (text !== null) {
+                        c.messages.push({ id: d.user_message_id, role: "user", time: d.at || Date.now(), text: text, tools: [], files: [], cards: [], steps: [] });
+                        if (q && page.pending === "") c.queue = c.queue.slice(1);
+                    }
+                    reload = true;
+                }
+                if (!c.messages.some(m => m.id === d.message_id))
+                    c.messages.push({ id: d.message_id, role: "assistant", time: d.at || Date.now(), text: "", tools: [], files: [], cards: [], pending_actions: [], steps: [], usage: null, error: null, model: d.model || null, quick: !!d.quick, steer: false });
+            } else if (name === "text") {
+                const m = msg(d.message_id);
+                if (!m) { reload = true; continue; }
+                m.text = d.text;
+            } else if (name === "tool_start" || name === "tool_update" || name === "tool_end") {
+                const m = msg(d.message_id);
+                if (!m) { reload = true; continue; }
+                const tools = (m.tools || []).slice();
+                const at = tools.findIndex(t => t.call_id === d.id);
+                const next = { call_id: d.id };
+                for (const k of ["tool", "label", "status", "input", "output", "duration_ms", "diff"]) if (d[k] !== undefined) next[k] = d[k];
+                if (at >= 0) tools[at] = Object.assign({}, tools[at], next); else tools.push(Object.assign({ tool: "", label: "", status: "running", input: "", output: "", duration_ms: null, diff: null }, next));
+                m.tools = tools;
+            } else if (name === "usage") {
+                const m = msg(d.message_id);
+                if (m) m.usage = Object.assign({}, m.usage || {}, d);
+            } else if (name === "steer") {
+                reload = true;
+            } else if (name === "quota") {
+                c.quota = d.state === "quota" ? d : null;
+            } else if (name === "message_end") {
+                const m = msg(d.message_id);
+                if (m) {
+                    if (d.text !== undefined && d.text !== null) m.text = d.text;
+                    m.error = d.error || null; m.error_kind = d.error_kind || null; m.error_resets_at = d.error_resets_at || null;
+                    if (d.model) m.model = d.model;
+                    if (d.usage) m.usage = d.usage;
+                }
+                reload = true;
+            }
+        }
+        page.chat = c;
+        page.chatJson = "";
+        if (!page.ready) Qt.callLater(() => page.ready = true);
+        if (reload) page.load();
     }
 
     // --- pictures, copy and quote, drafts --------------------------------------------
@@ -341,9 +518,16 @@ Item {
     property var menuMessage: null
     function openMessageMenu(message, pos) {
         menuMessage = message;
-        msgMenu.show(pos.x, pos.y, message.role === "user" ? "Your message" : "Assistant", [
-            { key: "copy", label: "Copy" }, { key: "markdown", label: "Copy as Markdown" }, { key: "quote", label: "Quote in reply" }
-        ]);
+        const items = [{ key: "copy", label: "Copy" }, { key: "markdown", label: "Copy as Markdown" }, { key: "quote", label: "Quote in reply" }];
+        const idle = !page.busy;
+        if (message.role === "user" && message.id !== "pending") items.push({ separator: true }, { key: "edit", label: "Edit and resend", disabled: !idle });
+        if (message.role === "assistant") {
+            const more = [];
+            if (String(message.id) === page.lastAssistant) more.push({ key: "retry", label: "Retry", disabled: !idle });
+            if (String(message.id) === page.undoTarget) more.push({ key: "undo", label: "Undo file change", disabled: !idle });
+            if (more.length) items.push({ separator: true }, ...more);
+        }
+        msgMenu.show(pos.x, pos.y, message.role === "user" ? "Your message" : "Assistant", items);
     }
 
     // The picture on the clipboard (the background service reads it: QML can only paste text).
@@ -386,15 +570,27 @@ Item {
         { title: "Switch model…", note: page.engineLabel(), enabled: true, run: () => page.openModelMenu() },
         { title: "Mode: Ask", note: page.mode === "ask" ? "Current" : "Every change waits for approval", enabled: true, run: () => page.setMode("ask") },
         { title: "Mode: Auto", note: page.mode === "auto" ? "Current" : "Only risky actions wait", enabled: true, run: () => page.setMode("auto") },
+        { title: "Mode: Plan", note: page.mode === "plan" ? "Current" : "Read only: nothing is changed", enabled: true, run: () => page.setMode("plan") },
         { title: "Mode: Dangerous", note: page.mode === "dangerous" ? "Current" : "Changes apply immediately", enabled: true, run: () => page.setMode("dangerous") },
+        { title: "Usage…", note: "Tokens, cost and limits", enabled: true, run: () => usagePage.open() },
         { title: "Change AI…", note: "Engine and keys", enabled: true, run: () => aiSettings.open() },
         { title: "Open settings", note: "", enabled: !!page.app, run: () => { const i = page.app.pages.findIndex(p => p.name === "Settings"); if (i >= 0) page.app.go(i); } }
     ]
-    readonly property bool overlayOpen: lightbox.opened || palette.opened || modelMenu.opened || modeMenu.opened || drivePicker.opened || msgMenu.opened || aiSettings.visible
+    readonly property bool overlayOpen: lightbox.opened || palette.opened || modelMenu.opened || modeMenu.opened || drivePicker.opened || msgMenu.opened || ctxPop.opened || aiSettings.visible || usagePage.visible
 
     Component.onCompleted: { load(); Api.get("/api/drive/info", d => { if (d) page.info = d; }); }
 
     AssistantSettings { id: aiSettings; onSaved: page.load() }
+    AssistantUsage { id: usagePage }
+    AssistantStream {
+        id: stream
+        active: page.visible && Util.shown(page.app) && page.chat.enabled !== false
+        onOpened: page.load()
+        onReceived: (name, data) => page.onStreamEvent(name, data)
+    }
+    Timer { id: flushTimer; interval: 60; onTriggered: page.flushStream() }
+    // The clock on the Working line.
+    Timer { interval: 1000; running: page.visible && page.busy; repeat: true; onTriggered: page.now = Date.now() }
 
     Popup {
         id: modelMenu
@@ -413,12 +609,32 @@ Item {
                 Repeater {
                     model: page.modelChoices
                     delegate: Rectangle {
+                        id: choice
                         required property var modelData
-                        Layout.fillWidth: true; implicitHeight: 42
+                        readonly property var efforts: modelData.efforts || []
+                        Layout.fillWidth: true; implicitHeight: efforts.length ? 68 : 42
                         color: modelChoiceHover.containsMouse ? Theme.surface2 : "transparent"
-                        Text { anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 8; anchors.rightMargin: 28; text: page.modelLabel(modelData); color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
-                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 8; text: "✓"; visible: page.modelSettings && (page.modelSettings.model || (page.modelChoices[0] || {}).id) === modelData.id; color: Theme.accent; font.pixelSize: 15 }
+                        Text { y: choice.efforts.length ? 10 : (parent.height - height) / 2; anchors.left: parent.left; anchors.right: parent.right; anchors.leftMargin: 8; anchors.rightMargin: 28; text: page.modelLabel(modelData); color: Theme.fg; elide: Text.ElideRight; font.family: Theme.mono; font.pixelSize: 12 }
+                        Text { y: choice.efforts.length ? 8 : (parent.height - height) / 2; anchors.right: parent.right; anchors.rightMargin: 8; text: "✓"; visible: page.modelSettings && (page.modelSettings.model || (page.modelChoices[0] || {}).id) === modelData.id; color: Theme.accent; font.pixelSize: 15 }
                         MouseArea { id: modelChoiceHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.selectModel(modelData.id) }
+                        // How hard it thinks, where the model takes it: choosing one saves it for this model.
+                        Row {
+                            visible: choice.efforts.length > 0
+                            anchors { left: parent.left; leftMargin: 8; bottom: parent.bottom; bottomMargin: 8 }
+                            spacing: 4
+                            Repeater {
+                                model: choice.efforts
+                                Rectangle {
+                                    required property string modelData
+                                    readonly property bool chosen: page.effortFor(choice.modelData.id) === modelData
+                                    width: effortLabel.implicitWidth + 16; height: 22
+                                    color: chosen ? Theme.accent : "transparent"
+                                    border.width: 1; border.color: chosen || effortHover.containsMouse ? Theme.accent : Theme.border
+                                    Text { id: effortLabel; anchors.centerIn: parent; text: parent.modelData.charAt(0).toUpperCase() + parent.modelData.slice(1); color: parent.chosen ? Theme.accentInk : Theme.fg; font.family: Theme.mono; font.pixelSize: 11 }
+                                    MouseArea { id: effortHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.selectModel(choice.modelData.id, parent.modelData) }
+                                }
+                            }
+                        }
                     }
                 }
                 Text { visible: page.modelError !== ""; text: page.modelError; color: Theme.accent; wrapMode: Text.Wrap; Layout.fillWidth: true; font.family: Theme.mono; font.pixelSize: 12 }
@@ -437,7 +653,7 @@ Item {
             width: parent.width; spacing: 2
             Text { Layout.leftMargin: 8; Layout.topMargin: 4; text: "PERMISSIONS · SHIFT+TAB"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 10; font.letterSpacing: 1 }
             Repeater {
-                model: [{ id: "ask", title: "Ask", note: "Every change waits for approval" }, { id: "auto", title: "Auto", note: "Only risky actions wait" }, { id: "dangerous", title: "Dangerous", note: "Changes apply immediately" }]
+                model: [{ id: "ask", title: "Ask", note: "Every change waits for approval" }, { id: "auto", title: "Auto", note: "Only risky actions wait" }, { id: "plan", title: "Plan", note: "Read only: it plans, changes nothing" }, { id: "dangerous", title: "Dangerous", note: "Changes apply immediately" }]
                 delegate: Rectangle {
                     required property var modelData
                     Layout.fillWidth: true; implicitHeight: 52
@@ -496,11 +712,15 @@ Item {
             if (key === "copy") page.copy(page.plainText(text));
             else if (key === "markdown") page.copy(text);
             else if (key === "quote") page.quote(text);
+            else if (key === "edit") page.beginEdit(page.menuMessage);
+            else if (key === "retry") page.retry(String(page.menuMessage.id));
+            else if (key === "undo") page.undo();
         }
         onClosed: page.focusComposer()
     }
 
     Shortcut { sequence: "Escape"; enabled: page.visible && page.busy && !page.overlayOpen; onActivated: page.stop() }
+    Shortcut { sequence: "Escape"; enabled: page.visible && page.editing !== "" && !page.busy && !page.overlayOpen; onActivated: page.cancelEdit() }
     Shortcut { sequence: "Ctrl+N"; enabled: page.visible; onActivated: { if (page.messages.length > 0 && !page.busy) page.newChat(); page.focusComposer(); } }
     Shortcut { sequence: "Ctrl+K"; enabled: page.visible; onActivated: palette.open() }
 
@@ -559,6 +779,36 @@ Item {
                 }
             }
             Text { visible: palette.shown.length === 0; width: parent.width; height: 40; text: "No command matches"; color: Theme.muted; verticalAlignment: Text.AlignVCenter; leftPadding: 16; font.family: Theme.mono; font.pixelSize: 12 }
+        }
+    }
+
+    component UsageLine: RowLayout {
+        property string label: ""
+        property string value: ""
+        Layout.fillWidth: true
+        spacing: 12
+        Text { Layout.fillWidth: true; text: parent.label; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 11 }
+        Text { text: parent.value; color: Theme.fg; font.family: Theme.mono; font.pixelSize: 11 }
+    }
+    // The numbers behind the meter.
+    Popup {
+        id: ctxPop
+        parent: ctxMeter
+        x: ctxMeter.width - width; y: ctxMeter.height + 6
+        width: 270; padding: 12
+        background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: 4 }
+        contentItem: ColumnLayout {
+            spacing: 6
+            Text { text: "CONTEXT"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 10; font.letterSpacing: 1 }
+            UsageLine { label: "Used"; value: page.ctxPercent >= 0 ? Number(page.ctxPercent).toFixed(1).replace(/\.0$/, "") + "%" + (page.ctx && page.ctx.context_window ? " of " + page.tokens(page.ctx.context_window) : "") : "" }
+            UsageLine { label: "Model"; value: String(page.chat.model || "").replace(/^opencode\//, "") }
+            UsageLine { visible: !!page.ctx && page.ctx.input_tokens !== null && page.ctx.input_tokens !== undefined; label: "Input"; value: page.ctx ? page.tokens(page.ctx.input_tokens) : "" }
+            UsageLine { visible: !!page.ctx && page.ctx.output_tokens !== null && page.ctx.output_tokens !== undefined; label: "Output"; value: page.ctx ? page.tokens(page.ctx.output_tokens) : "" }
+            UsageLine { visible: !!page.ctx && (page.ctx.cache_read_input_tokens || 0) + (page.ctx.cache_creation_input_tokens || 0) > 0; label: "Cached"; value: page.ctx ? page.tokens((page.ctx.cache_read_input_tokens || 0) + (page.ctx.cache_creation_input_tokens || 0)) : "" }
+            UsageLine { visible: !!page.ctx && page.ctx.cost !== null && page.ctx.cost !== undefined; label: "Cost of this answer"; value: page.ctx ? "$" + Number(page.ctx.cost).toFixed(4) : "" }
+            Text { visible: page.quota !== null; Layout.fillWidth: true; text: page.quotaLine(); wrapMode: Text.Wrap; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 11 }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+            Btn { Layout.fillWidth: true; compact: true; text: "Usage details…"; onClicked: { ctxPop.close(); usagePage.open(); } }
         }
     }
 
@@ -634,7 +884,7 @@ Item {
     Component.onDestruction: saveDraft()
     Timer {
         interval: 900
-        running: page.visible && page.busy && Util.shown(page.app)
+        running: page.visible && page.busy && Util.shown(page.app) && !stream.connected
         repeat: true
         onRunningChanged: if (running) page.now = Date.now()
         onTriggered: { page.now = Date.now(); page.load(); }
@@ -649,6 +899,29 @@ Item {
             Layout.fillWidth: true
             spacing: 10
             Section { Layout.fillWidth: true; text: "Assistant" }
+            // How full the conversation is, live from the usage events; click for the numbers.
+            Rectangle {
+                id: ctxMeter
+                visible: page.ctxPercent >= 0
+                implicitWidth: ctxRow.implicitWidth + 20; implicitHeight: 30
+                color: Theme.surface2; border.width: 1; border.color: ctxHover.containsMouse || ctxPop.opened ? Theme.accent : Theme.border
+                RowLayout {
+                    id: ctxRow
+                    anchors.centerIn: parent
+                    spacing: 8
+                    Rectangle {
+                        Layout.preferredWidth: 48; Layout.preferredHeight: 3; color: Theme.border
+                        Rectangle {
+                            width: parent.width * Math.min(1, Math.max(0, page.ctxPercent / 100)); height: parent.height
+                            color: page.ctxPercent >= 85 ? Theme.accent : page.ctxPercent >= 60 ? Theme.gold : Theme.teal
+                            Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        }
+                    }
+                    Text { text: Math.round(page.ctxPercent) + "%"; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 11 }
+                }
+                MouseArea { id: ctxHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: ctxPop.opened ? ctxPop.close() : ctxPop.open() }
+            }
+            Btn { compact: true; kind: "subtle"; text: "Usage"; onClicked: usagePage.open() }
             Btn { compact: true; icon: "plus"; text: "New chat"; enabled: page.messages.length > 0 && !page.busy; onClicked: page.newChat() }
         }
 
@@ -763,28 +1036,16 @@ Item {
                             // What the assistant did, one line per tool.
                             ColumnLayout {
                                 id: toolLines
+                                width: Math.min(implicitWidth, body.width)
                                 spacing: 6
                                 visible: !row.mine && (row.modelData.tools || []).length > 0
                                 Repeater {
                                     model: row.mine ? [] : JSON.parse(row.toolsJson)
-                                    RowLayout {
+                                    ToolRow {
                                         required property var modelData
-                                        spacing: 8
-                                        property bool expanded: !!page.openTools[row.modelData.id + ":" + modelData.tool]
-                                        NumberAnimation on opacity { from: 0; to: 1; duration: 220; easing.type: Easing.OutCubic }
-                                        Icon {
-                                            name: modelData.status === "completed" ? "check" : modelData.status === "error" ? "close" : "sync"
-                                            size: 12
-                                            color: modelData.status === "completed" ? Theme.teal : modelData.status === "error" ? Theme.accent : Theme.muted
-                                            RotationAnimation on rotation { running: modelData.status !== "completed" && modelData.status !== "error"; from: 0; to: 360; duration: 1200; loops: Animation.Infinite }
-                                            // The tick pops in.
-                                            NumberAnimation on scale { from: 0.3; to: 1; duration: 340; easing.type: Easing.OutBack; easing.overshoot: 3 }
-                                        }
-                                        Text { text: modelData.label + (parent.expanded ? " · " + modelData.status : ""); color: Theme.muted; font.family: Theme.mono; font.pixelSize: 12 }
-                                        MouseArea {
-                                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                            onClicked: { const all = Object.assign({}, page.openTools), key = row.modelData.id + ":" + modelData.tool; if (all[key]) delete all[key]; else all[key] = true; page.openTools = all; }
-                                        }
+                                        info: modelData
+                                        expanded: !!page.openTools[row.modelData.id + ":" + (modelData.call_id || modelData.tool)]
+                                        onToggled: { const all = Object.assign({}, page.openTools), key = row.modelData.id + ":" + (modelData.call_id || modelData.tool); if (all[key]) delete all[key]; else all[key] = true; page.openTools = all; }
                                     }
                                 }
                             }
@@ -819,6 +1080,7 @@ Item {
                                     }
                                 }
                             }
+                            Text { visible: row.mine && !!row.modelData.steer; text: "Steered into the running answer"; color: Theme.faint; font.family: Theme.mono; font.pixelSize: 10 }
                             ChatMarkdown {
                                 visible: row.modelData.text !== ""
                                 width: body.width
@@ -933,6 +1195,28 @@ Item {
                             Layout.maximumWidth: 720
                             steps: working.current ? page.thinkingSteps(working.current.steps) : []
                         }
+                        // Sent while it was busy: they run next, in this order; ✕ takes one back.
+                        Repeater {
+                            model: page.chat.queue || []
+                            Rectangle {
+                                required property var modelData
+                                Layout.alignment: Qt.AlignRight
+                                Layout.rightMargin: 2
+                                Layout.topMargin: 4
+                                implicitWidth: Math.min(list.width * 0.75, queuedRow.implicitWidth + 24)
+                                implicitHeight: 36
+                                color: "transparent"
+                                border.width: 1; border.color: Theme.border
+                                RowLayout {
+                                    id: queuedRow
+                                    anchors { fill: parent; leftMargin: 12; rightMargin: 4 }
+                                    spacing: 10
+                                    Text { text: "QUEUED"; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 10; font.letterSpacing: 1 }
+                                    Text { Layout.fillWidth: true; text: (modelData.text || "").replace(/\s+/g, " "); textFormat: Text.PlainText; elide: Text.ElideRight; color: Theme.muted; font.family: Theme.mono; font.pixelSize: 13 }
+                                    Btn { compact: true; kind: "subtle"; icon: "close"; tip: "Cancel this message"; onClicked: page.cancelQueued(modelData.id) }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -972,6 +1256,21 @@ Item {
             }
         }
 
+        // A limit in force: one quiet line.
+        Text {
+            visible: page.quota !== null
+            Layout.fillWidth: true
+            text: page.quotaLine()
+            elide: Text.ElideRight
+            color: Theme.muted; font.family: Theme.mono; font.pixelSize: 11
+        }
+        RowLayout {
+            visible: page.editing !== ""
+            Layout.fillWidth: true
+            spacing: 8
+            Text { Layout.fillWidth: true; text: "Editing a message: sending replaces it and everything after it"; elide: Text.ElideRight; color: Theme.accent; font.family: Theme.mono; font.pixelSize: 11 }
+            Btn { compact: true; kind: "subtle"; text: "Cancel"; onClicked: page.cancelEdit() }
+        }
         // Attached, waiting to be sent
         Flow {
             visible: page.attachments.length > 0
@@ -1007,13 +1306,13 @@ Item {
                 Btn {
                     Layout.alignment: Qt.AlignBottom
                     kind: "subtle"; icon: "clip"; tip: "Attach pictures or files (or drop them here)"
-                    enabled: page.chat.enabled && !page.busy
+                    enabled: page.chat.enabled
                     onClicked: attachDialog.open()
                 }
                 Btn {
                     Layout.alignment: Qt.AlignBottom
                     kind: "subtle"; icon: "drive"; tip: "Attach an existing Drive file"
-                    enabled: page.chat.enabled && !page.busy
+                    enabled: page.chat.enabled
                     onClicked: drivePicker.open()
                 }
                 ScrollView {
@@ -1029,7 +1328,7 @@ Item {
                         id: field
                         wrapMode: TextArea.Wrap
                         color: Theme.fg
-                        placeholderText: page.busy ? "Working on it…" : "Ask Hourglass…   Enter to send, Shift+Enter for a new line"
+                        placeholderText: page.editing !== "" ? "Edit your message…   Enter to resend, Esc to cancel" : page.busy ? (page.canSteer ? "Queue another message…   Ctrl+Enter to steer this answer" : "Queue another message…   it runs next") : "Ask Hourglass…   Enter to send, Shift+Enter for a new line"
                         placeholderTextColor: Theme.faint
                         selectionColor: Theme.alpha(Theme.accent, 0.45)
                         selectedTextColor: Theme.fg
@@ -1043,23 +1342,31 @@ Item {
                         background: null
                         Keys.onReturnPressed: event => {
                             if (event.modifiers & Qt.ShiftModifier) { event.accepted = false; return; }
-                            page.sendText(field.text);
+                            page.sendText(field.text, !!(event.modifiers & Qt.ControlModifier));
                         }
-                        Keys.onEnterPressed: event => page.sendText(field.text)
+                        Keys.onEnterPressed: event => page.sendText(field.text, !!(event.modifiers & Qt.ControlModifier))
                         Keys.onPressed: event => {
                             if (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier)) { event.accepted = true; page.cycleMode(); }
                             // Nothing to paste as text: it may be a picture (a screenshot).
-                            if (event.matches(StandardKey.Paste) && !field.canPaste && page.chat.enabled && !page.busy) { event.accepted = true; page.pasteImage(); }
+                            if (event.matches(StandardKey.Paste) && !field.canPaste && page.chat.enabled) { event.accepted = true; page.pasteImage(); }
                         }
                     }
                 }
                 Btn {
                     Layout.alignment: Qt.AlignBottom
-                    kind: page.busy ? "ghost" : "primary"
-                    icon: page.busy ? "stop" : "send"
-                    text: page.busy ? "Stop" : "Send"
-                    enabled: page.chat.enabled && (page.busy || ((input.text.trim() !== "" || page.attachments.some(a => a.id)) && !page.uploading))
-                    onClicked: page.busy ? page.stop() : page.sendText(input.text)
+                    visible: page.canSteer && !!page.chat.busy && page.hasDraft && page.editing === ""
+                    compact: true; kind: "subtle"; text: "Steer"; tip: "Send into the running answer (Ctrl+Enter)"
+                    enabled: page.chat.enabled && !page.uploading
+                    onClicked: page.sendText(input.text, true)
+                }
+                Btn {
+                    Layout.alignment: Qt.AlignBottom
+                    readonly property bool stops: page.busy && !page.hasDraft
+                    kind: stops ? "ghost" : "primary"
+                    icon: stops ? "stop" : "send"
+                    text: stops ? "Stop" : page.editing !== "" ? "Resend" : page.chat.busy ? "Queue" : "Send"
+                    enabled: page.chat.enabled && (stops || (page.hasDraft && !page.uploading))
+                    onClicked: stops ? page.stop() : page.sendText(input.text, false)
                 }
             }
         }
@@ -1077,8 +1384,8 @@ Item {
                 id: modeChip
                 implicitWidth: modeChipLabel.implicitWidth + 22; implicitHeight: 30
                 color: page.mode === "dangerous" ? Theme.accent : Theme.surface2
-                border.width: 1; border.color: page.mode === "dangerous" ? Theme.accent : modeHoverChip.containsMouse ? Theme.accent : Theme.border
-                Text { id: modeChipLabel; anchors.centerIn: parent; text: page.mode.charAt(0).toUpperCase() + page.mode.slice(1) + "  ▾"; color: page.mode === "dangerous" ? Theme.bg : Theme.fg; font.family: Theme.mono; font.pixelSize: 11; font.weight: Font.DemiBold }
+                border.width: 1; border.color: page.mode === "dangerous" ? Theme.accent : page.mode === "plan" ? Theme.teal : modeHoverChip.containsMouse ? Theme.accent : Theme.border
+                Text { id: modeChipLabel; anchors.centerIn: parent; text: page.mode.charAt(0).toUpperCase() + page.mode.slice(1) + "  ▾"; color: page.mode === "dangerous" ? Theme.bg : page.mode === "plan" ? Theme.teal : Theme.fg; font.family: Theme.mono; font.pixelSize: 11; font.weight: Font.DemiBold }
                 MouseArea { id: modeHoverChip; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: modeMenu.open() }
             }
             Text {
@@ -1088,7 +1395,14 @@ Item {
                 color: Theme.accent; wrapMode: Text.Wrap
                 font.family: Theme.mono; font.pixelSize: 11
             }
-            Item { visible: page.mode !== "dangerous"; Layout.fillWidth: true }
+            Text {
+                Layout.fillWidth: true
+                visible: page.mode === "plan"
+                text: "Plan: it reads and plans, nothing is changed"
+                color: Theme.teal; wrapMode: Text.Wrap
+                font.family: Theme.mono; font.pixelSize: 11
+            }
+            Item { visible: page.mode !== "dangerous" && page.mode !== "plan"; Layout.fillWidth: true }
         }
     }
 }

@@ -6,6 +6,7 @@
 //   data:   ~/.local/share/hourglass/         (Windows: %LOCALAPPDATA%\Hourglass)
 //   config.json: { "server": "https://...", "token": "..." }
 import { createServer } from "node:http";
+import { relayAssistantStream } from "./assistant-stream.js";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { appendFileSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -1683,6 +1684,10 @@ async function extra(req, res, url, path) {
   }
   // The assistant runs on the server (opencode there, on this account's data);
   // the sidecar only carries the account's session to it.
+  if (path === "/api/assistant/stream" && req.method === "GET" && config().token) {
+    await relayAssistantStream({ server: SERVER, headers: { authorization: `Bearer ${config().token}`, "x-hourglass-device": deviceName(), "x-timezone": service.tz }, res });
+    return true;
+  }
   if (path.startsWith("/api/assistant")) {
     if (!config().token) {
       if (req.method === "GET") return json(res, 200, { enabled: false, reason: "Sign in to use the assistant.", messages: [] }), true;

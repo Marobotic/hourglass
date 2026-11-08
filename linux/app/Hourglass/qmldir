@@ -40,3 +40,6 @@ ChatLightbox 1.0 ChatLightbox.qml
 ResultCard 1.0 ResultCard.qml
 AssistantSettings 1.0 AssistantSettings.qml
 StepList 1.0 StepList.qml
+AssistantStream 1.0 AssistantStream.qml
+AssistantUsage 1.0 AssistantUsage.qml
+ToolRow 1.0 ToolRow.qml
