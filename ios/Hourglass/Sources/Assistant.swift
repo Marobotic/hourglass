@@ -294,13 +294,8 @@ struct AssistantView: View {
         .quickLookPreview($opener.url)
         .fullScreenCover(item: $opener.viewing) { set in MediaViewer(set: set, opener: opener).environmentObject(store) }
         .fullScreenCover(isPresented: $settingsOpen) { AssistantSettingsSheet(onSaved: { Task { await load() } }).environmentObject(store) }
-        .fullScreenCover(isPresented: $modelOpen) {
-            ModelPickerSheet(onPicked: { Task { await load() } }, onChangeAI: openSettingsAfterPicker).environmentObject(store)
-        }
-        .onAppear { if input.isEmpty { input = UserDefaults.standard.string(forKey: draftKey) ?? "" } }
-        .onChange(of: input) { _, value in
-            if value.isEmpty { UserDefaults.standard.removeObject(forKey: draftKey) } else { UserDefaults.standard.set(value, forKey: draftKey) }
-        }
+        .modifier(PickerAndDraft(modelOpen: $modelOpen, input: $input, draftKey: draftKey,
+                                 onPicked: { Task { await load() } }, onChangeAI: openSettingsAfterPicker))
         .sheet(isPresented: $driveOpen) {
             NavigationStack {
                 List {
@@ -446,6 +441,27 @@ private struct Message: View {
             }
             .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+// Kept out of AssistantView.body so the compiler can type-check that chain in time.
+private struct PickerAndDraft: ViewModifier {
+    @EnvironmentObject var store: Store
+    @Binding var modelOpen: Bool
+    @Binding var input: String
+    let draftKey: String
+    let onPicked: () -> Void
+    let onChangeAI: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .fullScreenCover(isPresented: $modelOpen) {
+                ModelPickerSheet(onPicked: onPicked, onChangeAI: onChangeAI).environmentObject(store)
+            }
+            .onAppear { if input.isEmpty { input = UserDefaults.standard.string(forKey: draftKey) ?? "" } }
+            .onChange(of: input) { _, value in
+                if value.isEmpty { UserDefaults.standard.removeObject(forKey: draftKey) } else { UserDefaults.standard.set(value, forKey: draftKey) }
+            }
     }
 }
 
