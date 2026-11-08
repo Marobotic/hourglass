@@ -69,6 +69,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +88,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import dev.marobotic.hourglass.core.ChatMd
+import dev.marobotic.hourglass.core.ChatStream
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -112,7 +117,9 @@ private fun assistantToolVerb(tool: String): String = when {
 private fun JSONArray?.list(): List<JSONObject> = this?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
 
 // "Free · big-pickle", "Claude plan · haiku 5.5", "API · gpt-5-mini" (as on the desktop).
-private fun engineLabel(chat: JSONObject?): String {
+private fun engineLabel(chat: JSONObject?): String = engineName(chat) + (chat?.takeIf { !it.isNull("effort") }?.optString("effort")?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+
+private fun engineName(chat: JSONObject?): String {
     val m = chat?.optString("model").orEmpty()
     val short = m.removePrefix("opencode/").removePrefix("claude-").replace(Regex("-(\\d+)-(\\d+)$"), " $1.$2").replaceFirstChar { it.uppercase() }
     return when (chat?.optString("engine")) {
@@ -136,7 +143,12 @@ fun AssistantScreen(nav: Nav) {
     var pending by remember { mutableStateOf<String?>(null) }   // sent, not in the list yet
     var sending by remember { mutableStateOf(false) }
     var wasBusy by remember { mutableStateOf(false) }
-    var input by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf(repo.assistantDraft()) }   // kept per account
+    var rev by remember { mutableIntStateOf(0) }                    // the live stream edits chat in place
+    var live by remember { mutableStateOf(false) }                  // the event stream is connected
+    var editing by remember { mutableStateOf<String?>(null) }       // the user message being rewritten
+    var usageOpen by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf<String?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
     var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -178,7 +190,12 @@ fun AssistantScreen(nav: Nav) {
     val uploading = attachments.any { it.id == null && it.error == null }
     val ctx = androidx.compose.ui.platform.LocalContext.current
 
+    @Suppress("UNUSED_VARIABLE") val tick = rev // the stream edits chat in place: reading rev redraws
     val serverBusy = chat?.optBoolean("busy") == true
+    val direct = chat?.optString("engine").let { it == "anthropic" || it == "openai" }
+    val queue = chat?.optJSONArray("queue").list()
+    val quota = ChatStream.quota(chat)
+    val context = ChatStream.context(chat)?.optDouble("context_percent")
     val busy = sending || serverBusy || pending != null
     val enabled = chat?.optBoolean("enabled", true) != false
 
@@ -202,17 +219,73 @@ fun AssistantScreen(nav: Nav) {
         wasBusy = nowBusy
     }
 
+    // Saving a pick keeps the engine and base URL the settings already had.
+    fun saveSetting(extra: JSONObject, done: () -> Unit) {
+        val cfg = modelSettings ?: return
+        val body = JSONObject().put("engine", cfg.optString("engine"))
+        if (cfg.optString("engine") == "openai") body.put("base_url", cfg.optString("base_url"))
+        for (k in extra.keys()) body.put(k, extra.get(k))
+        modelSaving = true
+        repo.assistant("POST", "/settings", body) { d, err ->
+            modelSaving = false
+            if (d != null) { modelSettings = JSONObject(cfg.toString()).also { n -> for (k in extra.keys()) n.put(k, extra.get(k)) }; done(); load() } else modelProblem = err ?: "Could not save."
+        }
+    }
     fun send(text: String) {
         val files = attachments.filter { it.id != null }
         val kept = attachments
         // With only files, the server says what the message is.
         val t = text.trim().ifEmpty { if (files.isEmpty()) "" else "(see the attached file" + (if (files.size > 1) "s)" else ")") }
-        if (t.isEmpty() || busy || uploading || !enabled) return
-        pending = t; sending = true; wasBusy = true; input = ""; attachments = emptyList()
+        if (t.isEmpty() || sending || uploading || !enabled) return
+        note = null
+        val edit = editing
+        if (edit != null) {
+            // Everything after the message is dropped and it runs again.
+            sending = true; wasBusy = true; input = ""; editing = null; attachments = emptyList()
+            val body = JSONObject().put("message_id", edit).put("text", t)
+            if (files.isNotEmpty()) body.put("files", JSONArray(files.map { it.id }))
+            repo.assistant("POST", "/edit", body) { o, err ->
+                sending = false
+                if (o == null) { input = text; editing = edit; attachments = kept; problem = err } else load()
+            }
+            return
+        }
+        // While a reply runs the message waits its turn (or, on the direct engines, steers it).
+        val waiting = serverBusy
+        if (!waiting) { pending = t; wasBusy = true }
+        sending = true; input = ""; attachments = emptyList()
         val body = JSONObject().put("text", t).put("files", JSONArray(files.map { it.id }))
+        if (waiting && direct) body.put("steer", true)
         repo.assistant("POST", "/message", body) { o, err ->
             sending = false
             if (o == null) { pending = null; input = text; attachments = kept; problem = err } else load()
+        }
+    }
+    fun retry(id: String) = repo.assistant("POST", "/retry", JSONObject().put("message_id", id)) { o, err -> if (o == null) problem = err else { note = null; wasBusy = true; load() } }
+    fun undo() = repo.assistant("POST", "/undo") { o, err ->
+        if (o == null) problem = err else { note = (if (o.optString("action") == "deleted") "Removed " else "Restored ") + o.optString("name"); load(); repo.syncNow() }
+    }
+    val lastUser = messages.lastOrNull { it.optString("role") == "user" }?.optString("id")
+    val lastAnswer = messages.lastOrNull { it.optString("role") == "assistant" }?.optString("id")
+    // Press and hold a message: copy it, quote it, and for the last turn retry, edit or undo.
+    fun menuFor(m: JSONObject): List<Pair<String, () -> Unit>> {
+        val id = m.optString("id")
+        val text = m.optString("text")
+        if (id == "pending") return emptyList()
+        val mine = m.optString("role") == "user"
+        return buildList {
+            if (text.isNotBlank()) {
+                add("Copy" to { copyText(ctx, ChatMd.plain(text)) })
+                add("Copy as Markdown" to { copyText(ctx, text) })
+                add("Quote in reply" to { input = ChatMd.quote(text) + input })
+            }
+            if (!busy) {
+                if (mine && id == lastUser) add("Edit and resend" to { editing = id; input = text })
+                if (!mine && id == lastAnswer) {
+                    add("Retry" to { retry(id) })
+                    if (m.optJSONArray("cards").list().any { it.optString("kind") == "file" && it.optString("state") in listOf("changed", "created") }) add("Undo file change" to { undo() })
+                }
+            }
         }
     }
 
@@ -254,7 +327,25 @@ fun AssistantScreen(nav: Nav) {
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { attach(it) }
 
     // Poll quickly while it works, slowly otherwise; a clock for timers and "Working N s".
-    LaunchedEffect(busy) { while (true) { load(); delay(if (busy) 900 else 15000) } }
+    LaunchedEffect(busy, live) { while (true) { load(); delay(if (live) 60000 else if (busy) 900 else 15000) } }
+    // The live stream: text, tools, usage and state arrive as they happen.
+    DisposableEffect(Unit) {
+        val job = repo.assistantStream(
+            // The stream does not replay: read the snapshot again after a reconnect.
+            onLive = { on -> if (on != live) { live = on; if (on) load() } },
+            onEvent = { ev, d ->
+                if (ev == "state" && d.optBoolean("busy")) wasBusy = true
+                val c = chat
+                if (c == null || ChatStream.apply(c, ev, d) || (ev == "state" && !d.optBoolean("busy"))) load()
+                rev++
+            },
+        )
+        onDispose { job.cancel() }
+    }
+    // Drafts: kept a moment after typing, and when the screen closes.
+    val latestInput by rememberUpdatedState(input)
+    LaunchedEffect(input) { delay(400); repo.setAssistantDraft(input) }
+    DisposableEffect(Unit) { onDispose { repo.setAssistantDraft(latestInput) } }
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
     LaunchedEffect(current?.optString("id"), serverBusy) {
         if (serverBusy && current?.optString("id") != statusTurn) {
@@ -267,7 +358,7 @@ fun AssistantScreen(nav: Nav) {
     // Stay on the newest message while it grows, unless scrolled up to read.
     val list = rememberLazyListState()
     val atBottom by remember { derivedStateOf { val i = list.layoutInfo; i.visibleItemsInfo.lastOrNull()?.index?.let { it >= i.totalItemsCount - 2 } ?: true } }
-    val lastKey = shown.lastOrNull()?.let { it.optString("id") + it.optString("text").length + it.optJSONArray("tools")?.length() + it.optJSONArray("cards")?.length() }
+    val lastKey = shown.lastOrNull()?.let { it.optString("id") + it.optString("text").length + it.optJSONArray("tools")?.length() + it.optJSONArray("cards")?.length() } + queue.size
     LaunchedEffect(lastKey, busy, current?.optJSONArray("steps")?.length()) {
         if (shown.isNotEmpty() && (atBottom || sending)) list.animateScrollToItem(shown.size)
     }
@@ -350,16 +441,30 @@ fun AssistantScreen(nav: Nav) {
                             stepsShown = id in openSteps,
                             canShowSteps = !(serverBusy && m == messages.lastOrNull()),
                             statusWord = statusWord,
+                            menu = menuFor(m),
                             onAction = { actionId, action -> repo.assistantAction(actionId, action) { _, err -> if (err != null) problem = err else load() } },
                             onToggleSteps = { openSteps = if (id in openSteps) openSteps - id else openSteps + id },
                         )
                     }
                 }
                 item(key = "working") { Working(busy, current, now, showSteps, statusWord) { showSteps = !showSteps } }
+                items(queue, key = { "q" + it.optString("id") }) { q ->
+                    QueuedRow(q.optString("text"), q.optInt("files")) {
+                        repo.assistant("DELETE", "/queue/" + android.net.Uri.encode(q.optString("id"))) { _, _ -> load() }
+                    }
+                }
             }
         }
 
         problem?.let { T(it, 13, HColors.accent, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+        note?.let { T(it, 12, HColors.muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+        quota?.let { QuotaLine(it) }
+        editing?.let {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                T("Editing your message: everything after it is replaced", 12, HColors.muted, modifier = Modifier.weight(1f))
+                IconButton({ editing = null; input = "" }, Modifier.size(32.dp)) { Icon(Icons.Outlined.Close, "Cancel editing", tint = HColors.muted, modifier = Modifier.size(16.dp)) }
+            }
+        }
 
         // Attached, waiting to be sent
         if (attachments.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -368,44 +473,42 @@ fun AssistantScreen(nav: Nav) {
 
         // The message box
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom) {
-            IconButton({ pickFiles.launch(arrayOf("image/*", "*/*")) }, enabled = enabled && !busy) { Icon(Icons.Outlined.AttachFile, "Attach pictures or files", tint = HColors.muted) }
-            IconButton({ loadDrive(null, null); driveOpen = true }, enabled = enabled && !busy) { Icon(Icons.Outlined.FolderOpen, "Attach from Drive", tint = HColors.muted) }
+            IconButton({ pickFiles.launch(arrayOf("image/*", "*/*")) }, enabled = enabled) { Icon(Icons.Outlined.AttachFile, "Attach pictures or files", tint = HColors.muted) }
+            IconButton({ loadDrive(null, null); driveOpen = true }, enabled = enabled) { Icon(Icons.Outlined.FolderOpen, "Attach from Drive", tint = HColors.muted) }
             BasicTextField(
                 input, { input = it },
                 Modifier.weight(1f).heightIn(min = 44.dp, max = 140.dp).border(1.dp, HColors.border).background(HColors.surface).padding(horizontal = 12.dp, vertical = 11.dp),
                 enabled = enabled,
                 textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 21.sp),
                 cursorBrush = SolidColor(HColors.accent),
-                decorationBox = { inner -> if (input.isEmpty()) T(if (busy) "Working on it…" else "Ask Hourglass…", 15, HColors.faint); inner() },
+                decorationBox = { inner -> if (input.isEmpty()) T(if (serverBusy) "Queue another message…" else "Ask Hourglass…", 15, HColors.faint); inner() },
             )
             Spacer(Modifier.width(8.dp))
-            if (busy) HButton("", icon = Icons.Outlined.Stop) { repo.assistant("POST", "/stop") { _, _ -> load() } }
-            else HButton("", primary = true, icon = Icons.AutoMirrored.Outlined.Send, enabled = enabled && (input.isNotBlank() || attachments.any { it.id != null }) && !uploading) { send(input) }
+            if (busy && input.isBlank() && attachments.none { it.id != null }) HButton("", icon = Icons.Outlined.Stop) { repo.assistant("POST", "/stop") { _, _ -> load() } }
+            else HButton("", primary = true, icon = Icons.AutoMirrored.Outlined.Send, enabled = enabled && !sending && (input.isNotBlank() || attachments.any { it.id != null }) && !uploading) { send(input) }
         }
         if (mode == "dangerous") T("Dangerous: changes and deletions apply without asking", 11, HColors.accent, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp))
-        Box {
         AssistantComposerChips(engineLabel(chat), mode, onModel = { openModels() }, onMode = { next ->
             repo.assistantMode(next) { saved, err -> if (saved != null) { mode = saved; load() } else problem = err }
-        })
-        DropdownMenu(expanded = modelOpen, onDismissRequest = { modelOpen = false }) {
-            if (modelsLoading) DropdownMenuItem(text = { T("Loading models…", 12, HColors.muted) }, onClick = {}, enabled = false)
-            for (choice in modelChoices) {
-                val id = choice.optString("id")
-                val selected = modelSettings?.optString("model") == id
-                DropdownMenuItem(text = { T((if (selected) "✓ " else "") + choice.optString("name").ifBlank { id }, 12) }, enabled = !modelSaving, onClick = {
-                    val cfg = modelSettings ?: return@DropdownMenuItem
-                    val body = JSONObject().put("engine", cfg.optString("engine")).put("model", id)
-                    if (cfg.optString("engine") == "openai") body.put("base_url", cfg.optString("base_url"))
-                    modelSaving = true
-                    repo.assistant("POST", "/settings", body) { d, err ->
-                        modelSaving = false
-                        if (d != null) { modelOpen = false; load() } else modelProblem = err ?: "Could not save model."
-                    }
-                })
-            }
-            if (modelProblem.isNotBlank()) DropdownMenuItem(text = { T(modelProblem, 12, HColors.accent) }, onClick = {}, enabled = false)
-            DropdownMenuItem(text = { T("Change AI…", 12) }, onClick = { modelOpen = false; settingsOpen = true })
-        }
+        }, context = context, onContext = { usageOpen = true })
+        if (usageOpen) UsageSheet(repo) { usageOpen = false }
+        if (modelOpen) {
+            val picked = modelSettings?.optString("model").orEmpty()
+            val efforts = modelChoices.firstOrNull { it.optString("id") == picked }?.optJSONArray("efforts")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
+            val effort = modelSettings?.takeIf { !it.isNull("effort") }?.optString("effort").orEmpty().ifBlank { chat?.takeIf { !it.isNull("effort") }?.optString("effort").orEmpty() }
+            ModelSheet(
+                engine = engineName(chat), selected = picked, choices = modelChoices, loading = modelsLoading, problem = modelProblem, saving = modelSaving,
+                efforts = efforts, effort = effort,
+                onEffort = { e -> saveSetting(JSONObject().put("model", picked).put("effort", e)) {} },
+                onRefresh = { openModels() },
+                onPick = { choice ->
+                    val id = choice.optString("id")
+                    val takesEffort = (choice.optJSONArray("efforts")?.length() ?: 0) > 0
+                    saveSetting(JSONObject().put("model", id)) { if (!takesEffort) modelOpen = false }
+                },
+                onChangeAi = { modelOpen = false; settingsOpen = true },
+                onDismiss = { modelOpen = false },
+            )
         }
     }
 }
@@ -515,24 +618,24 @@ private fun Working(busy: Boolean, current: JSONObject?, now: Long, showSteps: B
 }
 
 @Composable
-private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Boolean, canShowSteps: Boolean, statusWord: String, onAction: (String, String) -> Unit, onToggleSteps: () -> Unit) {
+private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Boolean, canShowSteps: Boolean, statusWord: String, menu: List<Pair<String, () -> Unit>> = emptyList(), onAction: (String, String) -> Unit, onToggleSteps: () -> Unit) {
     val mine = m.optString("role") == "user"
     val text = m.optString("text")
     if (mine) {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LongPressMenu(menu, Modifier.fillMaxWidth()) { Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (f in m.optJSONArray("files").list()) {
                 FileChip(f.optString("name"), f.optString("mime"), null, onClick = { opener.repo.store.get("files", f.optString("id"))?.let { opener.open(it) } })
             }
             T(text, 15, modifier = Modifier.widthIn(max = 300.dp).border(1.dp, HColors.border).background(HColors.surface2).padding(horizontal = 14.dp, vertical = 10.dp))
-        }
+        } }
         return
     }
     // The red bar on the left is drawn behind, not measured: a card with a lazy
     // or BoxWithConstraints layout (the day card) can't be measured intrinsically.
-    Row(Modifier.fillMaxWidth().drawBehind { drawRect(HColors.accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }) {
+    LongPressMenu(menu, Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().drawBehind { drawRect(HColors.accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }) {
         Column(Modifier.padding(start = 15.dp, top = 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // What it did, one line per tool: a spinner, then a tick that pops in.
-            for (t in m.optJSONArray("tools").list()) ToolLine(t.optString("label"), t.optString("status"))
+            for (t in m.optJSONArray("tools").list()) ToolRow(t)
             // What it did, drawn.
             for (a in m.optJSONArray("pending_actions").list()) PendingActionCard(a, onAction)
             for (f in m.optJSONArray("cards").list().filter { it.optString("kind") == "file" }) FileResultChip(f, opener)
@@ -561,25 +664,7 @@ private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Bo
                 AnimatedVisibility(stepsShown, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) { StepList(thinking) }
             }
         }
-    }
-}
-
-@Composable
-private fun ToolLine(label: String, status: String) {
-    val done = status == "completed" || status == "error"
-    val spin = rememberInfiniteTransition(label = "spin").animateFloat(0f, 360f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "r")
-    val pop = remember(done) { Animatable(if (done) 0.3f else 1f) }
-    LaunchedEffect(done) { if (done) pop.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessMedium)) }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.alpha(1f)) {
-        Icon(
-            when (status) { "completed" -> Icons.Outlined.Check; "error" -> Icons.Outlined.Close; else -> Icons.Outlined.Sync },
-            null,
-            Modifier.size(14.dp).scale(pop.value).rotate(if (done) 0f else spin.value),
-            tint = when (status) { "completed" -> HColors.teal; "error" -> HColors.accent; else -> HColors.muted },
-        )
-        Spacer(Modifier.width(8.dp))
-        T(label, 13, HColors.muted)
-    }
+    } }
 }
 
 @Composable
@@ -605,12 +690,18 @@ private fun FileResultChip(file: JSONObject, opener: FileOpener) {
 }
 
 @Composable
-private fun AssistantComposerChips(engine: String, mode: String, onModel: () -> Unit, onMode: (String) -> Unit) {
+private fun AssistantComposerChips(engine: String, mode: String, onModel: () -> Unit, onMode: (String) -> Unit, context: Double? = null, onContext: () -> Unit = {}) {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.border(1.dp, HColors.border).background(HColors.surface2).clickable(onClick = onModel).padding(horizontal = 10.dp, vertical = 7.dp)) {
             T("$engine  ▾", 10, HColors.fg, maxLines = 1)
         }
+        // Plan: it can look but not change anything.
+        Box(
+            Modifier.border(1.dp, if (mode == "plan") HColors.accent else HColors.border).background(if (mode == "plan") HColors.accent else HColors.surface2)
+                .clickable { onMode(if (mode == "plan") "auto" else "plan") }.padding(horizontal = 10.dp, vertical = 7.dp),
+        ) { T("Plan", 10, if (mode == "plan") HColors.bg else HColors.fg, bold = mode == "plan", maxLines = 1) }
+        if (context != null && !context.isNaN()) ContextMeter(context, onContext)
         Box {
             Box(
                 Modifier.border(1.dp, if (mode == "dangerous") HColors.accent else HColors.border)
@@ -618,7 +709,7 @@ private fun AssistantComposerChips(engine: String, mode: String, onModel: () -> 
                     .clickable { menu = true }.padding(horizontal = 10.dp, vertical = 7.dp),
             ) { T("${mode.replaceFirstChar { it.uppercase() }}  ▾", 10, if (mode == "dangerous") HColors.bg else HColors.fg, bold = mode == "dangerous", maxLines = 1) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = HColors.surface, shape = RectangleShape) {
-                listOf("ask" to "Every change waits for approval", "auto" to "Only risky actions wait", "dangerous" to "Changes apply immediately").forEach { (value, detail) ->
+                listOf("ask" to "Every change waits for approval", "auto" to "Only risky actions wait", "plan" to "Read only: nothing changes", "dangerous" to "Changes apply immediately").forEach { (value, detail) ->
                     DropdownMenuItem(
                         text = { Column { T(value.replaceFirstChar { it.uppercase() }, 13, if (value == "dangerous") HColors.accent else HColors.fg, bold = value == mode); T(detail, 10, HColors.muted) } },
                         onClick = { menu = false; onMode(value) },

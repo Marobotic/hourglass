@@ -379,9 +379,11 @@ object Md {
     fun renumber(text: String): String {
         val lines = text.split("\n").toMutableList()
         val runs = sortedMapOf<Int, Int>() // indent -> next number
+        var fenced = false // lines inside a code block are not list items
         for (i in lines.indices) {
             val line = lines[i]
-            if (line.isBlank()) continue
+            if (line.trimStart().startsWith("```")) { fenced = !fenced; runs.clear(); continue }
+            if (fenced || line.isBlank()) continue
             val indent = line.length - line.trimStart().length
             runs.keys.filter { it > indent }.forEach { runs.remove(it) }
             val m = OL.find(line)

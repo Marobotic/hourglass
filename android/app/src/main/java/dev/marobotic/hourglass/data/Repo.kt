@@ -867,6 +867,63 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         assistant("POST", "/actions/${java.net.URLEncoder.encode(id, "UTF-8")}/$action", JSONObject(), done)
     }
 
+    // GET /api/assistant/stream: a live feed of the reply as it is written.
+    // onLive(true) once connected (read the snapshot then: the stream does not
+    // replay), onLive(false) when it drops; it reconnects with a growing wait.
+    // Cancel the returned job to close it. Callbacks run on the main thread.
+    fun assistantStream(onLive: (Boolean) -> Unit, onEvent: (String, JSONObject) -> Unit): Job = scope.launch {
+        var wait = 1000L
+        while (kotlinx.coroutines.currentCoroutineContext()[Job]?.isActive != false) {
+            val t = token?.takeIf { signedIn }
+            if (t == null) { delay(5000); continue }
+            var c: HttpURLConnection? = null
+            var live = false
+            var gotEvent = false
+            var stop: kotlinx.coroutines.DisposableHandle? = null
+            try {
+                c = URL("${BuildConfig.SERVER}/api/assistant/stream").openConnection() as HttpURLConnection
+                val conn = c
+                stop = kotlinx.coroutines.currentCoroutineContext()[Job]?.invokeOnCompletion { runCatching { conn.disconnect() } }
+                conn.connectTimeout = 8000
+                conn.readTimeout = 45000 // the server pings every 15 s
+                conn.setRequestProperty("Authorization", "Bearer $t")
+                conn.setRequestProperty("Accept", "text/event-stream")
+                conn.setRequestProperty("x-hourglass-device", DEVICE_HEADER)
+                conn.setRequestProperty("x-timezone", zone.id)
+                if (conn.responseCode in 200..299) {
+                    live = true
+                    kotlinx.coroutines.withContext(Dispatchers.Main) { onLive(true) }
+                    val sse = dev.marobotic.hourglass.core.ChatStream.Sse()
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { r ->
+                        while (true) {
+                            val line = r.readLine() ?: break
+                            val ev = sse.line(line) ?: continue
+                            gotEvent = true
+                            kotlinx.coroutines.withContext(Dispatchers.Main) { onEvent(ev.first, ev.second) }
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            } finally {
+                stop?.dispose()
+                runCatching { c?.disconnect() }
+                if (live) kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { onLive(false) }
+            }
+            // Only a stream that actually delivered something resets the backoff;
+            // a server closing at once is not a healthy connection.
+            if (gotEvent) wait = 1000
+            delay(wait)
+            wait = (wait * 2).coerceAtMost(30000)
+        }
+    }
+
+    // What was typed in the assistant and not sent yet, kept per account.
+    private fun draftKey() = "assistant_draft:" + (store.meta("account") ?: "")
+    fun assistantDraft(): String = store.meta(draftKey()).orEmpty()
+    fun setAssistantDraft(text: String) { if (assistantDraft() != text) store.setMeta(draftKey(), text.ifEmpty { null }) }
+
     fun signOut() = scope.launch {
         token?.takeIf { signedIn }?.let { t -> runCatching { http("POST", "${BuildConfig.SERVER}/auth/logout", t, "{}") } }
         store.setMeta("session_sealed", null)
