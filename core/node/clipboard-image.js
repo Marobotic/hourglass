@@ -17,18 +17,19 @@ function run(cmd, args, { timeout = 8000 } = {}) {
   });
 }
 
-const WINDOWS_SCRIPT = [
+// -Command takes no separate arguments (they are glued onto the script), so the path goes inside it.
+const windowsScript = (file) => [
   "Add-Type -AssemblyName System.Windows.Forms,System.Drawing",
   "$i = [System.Windows.Forms.Clipboard]::GetImage()",
   "if (-not $i) { exit 3 }",
-  "$i.Save($args[0], [System.Drawing.Imaging.ImageFormat]::Png)",
+  `$i.Save('${file.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png)`,
 ].join("; ");
 
 export async function clipboardImage({ dir, platform = process.platform, name = `Pasted picture ${Date.now()}.png` }) {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, name);
   if (platform === "win32") {
-    const ok = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Sta", "-Command", WINDOWS_SCRIPT, file]);
+    const ok = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Sta", "-Command", windowsScript(file)]);
     return ok && statSync(file, { throwIfNoEntry: false })?.size ? file : null;
   }
   const png = (await run("wl-paste", ["--type", "image/png"])) || (await run("xclip", ["-selection", "clipboard", "-t", "image/png", "-o"]));
