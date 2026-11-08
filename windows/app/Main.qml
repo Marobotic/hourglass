@@ -310,6 +310,8 @@ ApplicationWindow {
     Shortcut { sequences: ["0"]; onActivated: app.go(10) }
     Shortcut {
         sequences: ["n", "Ctrl+N"]
+        // On the assistant page Ctrl+N starts a new chat (its own shortcut).
+        enabled: app.pages[app.page].name !== "Assistant"
         onActivated: {
             const f = app.nowData && app.nowData.focus;
             if (f && f.course_id) app.sessionNote(f, app.nowData.notes.session);

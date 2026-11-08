@@ -37,6 +37,8 @@ DrivePage 1.0 DrivePage.qml
 AttendancePage 1.0 AttendancePage.qml
 ContextMenu 1.0 ContextMenu.qml
 AssistantPage 1.0 AssistantPage.qml
+ChatMarkdown 1.0 ChatMarkdown.qml
+ChatLightbox 1.0 ChatLightbox.qml
 ResultCard 1.0 ResultCard.qml
 AssistantSettings 1.0 AssistantSettings.qml
 StepList 1.0 StepList.qml

@@ -14,6 +14,8 @@ import { pipeline } from "node:stream/promises";
 import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Store } from "../../core/node/store.js";
+import { pathToFileURL } from "node:url";
+import { clipboardImage } from "../../core/node/clipboard-image.js";
 import { Service } from "../../core/node/service.js";
 import { BUILTIN_RINGTONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, snoozeTimerId } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
@@ -712,6 +714,12 @@ async function driveRoutes(req, res, url, path) {
     const { path: f } = await localFile(loc[1]);
     const u = (p) => "file:///" + p.replace(/\\/g, "/").replace(/^\//, "");
     return json(res, 200, { path: f, url: u(f), folder: u(dirname(f)) }), true;
+  }
+  // The picture on the clipboard, saved so it can be attached to an assistant message (Ctrl+V).
+  if (path === "/api/clipboard/image" && m === "POST") {
+    const file = await clipboardImage({ dir: join(tmpdir(), "hourglass-paste") });
+    if (!file) return json(res, 200, { path: null }), true;
+    return json(res, 200, { path: file, url: pathToFileURL(file).href }), true;
   }
   // Show the copy selected in Explorer (Finder / the file manager elsewhere).
   const rev = /^\/api\/files\/([0-9a-f-]{36})\/reveal$/.exec(path);
