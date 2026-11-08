@@ -662,6 +662,23 @@ final class Store: ObservableObject {
         return (try? JSONSerialization.jsonObject(with: r.0)) as? [String: Any] ?? [:]
     }
 
+    // The live event stream (SSE). The request waits longer than the usual 15 s:
+    // the server sends a ping every 15 s, so a quiet line still counts as alive.
+    func assistantStream() async throws -> URLSession.AsyncBytes {
+        guard signedIn, let base = URL(string: server) else {
+            throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "Sign in to use the assistant."])
+        }
+        var req = request(base.appendingPathComponent("api/assistant/stream"))
+        req.timeoutInterval = 60
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        let r = try await URLSession.shared.bytes(for: req)
+        guard let http = r.1 as? HTTPURLResponse, http.statusCode == 200 else {
+            throw NSError(domain: "hourglass", code: 0, userInfo: [NSLocalizedDescriptionKey: "The live stream is not available."])
+        }
+        return r.0
+    }
+
     func assistantMode(_ mode: String) async throws -> [String: Any] {
         try await assistant("POST", "/mode", ["mode": mode])
     }
