@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 // Talk to Hourglass: the assistant runs on the server (opencode) and works on
 // this account's notes, schedule, alarms and timers. Each tool it uses shows as
@@ -22,10 +23,7 @@ struct AssistantView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importing = false
     @State private var settingsOpen = false
-    @State private var modelSettings: [String: Any] = [:]
-    @State private var modelChoices: [[String: Any]] = []
-    @State private var modelProblem = ""
-    @State private var modelSaving = false
+    @State private var modelOpen = false
     @State private var driveOpen = false
     @State private var driveItems: [[String: Any]] = []
     @State private var driveFolder = ""
@@ -55,26 +53,17 @@ struct AssistantView: View {
         }
     }
     private var serverBusy: Bool { chat["busy"] as? Bool ?? false }
-    private func loadModels() async {
-        do {
-            let cfg = try await store.assistant("GET", "/settings")
-            let engine = cfg["engine"] as? String ?? "free"
-            let query = engine == "openai" ? "?base_url=" + ((cfg["base_url"] as? String ?? "").addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "") : "?engine=" + engine
-            let result = try await store.assistant("GET", "/models" + query)
-            modelSettings = cfg
-            modelChoices = result["models"] as? [[String: Any]] ?? []
-            modelProblem = result["error"] as? String ?? ""
-        } catch { modelProblem = error.localizedDescription }
+    // The draft is kept per account, so it survives view switches and restarts.
+    private var draftKey: String { "assistant_draft_" + (store.account ?? "") }
+    // One cover at a time: the picker closes, then the settings open.
+    private func openSettingsAfterPicker() {
+        modelOpen = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { settingsOpen = true }
     }
-    private func selectModel(_ id: String) {
-        var body: [String: Any] = ["engine": modelSettings["engine"] as? String ?? "free", "model": id]
-        if body["engine"] as? String == "openai" { body["base_url"] = modelSettings["base_url"] }
-        modelSaving = true
-        Task {
-            do { _ = try await store.assistant("POST", "/settings", body); await load(); await loadModels() }
-            catch { modelProblem = error.localizedDescription }
-            modelSaving = false
-        }
+    private func quote(_ text: String) {
+        let quoted: String = text.components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
+        input = quoted + "\n\n" + input
+        typing = true
     }
     // The answer being worked on: its steps show live under Working.
     private var current: [String: Any]? {
@@ -225,7 +214,8 @@ struct AssistantView: View {
                                 Message(m: m, opener: opener, now: now, stepsShown: openSteps.contains(k),
                                         canShowSteps: !(serverBusy && i == messages(chat).count - 1),
                                         onAction: { id, decision in Task { do { _ = try await store.assistantActionDecision(id, decision); await load() } catch { problem = error.localizedDescription } } },
-                                        onToggleSteps: { withAnimation(.easeOut(duration: 0.2)) { if openSteps.contains(k) { openSteps.remove(k) } else { openSteps.insert(k) } } })
+                                        onToggleSteps: { withAnimation(.easeOut(duration: 0.2)) { if openSteps.contains(k) { openSteps.remove(k) } else { openSteps.insert(k) } } },
+                                        onQuote: quote)
                                     .modifier(Rise(animate: ready && !seen.contains(k)))
                                     .onAppear { seen.insert(k) }
                                     .id(k)
@@ -258,20 +248,11 @@ struct AssistantView: View {
 
             // Permission mode mirrors the desktop assistant.
             HStack(spacing: 6) {
-                Menu {
-                    ForEach(Array(modelChoices.enumerated()), id: \.offset) { _, choice in
-                        let id = choice["id"] as? String ?? ""
-                        Button((modelSettings["model"] as? String == id ? "✓ " : "") + (choice["name"] as? String ?? id)) { selectModel(id) }
-                    }
-                    if !modelProblem.isEmpty { Text(modelProblem) }
-                    if modelChoices.isEmpty && modelProblem.isEmpty { Text("Loading models…") }
-                    Button("Change AI…") { settingsOpen = true }
-                } label: {
+                Button { modelOpen = true } label: {
                     T(engineLabel + " ▾", 11, H.fg, lines: 1).padding(.horizontal, 9).padding(.vertical, 5)
                         .background(H.surface2).overlay(Rectangle().stroke(H.border, lineWidth: 1))
                 }
-                .disabled(modelSaving)
-                .task(id: engineLabel) { await loadModels() }
+                .buttonStyle(.plain)
                 ForEach(Array([("ask", "Ask"), ("auto", "Auto"), ("dangerous", "Dangerous")].enumerated()), id: \.offset) { _, pair in
                     let value = pair.0, title = pair.1
                     Button { setMode(value) } label: {
@@ -313,6 +294,13 @@ struct AssistantView: View {
         .quickLookPreview($opener.url)
         .fullScreenCover(item: $opener.viewing) { set in MediaViewer(set: set, opener: opener).environmentObject(store) }
         .fullScreenCover(isPresented: $settingsOpen) { AssistantSettingsSheet(onSaved: { Task { await load() } }).environmentObject(store) }
+        .fullScreenCover(isPresented: $modelOpen) {
+            ModelPickerSheet(onPicked: { Task { await load() } }, onChangeAI: openSettingsAfterPicker).environmentObject(store)
+        }
+        .onAppear { if input.isEmpty { input = UserDefaults.standard.string(forKey: draftKey) ?? "" } }
+        .onChange(of: input) { _, value in
+            if value.isEmpty { UserDefaults.standard.removeObject(forKey: draftKey) } else { UserDefaults.standard.set(value, forKey: draftKey) }
+        }
         .sheet(isPresented: $driveOpen) {
             NavigationStack {
                 List {
@@ -371,6 +359,31 @@ private struct Message: View {
     let canShowSteps: Bool
     let onAction: (String, String) -> Void
     let onToggleSteps: () -> Void
+    let onQuote: (String) -> Void
+
+    // The text without Markdown marks, for a plain Copy.
+    static func plain(_ text: String) -> String {
+        var out = text
+        let rules: [(String, String)] = [
+            (#"(?m)^\s*```.*\n?"#, ""),
+            (#"\*\*(.+?)\*\*"#, "$1"),
+            (#"~~(.+?)~~"#, "$1"),
+            (#"</?u>"#, ""),
+            (#"(?m)^#{1,6} "#, ""),
+            (#"\[([^\]]+)\]\([^)]+\)"#, "$1"),
+        ]
+        for (pattern, template) in rules {
+            out = out.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // Long-press menu on a message.
+    @ViewBuilder private func copyMenu(_ text: String) -> some View {
+        Button { UIPasteboard.general.string = Self.plain(text) } label: { Label("Copy", systemImage: "doc.on.doc") }
+        Button { UIPasteboard.general.string = text } label: { Label("Copy as Markdown", systemImage: "text.alignleft") }
+        Button { onQuote(text) } label: { Label("Quote in reply", systemImage: "arrowshape.turn.up.left") }
+    }
 
     // "120 in · 45 out  ·  300 cached  ·  $0.0012  ·  3.5% context"; "" when there is nothing to say.
     static func usageCaption(_ usage: [String: Any]) -> String {
@@ -398,6 +411,7 @@ private struct Message: View {
                     T(text, 15)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(H.surface2).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                        .contextMenu { copyMenu(text) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -428,9 +442,125 @@ private struct Message: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .contextMenu { if !text.isEmpty { copyMenu(text) } }
             }
             .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+// The model chip's page: pick the model for the current engine without going
+// into the AI settings. Same lists as there (GET /models for the engine).
+private struct ModelPickerSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    let onPicked: () -> Void
+    let onChangeAI: () -> Void
+
+    @State private var settings: [String: Any] = [:]
+    @State private var choices: [[String: Any]] = []
+    @State private var problem = ""
+    @State private var query = ""
+    @State private var loading = true
+    @State private var saving = false
+
+    private var engine: String { settings["engine"] as? String ?? "free" }
+    private var currentModel: String { settings["model"] as? String ?? "" }
+    private var filtered: [[String: Any]] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        if q.isEmpty { return choices }
+        return choices.filter { c in
+            let name: String = (c["name"] as? String ?? "").lowercased()
+            let id: String = (c["id"] as? String ?? "").lowercased()
+            return name.contains(q) || id.contains(q)
+        }
+    }
+
+    private func load() async {
+        loading = true
+        do {
+            let cfg = try await store.assistant("GET", "/settings")
+            let kind: String = cfg["engine"] as? String ?? "free"
+            let base: String = (cfg["base_url"] as? String ?? "").addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+            let suffix: String = kind == "openai" ? "?base_url=" + base : "?engine=" + kind
+            let result = try await store.assistant("GET", "/models" + suffix)
+            settings = cfg
+            choices = result["models"] as? [[String: Any]] ?? []
+            problem = result["error"] as? String ?? ""
+        } catch { problem = error.localizedDescription }
+        loading = false
+    }
+
+    private func pick(_ id: String) {
+        var body: [String: Any] = ["engine": engine, "model": id]
+        if engine == "openai" { body["base_url"] = settings["base_url"] ?? "" }
+        saving = true
+        Task {
+            do {
+                _ = try await store.assistant("POST", "/settings", body)
+                onPicked()
+                dismiss()
+            } catch { problem = error.localizedDescription }
+            saving = false
+        }
+    }
+
+    private func row(_ choice: [String: Any]) -> some View {
+        let id: String = choice["id"] as? String ?? ""
+        let name: String = choice["name"] as? String ?? id
+        let on: Bool = id == currentModel
+        return Button { pick(id) } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    T(name, 14, on ? H.accent : H.fg, bold: on, lines: 1)
+                    if name != id { T(id, 11, H.faint, lines: 1) }
+                }
+                Spacer(minLength: 0)
+                if on { Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(H.accent) }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(on ? H.surface2 : Color.clear)
+            .overlay(Rectangle().stroke(on ? H.accent : H.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(saving)
+    }
+
+    private var searchBox: some View {
+        TextField("", text: $query, prompt: Text("Search models").foregroundStyle(H.faint))
+            .font(H.mono(14)).foregroundStyle(H.fg).tint(H.accent)
+            .textInputAutocapitalization(.never).autocorrectionDisabled()
+            .padding(10).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    searchBox
+                    if !problem.isEmpty { T(problem, 12, H.accent) }
+                    if loading && choices.isEmpty { T("Loading models…", 13, H.muted) }
+                    if !loading && filtered.isEmpty && problem.isEmpty { T("No models match.", 13, H.muted) }
+                    ForEach(filtered.indices, id: \.self) { i in row(filtered[i]) }
+                    HButton("Change AI…") { onChangeAI() }.padding(.top, 8)
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(H.bg)
+            .navigationTitle("Model")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("← Back") { dismiss() }.keyboardShortcut(.cancelAction).foregroundStyle(H.muted) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
+                        .disabled(loading).foregroundStyle(H.accent)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .task { await load() }
     }
 }
 
