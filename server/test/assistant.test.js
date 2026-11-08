@@ -124,7 +124,17 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.ok(settings.body.free_models.some((m) => m.id === "opencode/beam-free"));
   assert.ok(settings.body.free_models.every((m) => m.source === "discovered"));
   const empty = await call("GET", "/api/assistant");
-  assert.deepEqual(empty.body, { enabled: true, engine: "free", engine_name: "Free", base_url: null, model: "fake/down", mode: "auto", busy: false, messages: [] });
+  assert.equal(empty.body.enabled, true);
+  assert.equal(empty.body.engine, "free");
+  assert.equal(empty.body.engine_name, "Free");
+  assert.equal(empty.body.base_url, null);
+  assert.equal(empty.body.model, "fake/down");
+  assert.equal(empty.body.mode, "auto");
+  assert.equal(empty.body.busy, false);
+  assert.equal(empty.body.state, "idle");
+  assert.equal(empty.body.queued, 0);
+  assert.deepEqual(empty.body.queue, []);
+  assert.deepEqual(empty.body.messages, []);
 
   assert.equal((await call("POST", "/api/assistant/message", { text: "Buy eggs and milk" })).status, 202);
   const chat = await waitIdle();
@@ -132,7 +142,12 @@ test("a message runs opencode, which works on the account's data through the Hou
   assert.equal(chat.messages[0].text, "Buy eggs and milk");
   // The answer is the last step's text, not what was said before the tool call.
   assert.equal(chat.messages[1].text, "Done.");
-  assert.deepEqual(chat.messages[1].tools, [{ tool: "add_note", status: "completed", label: "Wrote a note" }]);
+  const tool = chat.messages[1].tools[0];
+  assert.equal(tool.tool, "add_note");
+  assert.equal(tool.status, "completed");
+  assert.equal(tool.label, "Wrote a note");
+  assert.match(tool.input, /From assistant/);
+  assert.ok(tool.output, "the tool's result travels with it");
   assert.equal(chat.messages[1].error, null);
 
   const notes = await call("POST", "/api/actions/get_notes", { limit: 5 });
@@ -192,11 +207,19 @@ test("the assistant keeps working after the user's AI link is deleted", async ()
   assert.equal(chat.messages.at(-1).tools[0].status, "completed");
 });
 
-test("one message at a time, and empty or huge messages are refused", async () => {
+test("a message sent while one runs is queued, can be cancelled, and runs next", async () => {
   assert.equal((await call("POST", "/api/assistant/message", { text: "   " })).status, 400);
   assert.equal((await call("POST", "/api/assistant/message", { text: "x".repeat(5000) })).status, 413);
-  assert.equal((await call("POST", "/api/assistant/message", { text: "first" })).status, 202);
-  assert.equal((await call("POST", "/api/assistant/message", { text: "second" })).status, 409);
+  assert.equal((await call("POST", "/api/assistant/message", { text: "SLOW_TEST first" })).status, 202);
+  const queued = await call("POST", "/api/assistant/message", { text: "second" });
+  assert.equal(queued.status, 202);
+  assert.equal(queued.body.queued, true);
+  assert.equal(queued.body.position, 1);
+  const live = await call("GET", "/api/assistant");
+  assert.equal(live.body.queued, 1);
+  assert.equal(live.body.queue[0].text, "second");
+  assert.equal((await call("DELETE", `/api/assistant/queue/${queued.body.id}`)).body.cancelled, queued.body.id);
+  assert.deepEqual((await call("GET", "/api/assistant")).body.queue, []);
   await waitIdle();
 });
 

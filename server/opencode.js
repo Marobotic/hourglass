@@ -34,8 +34,10 @@ export function opencodeProfileEnv(dirs, host = process.env) {
   return env;
 }
 
-export function opencodeRunArgs(model, session, attach = []) {
-  const args = ["run", "--format", "json", "-m", model];
+// `--model provider/model#variant` is how an effort reaches an opencode model.
+export function opencodeRunArgs(model, session, attach = [], effort = null) {
+  const target = effort && !String(model).includes("#") ? `${model}#${effort}` : model;
+  const args = ["run", "--format", "json", "-m", target];
   if (session) args.push("--session", session);
   for (const file of attach) args.push("-f", file);
   return args;

@@ -46,8 +46,10 @@ if (prompt.includes("DANGEROUS WORKSPACE TEST")) {
 }
 
 const said = prompt.split("The user says:\n")[1] || "";
-const selectedTool = said.includes("READ_MCP_TEST") ? "get_settings" : said.includes("RISK_MCP_TEST") ? "remove_alarm" : "add_note";
-const selectedArgs = selectedTool === "add_note" ? { title: "From assistant", body: said } : selectedTool === "remove_alarm" ? { alarm_id: "missing-mode-test-alarm" } : {};
+// A message marked SLOW_TEST takes long enough for a second one to be queued.
+if (said.includes("SLOW_TEST")) await new Promise((resolve) => setTimeout(resolve, 600));
+const selectedTool = said.includes("READ_MCP_TEST") ? "get_settings" : said.includes("RISK_MCP_TEST") ? "remove_alarm" : said.includes("WRITE_FILE_TEST") ? "write_file" : "add_note";
+const selectedArgs = selectedTool === "add_note" ? { title: "From assistant", body: said } : selectedTool === "remove_alarm" ? { alarm_id: "missing-mode-test-alarm" } : selectedTool === "write_file" ? { path: "undo.txt", content: "after\n" } : {};
 const config = JSON.parse(readFileSync("opencode.json", "utf8"));
 const client = new Client({ name: "fake-opencode", version: "1" });
 await client.connect(new StreamableHTTPClientTransport(new URL(config.mcp.hourglass.url)));
@@ -55,7 +57,8 @@ emit({ type: "step_start" });
 emit({ type: "text", part: { text: "Let me add that." } });
 emit({ type: "tool_use", part: { id: "p1", callID: "c1", tool: `hourglass_${selectedTool}`, state: { status: "running", input: selectedArgs } } });
 const r = await client.callTool({ name: selectedTool, arguments: selectedArgs });
-emit({ type: "tool_use", part: { id: "p1", callID: "c1", tool: `hourglass_${selectedTool}`, state: { status: r.isError ? "error" : "completed", input: selectedArgs, output: r } } });
+emit({ type: "tool_use", part: { id: "p1", callID: "c1", tool: `hourglass_${selectedTool}`, state: { status: r.isError ? "error" : "completed", input: selectedArgs, output: r.content?.[0]?.text ?? "" } } });
 emit({ type: "step_start" });
 emit({ type: "text", part: { text: "Done." } });
+emit({ type: "step_finish", part: { tokens: { input: 120, output: 18, cache: { read: 12, write: 0 } } } });
 await client.close();

@@ -558,8 +558,14 @@ export function toolPermission(name, service = null, args = {}) {
   return service?.driveFiles?.permissionFor?.(name, args) || TOOL_CLASSES[name];
 }
 
+// Plan mode: reading is allowed, anything that writes is refused by the server.
+export function planBlocked(mode, name, service = null, args = {}) {
+  return mode === "plan" && toolPermission(name, service, args) !== "read";
+}
+
 export function needsApproval(mode, name, service = null, args = {}) {
   const classification = toolPermission(name, service, args);
   if (!classification) throw new Error(`tool has no permission classification: ${name}`);
+  if (mode === "plan") return classification !== "read";
   return mode === "ask" ? classification !== "read" : mode !== "dangerous" && mode === "auto" && classification === "risky";
 }

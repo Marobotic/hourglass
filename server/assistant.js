@@ -44,10 +44,12 @@ import { opencodeAccountDirectories, opencodeAccountOwnedPaths, opencodeProfileE
 import { isSharedFreeQuotaError, normalizeEngineError } from "./engine-errors.js";
 import { localParts } from "../core/dates.js";
 import { quickAnswer } from "./quick.js";
-import { INSTRUCTIONS, TOOLS, needsApproval, runTool, toolPermission } from "./tools.js";
+import { INSTRUCTIONS, TOOLS, needsApproval, planBlocked, runTool, toolPermission } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
-import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, apiUrl, engineEntries, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, systemPrompt } from "./engines.js";
+import { CLAUDE_MODELS, ENGINES, OPENAI_PRESETS, apiUrl, effortsFor, engineEntries, checkKey, createSettings, historyTurns, listAnthropicModels, listOpenAIModels, recordAssistantUsage, runDirect, supportsSteer, systemPrompt } from "./engines.js";
 import { deepSeekPriceState, isDeepSeekBaseUrl } from "./deepseek.js";
+import { createEventHub, createStreamMirror, trimToolValue } from "./assistant-stream.js";
+import { createQuotaState, createUsageLog } from "./assistant-usage.js";
 import { claudeCliExcerpt, detectClaudeLoginPaste, mapClaudeLoginError, parseClaudeLoginUrl, parseClaudeSetupToken, redactClaudeSecrets, stripTerminalSequences } from "./claude-login.js";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
@@ -55,7 +57,9 @@ const sha = (s) => createHash("sha256").update(s).digest("hex");
 const MAX_TEXT = 4000;
 const PER_HOUR = 60;
 const MAX_RUNNING = 3;              // runs at once, across accounts (the droplet has ~2 GB)
+const MAX_QUEUED = 10;              // messages waiting behind one run, per account
 const RUN_SECONDS = 240;
+const MODES = ["ask", "auto", "dangerous", "plan"];
 // A free model that has said nothing this long has stalled: the next one is tried.
 const FIRST_WORD_SECONDS = Number(process.env.HOURGLASS_ASSISTANT_FIRST_WORD_S || 40); // opencode starting + the first event
 const QUIET_SECONDS = Number(process.env.HOURGLASS_ASSISTANT_QUIET_S || 25); // between events after that
@@ -217,11 +221,44 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   const system = systemPrompt({ guide, instructions: INSTRUCTIONS });
   const claudeBin = process.env.HOURGLASS_CLAUDE_BIN || "/usr/local/bin/claude";
   const usage = new Map();   // email -> [timestamps]
-  const running = new Map(); // email -> { child, unit, chat, message }
+  const running = new Map(); // email -> { child, unit, chat, message, mirror }
+  // Live events, queued messages, quota state and the usage ledger for each account.
+  const events = createEventHub();
+  const quotas = createQuotaState();
+  const queued = new Map();  // account key -> [{ id, at, text, files }]
+  const usageLogs = new Map();
+  const accountKey = (t) => t.email || "owner";
+  const emit = (t, event, data = {}) => events.emit(accountKey(t), event, data);
+  const queueOf = (t) => queued.get(accountKey(t)) || [];
+  const usageLogFor = (t) => {
+    const key = accountKey(t);
+    if (!usageLogs.has(key)) usageLogs.set(key, createUsageLog({ file: join(t.dir, "assistant_usage.jsonl") }));
+    return usageLogs.get(key);
+  };
+  const modelName = (cfg) => {
+    if (cfg.engine === "free") return cfg.model && cfg.model.startsWith("opencode/") ? cfg.model : models[0];
+    if (cfg.engine === "anthropic" || cfg.engine === "claude") return cfg.model || CLAUDE_MODELS[0].id;
+    return cfg.model;
+  };
+  const withEfforts = (list, engine, base_url) => list.map((item) => ({ ...item, efforts: item.efforts || effortsFor(engine, item.id, base_url) }));
+  const stateOf = (t) => {
+    const busy = running.has(t.email);
+    const waiting = queueOf(t).length;
+    return { state: busy ? "busy" : waiting ? "queued" : "idle", busy, queued: waiting };
+  };
+  const quotaOf = (t, engine) => {
+    const quota = quotas.get(accountKey(t), engine);
+    return quota ? { state: "quota", ...quota } : { state: "ok", engine };
+  };
+  /** The live message changed: let subscribers see it (text, tools, usage). */
+  function syncLive(t, message) {
+    const live = running.get(t.email);
+    if (live?.message === message) live.mirror?.sync();
+  }
 
   async function claudeModelsFor(t, cfg = settings.get(t)) {
     const key = cfg.keys.anthropic;
-    if (!key) return { models: CLAUDE_MODELS.map((m) => ({ ...m })), source: "fallback" };
+    if (!key) return { models: withEfforts(CLAUDE_MODELS.map((m) => ({ ...m })), "anthropic"), source: "fallback" };
     const cached = claudeModelCache.get(t.email);
     const keyHash = sha(key);
     if (cached?.keyHash === keyHash && Date.now() - cached.at < 60 * 60_000) return { models: cached.models, source: "live" };
@@ -233,7 +270,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     } catch (e) {
       log(`assistant (${t.email || "owner"}, Claude models): ${e.message}`);
       if (cached?.models?.length) return { models: cached.models, source: "cached" };
-      return { models: CLAUDE_MODELS.map((m) => ({ ...m })), source: "fallback" };
+      return { models: withEfforts(CLAUDE_MODELS.map((m) => ({ ...m })), "anthropic"), source: "fallback" };
     }
   }
 
@@ -273,7 +310,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   function loadChat(t) {
     try {
       const chat = JSON.parse(readFileSync(chatFile(t), "utf8"));
-      if (!["ask", "auto", "dangerous"].includes(chat.mode)) chat.mode = "auto";
+      if (!MODES.includes(chat.mode)) chat.mode = "auto";
       return chat;
     } catch { return { session: null, mode: "auto", messages: [] }; }
   }
@@ -285,6 +322,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
   function mcpTool(t, name, args) {
     const live = running.get(t.email);
     const chat = live?.chat || loadChat(t);
+    // Plan mode: the server refuses every tool that writes, before any proposal.
+    if (planBlocked(chat.mode || "auto", name, t.service, args)) {
+      return { blocked: true, mode: "plan", message: `Plan mode is on: ${name} would change data, so it was not run. Say what you would change and wait for the user to switch modes.` };
+    }
     if (needsApproval(chat.mode || "auto", name, t.service, args)) {
       const message = live?.message || chat.messages.filter((x) => x.role === "assistant").at(-1) || { id: `a${Date.now()}`, role: "assistant", time: Date.now(), text: "", tools: [], cards: [] };
       if (!chat.messages.includes(message)) chat.messages.push(message);
@@ -398,16 +439,27 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
 
   function shapeTool(part) {
     const status = part?.state?.status || "pending";
-    return { tool: String(part?.tool || "").replace(/^hourglass_/, ""), status, label: toolLabel(part?.tool, status) };
+    const state = part?.state || {};
+    const started = state.time?.start;
+    const ended = state.time?.end ?? (status === "completed" || status === "error" ? Date.now() : null);
+    return {
+      call_id: part?.callID || part?.id || null,
+      tool: String(part?.tool || "").replace(/^hourglass_/, ""),
+      status,
+      label: toolLabel(part?.tool, status),
+      input: trimToolValue(state.input ?? part?.input),
+      output: trimToolValue(state.output ?? part?.output),
+      duration_ms: Number.isFinite(started) && Number.isFinite(ended) ? ended - started : null,
+    };
   }
 
   /**
    * One `opencode run`, its JSON events folded into `message` as they arrive.
    * Resolves with { error, sessionId, anything } - anything: it said or did something.
    */
-  function runOnce(t, dirs, chat, message, prompt, model, unit, attach = []) {
+  function runOnce(t, dirs, chat, message, prompt, model, unit, attach = [], effort = null) {
     return new Promise((resolve) => {
-      const args = opencodeRunArgs(model, chat.session, attach);
+      const args = opencodeRunArgs(model, chat.session, attach, effort);
       const { file, args: cmdArgs, options } = command(dirs, unit, args);
       const child = spawn(file, cmdArgs, { ...options, stdio: ["pipe", "pipe", "pipe"] });
       const entry = running.get(t.email);
@@ -456,7 +508,10 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
           if (shaped.status === "completed" && !carded.has(key) && String(part.tool || "").startsWith("hourglass_")) {
             let result = null;
             try { result = JSON.parse(part.state?.output ?? "null"); } catch {}
-            message.cards = trimCards([...(message.cards || []), ...cardsFor(t.service, shaped.tool, part.state?.input || {}, result)]);
+            const made = cardsFor(t.service, shaped.tool, part.state?.input || {}, result);
+            message.cards = trimCards([...(message.cards || []), ...made]);
+            const fileCard = made.find((card) => card.kind === "file");
+            if (fileCard?.diff) shaped.diff = fileCard.diff;
             carded.add(key);
           }
           if (!toolsById.has(key) || toolsById.get(key).status !== shaped.status) step(message, shaped.label);
@@ -470,6 +525,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
           const tokens = part.tokens;
           recordAssistantUsage(message, { input_tokens: tokens.input, output_tokens: tokens.output, cache_read_input_tokens: tokens.cache?.read, cache_creation_input_tokens: tokens.cache?.write });
         }
+        syncLive(t, message);
       };
 
       child.stdout.on("data", (d) => {
@@ -518,12 +574,6 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     return freeModels;
   }
 
-  const modelName = (cfg) => {
-    if (cfg.engine === "free") return cfg.model && cfg.model.startsWith("opencode/") ? cfg.model : models[0];
-    if (cfg.engine === "anthropic" || cfg.engine === "claude") return cfg.model || CLAUDE_MODELS[0].id;
-    return cfg.model;
-  };
-
   /** Pictures attached to this message, for engines that take them inline. */
   function pictureData(t, files) {
     const out = [];
@@ -556,6 +606,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     const modeSystem = `${system}\n\nPermission mode for this chat: ${chat.mode || "auto"}. In ask mode, propose every change and wait for the user to Apply it. Never claim a proposed action was already done.`;
     const dangerousWorkspace = chat.mode === "dangerous";
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--model", cfg.model || CLAUDE_MODELS[0].id,
+      ...(cfg.effort ? ["--effort", cfg.effort] : []),
       "--system-prompt", modeSystem, "--mcp-config", mcp, "--strict-mcp-config", "--tools", dangerousWorkspace ? "Bash,Read,Edit,Write,Glob,Grep" : "", "--allowedTools", dangerousWorkspace ? "mcp__hourglass,Bash,Read,Edit,Write,Glob,Grep" : "mcp__hourglass", "--permission-mode", "dontAsk"];
     const env = { CLAUDE_CONFIG_DIR: join(dirs.home, ".claude-hourglass"), DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
     const unit = `hourglass-assistant-${sha(t.email || "owner").slice(0, 8)}-${randomBytes(4).toString("hex")}`;
@@ -582,7 +633,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
             if (b.type === "text" && b.text.trim()) { message.text = b.text.trim(); anything = true; }
             if (b.type === "tool_use") {
               const name = String(b.name).replace(/^mcp__hourglass__/, "");
-              const e = { tool: name, status: "running" };
+              const e = { call_id: b.id, tool: name, status: "running", started_at: Date.now(), input: trimToolValue(b.input) };
               message.tools.push(e);
               step(message, toolLabel(name, "running"));
               uses.set(b.id, { name, input: b.input, entry: e });
@@ -595,11 +646,17 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
             const u = uses.get(b.tool_use_id);
             if (!u) continue;
             u.entry.status = b.is_error ? "error" : "completed";
+            u.entry.ended_at = Date.now();
+            u.entry.duration_ms = u.entry.started_at ? u.entry.ended_at - u.entry.started_at : null;
             if (b.is_error) continue;
             const raw = Array.isArray(b.content) ? b.content.map((c) => c.text || "").join("") : String(b.content || "");
+            u.entry.output = trimToolValue(raw);
             let result = null;
             try { result = JSON.parse(raw); } catch {}
-            message.cards = trimCards([...(message.cards || []), ...cardsFor(t.service, u.name, u.input, result)]);
+            const made = cardsFor(t.service, u.name, u.input, result);
+            const fileCard = made.find((card) => card.kind === "file");
+            if (fileCard?.diff) u.entry.diff = fileCard.diff;
+            message.cards = trimCards([...(message.cards || []), ...made]);
           }
         } else if (ev.type === "system" && ev.subtype === "init") {
           step(message, `Claude Code started (${Math.round((Date.now() - began) / 100) / 10} s)${(ev.mcp_servers || []).some((m) => m.status !== "connected") ? ", Hourglass tools not connected" : ""}`);
@@ -616,6 +673,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
             }, cfg.metadata);
           }
         }
+        syncLive(t, message);
       };
       child.stdout.on("data", (d) => {
         buffer += d;
@@ -703,7 +761,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         step(message, `Asking ${modelName(cfg)}…`);
         const claudeModels = cfg.engine === "anthropic" ? (await claudeModelsFor(t, cfg)).models : CLAUDE_MODELS;
         const modeSystem = `${system}\n\nPermission mode for this chat: ${chat.mode || "auto"}. In ask mode, propose every change and wait for the user to Apply it. Never claim a proposed action was already done.`;
-        const usedModel = await runDirect({ settings: cfg, system: modeSystem, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x), onError: (e) => log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`), timeZone: timeZoneOf(t), claudeModels });
+        const usedModel = await runDirect({ settings: cfg, system: modeSystem, chat, userText: userTurn(t, text, files), images: pictureData(t, files), service: t.service, message, signal: abort.signal, onStep: (x) => step(message, x), onProgress: () => syncLive(t, message), onError: (e) => log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`), timeZone: timeZoneOf(t), claudeModels });
         step(message, "Done");
         message.model = usedModel || modelName(cfg);
       } catch (e) {
@@ -712,13 +770,14 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
           const normalized = e.normalized || normalizeEngineError(e, { provider: cfg.engine, timeZone: timeZoneOf(t) });
           message.error = normalized.message;
           message.error_kind = normalized.kind;
+          message.error_resets_at = normalized.resets_at || null;
         }
         if (!e.logged) log(`assistant (${t.email || "owner"}, ${cfg.engine}): ${e.message}`);
       }
       if (message.pending_actions?.some((a) => a.status === "pending") && !/approval|apply/i.test(message.text || "")) message.text = `${message.text ? message.text.trim() + "\n\n" : ""}This reply has changes waiting for your approval.`;
       if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
+      syncLive(t, message);
       saveChat(t, chat);
-      running.delete(t.email);
       return;
     }
     if (cfg.engine === "claude") {
@@ -747,11 +806,12 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (failed && running.has(t.email)) {
         message.error = failed.normalized.message;
         message.error_kind = failed.normalized.kind;
+        message.error_resets_at = failed.normalized.resets_at || null;
       }
       if (message.pending_actions?.some((a) => a.status === "pending") && !/approval|apply/i.test(message.text || "")) message.text = `${message.text ? message.text.trim() + "\n\n" : ""}This reply has changes waiting for your approval.`;
       if (!message.text && !message.tools.length && !message.error) message.error = "No reply.";
+      syncLive(t, message);
       saveChat(t, chat);
-      running.delete(t.email);
       return;
     }
     return runFree(t, chat, message, text, fresh, files, cfg);
@@ -780,7 +840,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       let r;
       let normalized;
       for (let attempt = 0; attempt < 2; attempt++) {
-        r = await runOnce(t, dirs, chat, message, promptFor(!chat.session), model, unit, pictures);
+        r = await runOnce(t, dirs, chat, message, promptFor(!chat.session), model, unit, pictures, cfg.effort);
         if (!r.error) break;
         normalized = normalizeEngineError(r.failure || r.error, { provider: "free", timeZone: timeZoneOf(t) });
         lastNormalized = normalized;
@@ -796,6 +856,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       if (r.anything || isSharedFreeQuotaError(r.failure || r.error) || !FALLBACK_KINDS.has(normalized.kind)) {
         message.error = normalized.message;
         message.error_kind = normalized.kind;
+        message.error_resets_at = normalized.resets_at || null;
         break;
       }
       step(message, `${model.replace(/^opencode\//, "")} unavailable; trying another model.`);
@@ -810,17 +871,128 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     }
     if (message.pending_actions?.some((a) => a.status === "pending") && !/approval|apply/i.test(message.text || "")) message.text = `${message.text ? message.text.trim() + "\n\n" : ""}This reply has changes waiting for your approval.`;
     if (errors.length) log(`assistant (${t.email || "owner"}): ${errors.join(" ; ").slice(0, 400)}`);
+    syncLive(t, message);
     saveChat(t, chat);
-    running.delete(t.email);
   }
 
   function stop(t) {
+    // A stop also drops what was queued behind it.
+    queued.delete(accountKey(t));
     const r = running.get(t.email);
-    if (!r) return;
+    if (!r) { emit(t, "state", stateOf(t)); return; }
     running.delete(t.email);
     try { r.abort?.abort(); } catch {}
     if (runner === "systemd" && r.unit) spawnSync("systemctl", ["stop", r.unit], { timeout: 10000 });
     try { r.child?.kill("SIGKILL"); } catch {}
+    emit(t, "state", stateOf(t));
+  }
+
+  // --- turns: start, queue behind, and the usage each one leaves -------------------
+
+  /** Keep one finished model turn in the account's usage ledger, and its quota state. */
+  function recordTurn(t, run) {
+    const message = run.message;
+    const usage = message.usage;
+    const row = {
+      at: Date.now(), message_id: message.id, engine: run.engine || "free", model: message.model || run.model || null, effort: run.effort || null,
+      input_tokens: usage?.input_tokens ?? null, output_tokens: usage?.output_tokens ?? null,
+      cache_read_input_tokens: usage?.cache_read_input_tokens ?? null, cache_creation_input_tokens: usage?.cache_creation_input_tokens ?? null,
+      cost: Number.isFinite(usage?.cost) ? usage.cost : null,
+      context_window: usage?.context_window ?? null, context_percent: usage?.context_percent ?? null,
+      error_kind: message.error_kind || null,
+    };
+    try { usageLogFor(t).add(row); } catch (e) { log(`assistant (${t.email || "owner"}, usage): ${e.message}`); }
+    const engine = row.engine;
+    if (["rate_limit", "quota"].includes(message.error_kind)) {
+      const quota = { at: row.at, kind: message.error_kind, model: row.model, message: message.error || null, resets_at: message.error_resets_at || null };
+      quotas.set(accountKey(t), engine, quota);
+      emit(t, "quota", { state: "quota", engine, ...quota });
+    } else if (!message.error && quotas.get(accountKey(t), engine)) {
+      quotas.clear(accountKey(t), engine);
+      emit(t, "quota", { state: "ok", engine });
+    }
+  }
+
+  /** A message that has to wait: the current turn is still running. */
+  function enqueue(t, item) {
+    const queue = queueOf(t);
+    if (queue.length >= MAX_QUEUED) return null;
+    const entry = { id: item.id || `q${Date.now()}${randomBytes(3).toString("hex")}`, at: Date.now(), text: item.text, files: item.files || [] };
+    queue.push(entry);
+    queued.set(accountKey(t), queue);
+    return entry;
+  }
+
+  /** Runs one user message now and, when it ends, the next queued one. */
+  function startTurn(t, chat, text, files = []) {
+    const now = Date.now();
+    const user = { id: `u${now}${randomBytes(2).toString("hex")}`, role: "user", time: now, text, tools: [], files };
+    const message = { id: `a${now}${randomBytes(2).toString("hex")}`, role: "assistant", time: now, text: "", tools: [], error: null };
+    chat.messages.push(user, message);
+    saveChat(t, chat);
+    const cfg = settings.get(t);
+    const fresh = !chat.session;
+    const entry = running.get(t.email) || {};
+    const mirror = createStreamMirror({ message, emit: (event, data) => emit(t, event, data) });
+    Object.assign(entry, { chat, message, mirror, engine: cfg.engine, model: cfg.model, effort: cfg.effort || null });
+    running.set(t.email, entry);
+    emit(t, "message_start", { message_id: message.id, user_message_id: user.id, at: now, engine: cfg.engine, model: modelName(cfg), effort: cfg.effort || null });
+    emit(t, "state", stateOf(t));
+    return run(t, chat, message, text, fresh, files)
+      .then(() => remember(chat, message.cards))
+      .catch((e) => {
+        const normalized = e.normalized || normalizeEngineError(e, { provider: cfg.engine, timeZone: timeZoneOf(t) });
+        message.error = normalized.message;
+        message.error_kind = normalized.kind;
+        message.error_resets_at = normalized.resets_at || null;
+        log(`assistant: ${e.stack || e}`);
+      })
+      .finally(() => {
+        // A steer that arrived after the last step is the next turn, not lost.
+        for (const extra of (chat.steer || []).splice(0)) enqueue(t, { text: extra });
+        mirror.end();
+        recordTurn(t, { ...entry, message });
+        saveChat(t, chat);
+        running.delete(t.email);
+        const next = queueOf(t).shift();
+        if (next) {
+          queued.set(accountKey(t), queueOf(t));
+          startTurn(t, chat, next.text, next.files || []);
+        } else {
+          queued.delete(accountKey(t));
+          emit(t, "state", stateOf(t));
+        }
+      });
+  }
+
+  /** Undo the newest Drive file change an assistant turn made. */
+  function undoLastFile(t, chat) {
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      const message = chat.messages[i];
+      if (message.role !== "assistant") continue;
+      const cards = message.cards || [];
+      for (let j = cards.length - 1; j >= 0; j--) {
+        const card = cards[j];
+        if (card.kind !== "file" || card.undone || !["changed", "created"].includes(card.state)) continue;
+        const file_id = card.file_id || card.id;
+        try {
+          if (card.state === "created") {
+            t.service.driveFiles.delete({ file_id });
+            card.state = "undone"; card.undone = true;
+            return { action: "deleted", file_id, name: card.name || null, message_id: message.id };
+          }
+          const history = t.service.driveFiles.listVersions({ file_id });
+          const version = history?.versions?.[0];
+          if (!version) return { error: "No earlier version of this file is kept.", status: 404 };
+          t.service.driveFiles.restore({ file_id, version_id: version.id });
+          card.state = "undone"; card.undone = true; card.restored_from = version.id;
+          return { action: "restored", file_id, name: card.name || null, message_id: message.id, restored_from: version.id };
+        } catch (e) {
+          return { error: e.message, status: e.status || 400 };
+        }
+      }
+    }
+    return { error: "There is no assistant Drive change to undo.", status: 404 };
   }
 
   function allow(email) {
@@ -998,7 +1170,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     if (ids?.reminder_id) Object.assign(last, { reminder_id: ids.reminder_id, last: "reminder" });
   }
 
-  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], pending_actions: m.pending_actions || [], steps: m.steps || [], error: m.error || null, error_kind: m.error_kind || null, files: m.files || [], quick: !!m.quick, model: m.model || null, usage: m.usage || null });
+  const view = (m) => ({ id: m.id, role: m.role, time: m.time, text: m.text || "", tools: (m.tools || []).map((x) => ({ ...x, label: x.label || toolLabel(x.tool, x.status) })), cards: m.cards || [], pending_actions: m.pending_actions || [], steps: m.steps || [], error: m.error || null, error_kind: m.error_kind || null, error_resets_at: m.error_resets_at || null, files: m.files || [], quick: !!m.quick, steer: !!m.steer, model: m.model || null, usage: m.usage || null });
 
   /** The Drive folder attachments go to, made on first use. */
   function assistantFolder(t) {
@@ -1025,16 +1197,32 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       return send(res, 503, { error: "The assistant isn't set up on the server yet." }), true;
     }
 
+    // Live events while a reply is written: text deltas, tool phases, usage and state.
+    if (path === "/api/assistant/stream" && m === "GET") {
+      res.writeHead(200, {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      const cfg = settings.view(t);
+      events.subscribe(accountKey(t), res);
+      events.write(res, "ready", { enabled: true, engine: cfg.engine, model: modelName(cfg), effort: cfg.effort || null, ...stateOf(t) });
+      events.write(res, "quota", quotaOf(t, cfg.engine));
+      return true;
+    }
+
     if (path === "/api/assistant" && m === "GET") {
       const live = running.get(t.email);
       const chat = live ? live.chat : loadChat(t);
       const cfg = settings.view(t);
-      return send(res, 200, { enabled: true, engine: cfg.engine, engine_name: cfg.engine_name, base_url: cfg.base_url, model: modelName(cfg), mode: chat.mode || "auto", busy: !!live, messages: chat.messages.map(view) }), true;
+      const state = stateOf(t);
+      return send(res, 200, { ...state, enabled: true, engine: cfg.engine, engine_name: cfg.engine_name, base_url: cfg.base_url, model: modelName(cfg), effort: cfg.effort || null, mode: chat.mode || "auto", busy: !!live, messages: chat.messages.map(view), queue: queueOf(t).map((q) => ({ id: q.id, at: q.at, text: q.text, files: q.files?.length || 0 })), quota: quotas.get(accountKey(t), cfg.engine) }), true;
     }
 
     if (path === "/api/assistant/mode" && m === "POST") {
       const body = await readJson(req);
-      if (!["ask", "auto", "dangerous"].includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto or dangerous" }), true;
+      if (!MODES.includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto, dangerous or plan" }), true;
       const chat = running.get(t.email)?.chat || loadChat(t); chat.mode = body.mode; saveChat(t, chat);
       return send(res, 200, { mode: chat.mode }), true;
     }
@@ -1061,13 +1249,6 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
     }
 
-    if (path === "/api/assistant/mode" && m === "POST") {
-      const body = await readJson(req);
-      if (!["ask", "auto", "dangerous"].includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto or dangerous" }), true;
-      const chat = loadChat(t); chat.mode = body.mode; saveChat(t, chat);
-      return send(res, 200, { mode: chat.mode }), true;
-    }
-
     // Where the apps upload attachments before sending them (the Drive's "Assistant" folder).
     if (path === "/api/assistant/folder" && m === "GET") {
       return send(res, 200, { folder_id: assistantFolder(t).id, name: ASSISTANT_FOLDER }), true;
@@ -1079,57 +1260,71 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
         try { t.service.ensureHomeClock(clientTz); } catch {}
       }
       const body = await readJson(req);
+      if (body.mode !== undefined && !MODES.includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto, dangerous or plan" }), true;
       const files = attachments(t, body.files);
       const text = String(body.text || "").trim() || (files.length ? "(see the attached file" + (files.length > 1 ? "s)" : ")") : "");
       if (!text) return send(res, 400, { error: "Write a message first." }), true;
       if (text.length > MAX_TEXT) return send(res, 413, { error: `Keep it under ${MAX_TEXT} characters.` }), true;
-      if (running.has(t.email)) return send(res, 409, { error: "Still working on the last message." }), true;
-      if (!allow(t.email || "owner")) return send(res, 429, { error: "That's a lot of messages - try again in a while." }), true;
-      const chat = loadChat(t);
-      if (body.mode !== undefined) {
-        if (!["ask", "auto", "dangerous"].includes(body.mode)) return send(res, 400, { error: "mode must be ask, auto or dangerous" }), true;
-        chat.mode = body.mode;
+      const live = running.get(t.email);
+      const chat = live?.chat || loadChat(t);
+      if (body.mode !== undefined) chat.mode = body.mode;
+      if (!allow(t.email || "owner")) {
+        const resets_at = (usage.get(t.email || "owner")?.[0] || Date.now()) + 3600_000;
+        const quota = { at: Date.now(), kind: "rate_limit", limit: "messages_per_hour", message: "That's a lot of messages - try again in a while.", resets_at };
+        quotas.set(accountKey(t), settings.view(t).engine, quota);
+        emit(t, "quota", { state: "quota", engine: settings.view(t).engine, ...quota });
+        return send(res, 429, { error: quota.message, resets_at, limit: "messages_per_hour" }), true;
+      }
+      if (live) {
+        // Direct engines take the message between steps: steering. The CLIs cannot,
+        // so there it waits for the current turn to finish (and can be cancelled).
+        if (body.steer === true && supportsSteer(live.engine || settings.view(t).engine)) {
+          const at = Date.now();
+          const user = { id: `u${at}${randomBytes(2).toString("hex")}`, role: "user", time: at, text, tools: [], files, steer: true };
+          chat.messages.push(user);
+          (chat.steer ||= []).push(text);
+          saveChat(t, chat);
+          emit(t, "steer", { message_id: live.message?.id || null, user_message_id: user.id, text });
+          return send(res, 202, { ok: true, steer: true, user_message_id: user.id }), true;
+        }
+        const waiting = enqueue(t, { text, files });
+        if (!waiting) return send(res, 429, { error: `Only ${MAX_QUEUED} messages can wait at once.` }), true;
+        saveChat(t, chat);
+        emit(t, "state", stateOf(t));
+        return send(res, 202, { ok: true, queued: true, id: waiting.id, position: queueOf(t).length }), true;
       }
       const now = Date.now();
       // The fast lane: done here at once, no model.
       // What this chat last touched, so "remove it" or "make it 9" knows what "it" is.
       const riskyIntent = /\b(?:remove|delete|erase|cancel|discard|clear|forget|take off|throw away|get rid of)\b/i.test(text);
-      const quick = files.length || chat.mode === "ask" || (chat.mode === "auto" && riskyIntent) ? null : quickAnswer(t.service, text, chat.last || {});
+      const quick = files.length || chat.mode === "plan" || chat.mode === "ask" || (chat.mode === "auto" && riskyIntent) ? null : quickAnswer(t.service, text, chat.last || {});
       if (quick) {
-        chat.messages.push({ id: `u${now}`, role: "user", time: now, text, tools: [] });
-        chat.messages.push({ id: `a${now}`, role: "assistant", time: now, quick: true, text: quick.text, error: null, cards: quick.cards || [],
-          tools: quick.tools.map((x) => ({ tool: x.tool, status: "completed", label: toolLabel(x.tool, "completed") })) });
+        const user = { id: `u${now}`, role: "user", time: now, text, tools: [] };
+        const reply = { id: `a${now}`, role: "assistant", time: now, quick: true, text: quick.text, error: null, cards: quick.cards || [],
+          tools: quick.tools.map((x) => ({ tool: x.tool, status: "completed", label: toolLabel(x.tool, "completed") })) };
+        chat.messages.push(user, reply);
         // The model hears about it next time, so "make it 9 instead" still makes sense.
         remember(chat, quick.cards, quick.ids);
         (chat.direct ||= []).push({ user: text, reply: quick.text });
         chat.direct = chat.direct.slice(-6);
         saveChat(t, chat);
+        emit(t, "message_start", { message_id: reply.id, user_message_id: user.id, at: now, quick: true });
+        emit(t, "text", { message_id: reply.id, delta: reply.text, text: reply.text });
+        emit(t, "message_end", { message_id: reply.id, text: reply.text, error: null, model: null, usage: null });
         return send(res, 200, { ok: true, quick: true }), true;
       }
       if (running.size >= MAX_RUNNING) return send(res, 503, { error: "The assistant is busy with other people. Try again in a moment." }), true;
-      const fresh = !chat.session;
-      chat.messages.push({ id: `u${now}`, role: "user", time: now, text, tools: [], files });
-      const message = { id: `a${now}`, role: "assistant", time: now, text: "", tools: [], error: null };
-      chat.messages.push(message);
       saveChat(t, chat);
-      running.set(t.email, { chat, message });
-      run(t, chat, message, text, fresh, files).then(() => { remember(chat, message.cards); saveChat(t, chat); }).catch((e) => {
-        const normalized = e.normalized || normalizeEngineError(e, { provider: settings.get(t).engine, timeZone: timeZoneOf(t) });
-        message.error = normalized.message;
-        message.error_kind = normalized.kind;
-        log(`assistant: ${e.stack || e}`);
-        saveChat(t, chat);
-        running.delete(t.email);
-      });
+      startTurn(t, chat, text, files);
       return send(res, 202, { ok: true }), true;
     }
 
     // Which AI answers: the engine, its model, and the user's key (never sent back).
     if (path === "/api/assistant/settings" && m === "GET") {
       const discovery = listFreeModels();
-      const freeList = discovery.status === "discovered"
+      const freeList = withEfforts(discovery.status === "discovered"
         ? discovery.list.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "discovered" }))
-        : models.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "configured" }));
+        : models.map((id) => ({ id, name: id.replace(/^opencode\//, ""), source: "configured" })), "free");
       const claude = await claudeModelsFor(t);
       const cfg = settings.view(t);
       return send(res, 200, { ...cfg, engines: engineEntries(cfg), claude_models: claude.models, claude_model_source: claude.source, free_models: freeList, free_model_discovery: { status: discovery.status, configured: models }, presets: OPENAI_PRESETS, claude_ready: existsSync(claudeBin) }), true;
@@ -1173,7 +1368,16 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
           catch (e) { return send(res, 400, { error: "Could not load this API's models. Try saving again." }), true; }
         }
       }
-      return send(res, 200, settings.save(t, { engine, model: selectedModel, base_url, key })), true;
+      // The effort is kept per engine+model; a model that cannot take one refuses it.
+      let effort;
+      if (b.effort !== undefined) {
+        effort = b.effort === null || b.effort === "" ? null : String(b.effort);
+        const supported = effortsFor(engine, selectedModel ?? model ?? settings.view(t).model ?? "", base_url ?? settings.view(t).base_url);
+        if (effort !== null && !supported.includes(effort)) {
+          return send(res, 400, { error: supported.length ? `effort must be one of ${supported.join(", ")}` : "This model does not take an effort setting." }), true;
+        }
+      }
+      return send(res, 200, settings.save(t, { engine, model: selectedModel, base_url, key, effort })), true;
     }
     // Sign in with Claude in the browser: the server runs Claude Code's own sign-in
     // (`claude setup-token`), the app opens its link, the user signs in on claude.com
@@ -1228,13 +1432,13 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
       const engine = u.searchParams.get("engine") || settings.view(t).engine;
       if (!u.searchParams.has("base_url") && engine === "free") {
         const discovery = listFreeModels();
-        return send(res, 200, { models: (discovery.status === "discovered" ? discovery.list : models).map((id) => ({ id, name: id.replace(/^opencode\//, "") })) }), true;
+        return send(res, 200, { models: withEfforts((discovery.status === "discovered" ? discovery.list : models).map((id) => ({ id, name: id.replace(/^opencode\//, "") })), "free") }), true;
       }
       if (!u.searchParams.has("base_url") && (engine === "claude" || engine === "anthropic")) return send(res, 200, await claudeModelsFor(t)), true;
       const base_url = (u.searchParams.get("base_url") || settings.view(t).base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "");
       const key = settings.get(t).keys[settings.keySlot("openai", base_url)];
       if (!key) return send(res, 200, { models: [], error: "Add a key for this API first." }), true;
-      try { return send(res, 200, { models: await listOpenAIModels({ key, base_url }) }), true; }
+      try { return send(res, 200, { models: withEfforts(await listOpenAIModels({ key, base_url }), "openai", base_url) }), true; }
       catch (e) {
         const normalized = normalizeEngineError(e, { provider: isDeepSeekBaseUrl(base_url) ? "deepseek" : "openai", timeZone: timeZoneOf(t) });
         log(`assistant (${t.email || "owner"}, openai models): ${e.message}`);
@@ -1244,6 +1448,95 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
 
     if (path === "/api/assistant/deepseek-pricing" && m === "GET") {
       return send(res, 200, deepSeekPriceState()), true;
+    }
+
+    // Tokens and cost per day and per engine, the live context meter, the hourly
+    // cap, any limit in force and DeepSeek's peak/off-peak price state.
+    if (path === "/api/assistant/usage" && m === "GET") {
+      const u = new URL(req.url, "http://x");
+      const days = Math.max(1, Math.min(90, Number(u.searchParams.get("days")) || 30));
+      const cfg = settings.view(t);
+      const chat = running.get(t.email)?.chat || loadChat(t);
+      const summary = usageLogFor(t).summary({ days });
+      const lastUsage = [...chat.messages].reverse().find((x) => x.usage)?.usage || null;
+      return send(res, 200, {
+        engine: cfg.engine, engine_name: cfg.engine_name, model: modelName(cfg), effort: cfg.effort || null,
+        effort_options: effortsFor(cfg.engine, modelName(cfg), cfg.base_url),
+        limits: { messages_per_hour: PER_HOUR, max_running: MAX_RUNNING, max_queued: MAX_QUEUED, plan: cfg.engine === "claude" ? "Claude Pro/Max" : null },
+        context: lastUsage ? {
+          window: lastUsage.context_window, percent: lastUsage.context_percent,
+          input_tokens: lastUsage.input_tokens, output_tokens: lastUsage.output_tokens,
+          cache_read_input_tokens: lastUsage.cache_read_input_tokens, cache_creation_input_tokens: lastUsage.cache_creation_input_tokens,
+        } : null,
+        today: summary.days.at(-1) || null,
+        days: summary.days,
+        engines: summary.engines,
+        totals: summary.totals,
+        quota: quotas.get(accountKey(t), cfg.engine),
+        quotas: quotas.all(accountKey(t)),
+        deepseek: deepSeekPriceState(),
+      }), true;
+    }
+
+    // Cancel one message that is waiting behind a run.
+    const queueRoute = /^\/api\/assistant\/queue\/([A-Za-z0-9_-]+)$/.exec(path);
+    if (queueRoute && (m === "DELETE" || m === "POST")) {
+      const queue = queueOf(t);
+      const index = queue.findIndex((q) => q.id === queueRoute[1]);
+      if (index < 0) return send(res, 404, { error: "queued message not found" }), true;
+      const [removed] = queue.splice(index, 1);
+      if (queue.length) queued.set(accountKey(t), queue); else queued.delete(accountKey(t));
+      emit(t, "state", stateOf(t));
+      return send(res, 200, { ok: true, cancelled: removed.id }), true;
+    }
+
+    // Replay the last assistant turn (the last user message runs again).
+    if (path === "/api/assistant/retry" && m === "POST") {
+      if (running.has(t.email)) return send(res, 409, { error: "Wait for the current reply to finish." }), true;
+      const body = await readJson(req);
+      const chat = loadChat(t);
+      let at = body.message_id ? chat.messages.findIndex((x) => x.id === body.message_id) : -1;
+      if (at < 0) at = chat.messages.map((x) => x.role).lastIndexOf("assistant");
+      if (at < 0 || chat.messages[at]?.role !== "assistant") return send(res, 404, { error: "There is no reply to retry." }), true;
+      const userAt = chat.messages.slice(0, at).map((x) => x.role).lastIndexOf("user");
+      if (userAt < 0) return send(res, 404, { error: "There is no message to retry." }), true;
+      const user = chat.messages[userAt];
+      const files = attachments(t, (user.files || []).map((f) => f.id));
+      chat.messages = chat.messages.slice(0, userAt);
+      chat.session = null; chat.steer = [];
+      saveChat(t, chat);
+      startTurn(t, chat, user.text, files);
+      return send(res, 202, { ok: true, retried: user.text }), true;
+    }
+
+    // Edit a user message: everything after it is dropped and the new text runs.
+    if (path === "/api/assistant/edit" && m === "POST") {
+      if (running.has(t.email)) return send(res, 409, { error: "Wait for the current reply to finish." }), true;
+      const body = await readJson(req);
+      const chat = loadChat(t);
+      const text = String(body.text || "").trim();
+      if (!text) return send(res, 400, { error: "Write a message first." }), true;
+      if (text.length > MAX_TEXT) return send(res, 413, { error: `Keep it under ${MAX_TEXT} characters.` }), true;
+      let at = body.message_id ? chat.messages.findIndex((x) => x.id === body.message_id) : -1;
+      if (at < 0) at = chat.messages.map((x) => x.role).lastIndexOf("user");
+      if (at < 0 || chat.messages[at]?.role !== "user") return send(res, 404, { error: "That message cannot be edited." }), true;
+      const old = chat.messages[at];
+      const files = attachments(t, body.files !== undefined ? body.files : (old.files || []).map((f) => f.id));
+      chat.messages = chat.messages.slice(0, at);
+      chat.session = null; chat.steer = [];
+      saveChat(t, chat);
+      startTurn(t, chat, text, files);
+      return send(res, 202, { ok: true }), true;
+    }
+
+    // Undo the newest Drive file change an assistant turn made (its previous version).
+    if (path === "/api/assistant/undo" && m === "POST") {
+      if (running.has(t.email)) return send(res, 409, { error: "Wait for the current reply to finish." }), true;
+      const chat = loadChat(t);
+      const result = undoLastFile(t, chat);
+      if (result.error) return send(res, result.status || 400, { error: result.error }), true;
+      saveChat(t, chat);
+      return send(res, 200, { ok: true, ...result }), true;
     }
 
     if (path === "/api/assistant/stop" && m === "POST") {

@@ -221,12 +221,48 @@ test("Claude with a key: the tool call sets the alarm, and the reply has an alar
   assert.equal(reply.usage.cache_read_input_tokens, 4);
   assert.ok(reply.usage.cost > 0);
   assert.equal(reply.usage.context_window, 200000);
-  // The request: low effort, the system prompt cached, every Hourglass tool offered.
+  // The request: no effort saved yet (the provider's default), the system prompt cached, every Hourglass tool offered.
   const req = seen.filter((r) => r.path.startsWith("/v1/messages"))[0].body;
   assert.equal(req.model, "claude-haiku-5-5");
-  assert.equal(req.output_config.effort, "low");
+  assert.equal(req.output_config, undefined);
   assert.ok(req.tools.some((t) => t.name === "add_birthday"));
   assert.match(req.system[0].text, /Follow the permission mode/);
+});
+
+test("effort is saved per engine and model, and sent to each provider", async () => {
+  const set = await call("POST", "/api/assistant/settings", { engine: "anthropic", model: "claude-haiku-5-5", effort: "high" });
+  assert.equal(set.status, 200);
+  assert.equal(set.body.effort, "high");
+  const listed = await call("GET", "/api/assistant/settings");
+  assert.deepEqual(listed.body.claude_models.find((m) => m.id === "claude-haiku-5-5").efforts, ["low", "medium", "high"]);
+  let start = seen.length;
+  assert.equal((await call("POST", "/api/assistant/message", { text: "Plan my morning" })).status, 202);
+  await waitIdle();
+  assert.equal(seen.slice(start).find((r) => r.path.startsWith("/v1/messages")).body.output_config.effort, "high");
+
+  // The effort belongs to the model it was chosen on.
+  const other = await call("POST", "/api/assistant/settings", { engine: "anthropic", model: "claude-opus-5-5" });
+  assert.equal(other.status, 200);
+  assert.equal(other.body.effort, null);
+  assert.equal(other.body.efforts.anthropic["claude-haiku-5-5"], "high");
+
+  // An OpenAI-compatible API gets reasoning_effort.
+  assert.equal((await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/openai`, key: GOOD_KEY, model: "gpt-test", effort: "medium" })).status, 200);
+  start = seen.length;
+  assert.equal((await call("POST", "/api/assistant/message", { text: "focus timer please" })).status, 202);
+  await waitIdle();
+  const openaiRequest = seen.slice(start).find((r) => r.path === "/openai/chat/completions" && Array.isArray(r.body.messages));
+  assert.equal(openaiRequest.body.reasoning_effort, "medium");
+
+  // DeepSeek does not take one, and its models say so.
+  const refused = await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/deepseek`, key: GOOD_KEY, model: "deepseek-flash", effort: "low" });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /does not take an effort/);
+  assert.equal((await call("POST", "/api/assistant/settings", { engine: "openai", base_url: `${fakeUrl}/deepseek`, key: GOOD_KEY })).status, 200);
+  const models = await call("GET", `/api/assistant/models?base_url=${encodeURIComponent(fakeUrl + "/deepseek")}`);
+  assert.deepEqual(models.body.models.find((m) => m.id === "deepseek-flash").efforts, []);
+  const openaiModels = await call("GET", `/api/assistant/models?base_url=${encodeURIComponent(fakeUrl + "/openai")}`);
+  assert.deepEqual(openaiModels.body.models.find((m) => m.id === "gpt-test").efforts, ["low", "medium", "high"]);
 });
 
 test("Claude settings accept a model id from the live API list", async () => {

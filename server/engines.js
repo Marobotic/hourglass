@@ -19,10 +19,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { TOOLS, runTool, needsApproval, toolPermission } from "./tools.js";
+import { TOOLS, planBlocked, runTool, needsApproval, toolPermission } from "./tools.js";
 import { cardsFor, trimCards } from "./cards.js";
 import { normalizeEngineError } from "./engine-errors.js";
 import { deepSeekCost, deepSeekModelPricing, deepSeekModelSupportsTools, isDeepSeekBaseUrl } from "./deepseek.js";
+import { trimToolValue } from "./assistant-stream.js";
 
 export const ENGINES = [
   { id: "free", name: "Free", note: "opencode's free models. No key needed; slower." },
@@ -30,6 +31,26 @@ export const ENGINES = [
   { id: "anthropic", name: "Anthropic", note: "Claude API key from console.anthropic.com; billed per use." },
   { id: "openai", name: "Other API key", note: "OpenAI, OpenRouter, Gemini, Groq, or any OpenAI-compatible API." },
 ];
+
+// Reasoning effort a model can be asked for. "none" and "max" exist on some
+// providers but not across them; the four engines all understand these three.
+export const EFFORTS = ["low", "medium", "high"];
+
+/** What this engine+model can be asked for; [] means it is not supported there. */
+export function effortsFor(engine, model, base_url) {
+  if (engine === "openai") return isDeepSeekBaseUrl(base_url) ? [] : EFFORTS;
+  if (["free", "claude", "anthropic"].includes(engine)) return EFFORTS;
+  return [];
+}
+
+/**
+ * Direct engines can take another user message between their steps (steering
+ * mid-run). The CLI engines take one prompt per process, so a message sent
+ * while one runs is queued for the next turn instead.
+ */
+export function supportsSteer(engine) {
+  return engine === "anthropic" || engine === "openai";
+}
 
 // Claude models, newest first; the first is the default.
 export const CLAUDE_MODELS = [
@@ -54,6 +75,7 @@ export async function listAnthropicModels({ key, base_url = "https://api.anthrop
     context_window: Number.isFinite(m.context_window) ? m.context_window : null,
     pricing: m.pricing && m.pricing.input != null && m.pricing.output != null && Number.isFinite(Number(m.pricing.input)) && Number.isFinite(Number(m.pricing.output))
       ? { input: Number(m.pricing.input), output: Number(m.pricing.output) } : null,
+    efforts: effortsFor("anthropic", String(m.id)),
   })).sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -123,6 +145,8 @@ export function createSettings(dataDir) {
       const s = JSON.parse(readFileSync(file(t), "utf8"));
       if (s.model === "null") s.model = null; // old Android JSON null coercion
       if (s.models) s.models = Object.fromEntries(Object.entries(s.models).map(([slot, model]) => [slot, model === "null" ? null : model]));
+      // Efforts are per engine slot and model; old files simply have none.
+      if (s.efforts) s.efforts = Object.fromEntries(Object.entries(s.efforts).map(([slot, efforts]) => [engineSlot(slot), Object.fromEntries(Object.entries(efforts || {}).map(([model, effort]) => [model, effort === "null" ? null : effort]))]));
       // Preserve existing encrypted blobs while accepting older URL spellings.
       s.keys = Object.fromEntries(Object.entries(s.keys || {}).map(([slot, value]) => [slot.startsWith("openai:") ? engineSlot("openai", slot.slice(7)) : slot, value]));
       if (s.engine === "openai") s.base_url = apiUrl(s.base_url);
@@ -133,8 +157,16 @@ export function createSettings(dataDir) {
     /** What the app may see: no keys, only whether one is saved. */
     view(t) {
       const s = read(t);
-      const models = { ...s.models, [engineSlot(s.engine || "free", s.base_url)]: s.model || null };
-      return { engine: s.engine || "free", engine_name: engineName(s.engine || "free", s.base_url), model: s.model || null, models, base_url: s.base_url || null, has_key: Object.fromEntries(Object.entries(s.keys || {}).map(([k, v]) => [k, !!v])) };
+      const slot = engineSlot(s.engine || "free", s.base_url);
+      const models = { ...s.models, [slot]: s.model || null };
+      const efforts = s.efforts || {};
+      return {
+        engine: s.engine || "free", engine_name: engineName(s.engine || "free", s.base_url), model: s.model || null,
+        effort: efforts[slot]?.[s.model || ""] || null,
+        efforts,
+        models, base_url: s.base_url || null,
+        has_key: Object.fromEntries(Object.entries(s.keys || {}).map(([k, v]) => [k, !!v])),
+      };
     },
     /** The full settings for running, keys opened. */
     get(t) {
@@ -143,7 +175,7 @@ export function createSettings(dataDir) {
       for (const [k, v] of Object.entries(s.keys || {})) if (v) keys[k] = open(v);
       return { ...this.view(t), keys };
     },
-    save(t, { engine, model, base_url, key }) {
+    save(t, { engine, model, base_url, key, effort }) {
       const s = read(t);
       const previous = engineSlot(s.engine || "free", s.base_url);
       s.models ||= {};
@@ -154,6 +186,11 @@ export function createSettings(dataDir) {
       const slot = engineSlot(s.engine || "free", s.base_url);
       s.model = model !== undefined ? model || null : s.models[slot] || null;
       s.models[slot] = s.model;
+      // The effort belongs to this engine (and URL) and model, so switching back keeps it.
+      if (effort !== undefined) {
+        s.efforts ||= {};
+        (s.efforts[slot] ||= {})[s.model || ""] = effort || null;
+      }
       s.keys ||= {};
       // A key belongs to its engine (and for openai, its URL): switching back keeps it.
       if (key !== undefined) s.keys[slot] = key ? seal(String(key).trim()) : null;
@@ -177,6 +214,9 @@ const TOOL_SCHEMAS = TOOLS.map((t) => ({ name: t.name, description: t.descriptio
 /** Runs one tool for the model: its result (as text for the model), and the cards it makes. */
 function callTool(service, name, args, mode = "auto", message = null) {
   try {
+    if (planBlocked(mode, name, service, args)) {
+      return { ok: false, text: `Plan mode is on: ${name} would change data, so it was not run. Say what you would change and wait for the user to switch modes.`, cards: [] };
+    }
     if (needsApproval(mode, name, service, args)) {
       const tool = TOOLS.find((t) => t.name === name);
       const fileSnapshot = name === "write_file" || name === "edit_file";
@@ -260,7 +300,7 @@ export function recordAssistantUsage(message, usage, metadata) {
   }
 }
 
-async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata, mode = "auto" }) {
+async function runAnthropic({ key, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata, mode = "auto", effort = null, chat = {} }) {
   const client = new Anthropic({ apiKey: key, timeout: TURN_SECONDS * 1000, maxRetries: 1 });
   const id = model || CLAUDE_MODELS[0].id;
   const tools = TOOL_SCHEMAS.map((t, i) => ({ name: t.name, description: t.description, input_schema: t.schema, ...(i === TOOL_SCHEMAS.length - 1 ? { cache_control: { type: "ephemeral" } } : {}) }));
@@ -269,6 +309,15 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
   // Opus 5.5 and Sonnet 5.5: if a safety check declines, the request is re-run on a fallback model.
   const fallback = /^claude-(opus|sonnet)-5-5$/.test(id);
   for (let step = 0; step < MAX_STEPS; step++) {
+    // A message sent while this reply runs, from an app that knows this engine can steer.
+    if (chat.steer?.length) {
+      const text = chat.steer.splice(0).join("\n\n");
+      const last = messages[messages.length - 1];
+      if (last?.role === "user") {
+        if (Array.isArray(last.content)) last.content.push({ type: "text", text });
+        else last.content = `${last.content}\n\n${text}`;
+      } else messages.push({ role: "user", content: text });
+    }
     let stepHasText = false;
     const params = {
       model: id,
@@ -276,7 +325,8 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
       system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       tools,
       messages,
-      output_config: { effort: "low" },
+      // The user's effort for this engine+model; the provider's default when unset.
+      ...(effort ? { output_config: { effort } } : {}),
       // A readable summary of its thinking, for the "what it's doing" list.
       thinking: { type: "adaptive", display: "summarized" },
     };
@@ -296,7 +346,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
         block = ev.content_block ? { ...ev.content_block } : null;
         if (block?.type === "tool_use") {
           block.input = "";
-          message.tools.push({ call_id: block.id, tool: block.name, status: "running" });
+          message.tools.push({ call_id: block.id, tool: block.name, status: "running", started_at: Date.now() });
           onStep(`Using ${block.name}`);
           onProgress();
         }
@@ -343,10 +393,17 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
       const entry = message.tools.find((item) => item.call_id === u.id) || { call_id: u.id, tool: u.name, status: "running" };
       if (!message.tools.includes(entry)) message.tools.push(entry);
       entry.tool = u.name;
+      entry.input = trimToolValue(u.input);
+      entry.started_at ||= Date.now();
       onProgress();
       const r = callTool(service, u.name, u.input, mode, message);
       if (!r.ok) onStep(`${u.name} failed: ${r.text.slice(0, 160)}`);
       entry.status = r.ok ? "completed" : "error";
+      entry.output = trimToolValue(r.text);
+      entry.ended_at = Date.now();
+      entry.duration_ms = entry.ended_at - entry.started_at;
+      const fileCard = r.cards.find((card) => card.kind === "file");
+      if (fileCard?.diff) entry.diff = fileCard.diff;
       message.cards = trimCards([...(message.cards || []), ...r.cards]);
       results.push({ type: "tool_result", tool_use_id: u.id, content: r.text, ...(r.ok ? {} : { is_error: true }) });
     }
@@ -357,7 +414,7 @@ async function runAnthropic({ key, model, system, history, userText, images, ser
 
 // --- any OpenAI-compatible API ----------------------------------------------------------
 
-async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata, mode = "auto" }) {
+async function runOpenAI({ key, base_url, model, system, history, userText, images, service, message, signal, onProgress, onStep, metadata, mode = "auto", effort = null, chat = {} }) {
   if (!model) throw Object.assign(new Error("pick a model in Settings first"), { status: 400 });
   const url = `${(base_url || OPENAI_PRESETS[0].base_url).replace(/\/+$/, "")}/chat/completions`;
   const tools = metadata?.supports_tools === false ? [] : TOOL_SCHEMAS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
@@ -366,11 +423,20 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
     : userText;
   const messages = [{ role: "system", content: system }, ...history, { role: "user", content: user }];
   for (let step = 0; step < MAX_STEPS; step++) {
+    // A message sent while this reply runs, from an app that knows this engine can steer.
+    if (chat.steer?.length) {
+      const text = chat.steer.splice(0).join("\n\n");
+      const last = messages[messages.length - 1];
+      if (last?.role === "user") {
+        if (Array.isArray(last.content)) last.content.push({ type: "text", text });
+        else last.content = `${last.content}\n\n${text}`;
+      } else messages.push({ role: "user", content: text });
+    }
     let stepHasText = false;
     const res = await fetch(url, {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ model, messages, ...(metadata?.supports_tools === false ? {} : { tools, tool_choice: "auto" }), stream: true, stream_options: { include_usage: true } }),
+      body: JSON.stringify({ model, messages, ...(metadata?.supports_tools === false ? {} : { tools, tool_choice: "auto" }), ...(effort ? { reasoning_effort: effort } : {}), stream: true, stream_options: { include_usage: true } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(TURN_SECONDS * 1000)]),
     });
     if (!res.ok) {
@@ -453,11 +519,18 @@ async function runOpenAI({ key, base_url, model, system, history, userText, imag
       const entry = c.entry || { call_id: c.id, tool: c.function?.name, status: "running" };
       if (!message.tools.includes(entry)) message.tools.push(entry);
       entry.tool = c.function?.name;
+      entry.input = trimToolValue(c.function?.arguments);
+      entry.started_at ||= Date.now();
       onProgress();
       let args = {};
       try { args = JSON.parse(c.function?.arguments || "{}"); } catch {}
       const r = callTool(service, c.function?.name, args, mode, message);
       entry.status = r.ok ? "completed" : "error";
+      entry.output = trimToolValue(r.text);
+      entry.ended_at = Date.now();
+      entry.duration_ms = entry.ended_at - entry.started_at;
+      const fileCard = r.cards.find((card) => card.kind === "file");
+      if (fileCard?.diff) entry.diff = fileCard.diff;
       message.cards = trimCards([...(message.cards || []), ...r.cards]);
       messages.push({ role: "tool", tool_call_id: c.id, content: r.text });
     }
@@ -486,6 +559,7 @@ export async function listOpenAIModels({ key, base_url }) {
       name: String(m.displayName || m.name || m.display_name || id),
       context_window: Number.isFinite(context) && context > 0 ? context : null,
       pricing: m.pricing?.prompt != null && m.pricing?.completion != null && Number.isFinite(input) && Number.isFinite(output) ? { input, output } : null,
+      efforts: effortsFor("openai", id, base_url),
       ...(isDeepSeekBaseUrl(base_url) ? {
         supports_tools: deepSeekModelSupportsTools(id),
         deepseek_pricing_model: deepSeekModelPricing(id) ? id : null,
@@ -524,7 +598,7 @@ export async function runDirect({ settings, system, chat, userText, images, serv
   const history = historyTurns(chat, chat.messages.length - 2);
   const key = settings.keys[settings.engine === "openai" ? `openai:${settings.base_url || ""}` : settings.engine];
   if (!key) throw new Error("Add your key in the assistant's settings first.");
-  const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep, mode: chat.mode || "auto" };
+  const args = { key, base_url: settings.base_url, model: settings.model, system, history, userText, images, service, message, signal, onProgress, onStep, mode: chat.mode || "auto", effort: settings.effort || null, chat };
   const deepseek = settings.engine === "openai" && isDeepSeekBaseUrl(settings.base_url);
   const provider = deepseek ? "deepseek" : settings.engine;
   let openaiModels = [];

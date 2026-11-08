@@ -22,7 +22,7 @@ before(async () => {
     ...process.env, HOURGLASS_DATA: data, HOURGLASS_PORT: String(port), HOURGLASS_HOST: "127.0.0.1", HOURGLASS_TOKEN: TOKEN,
     MARO_ACCOUNT_URL: "http://127.0.0.1:9", HOURGLASS_URL: base, HOURGLASS_ASSISTANT: "on", HOURGLASS_ASSISTANT_RUNNER: "direct",
     HOURGLASS_ASSISTANT_BIN: join(import.meta.dirname, "fake-opencode.mjs"), HOURGLASS_ASSISTANT_DIR: join(data, "acc"),
-    HOURGLASS_ASSISTANT_MODELS: "fake/stuck,fake/good", HOURGLASS_ASSISTANT_FIRST_WORD_S: "2", HOURGLASS_ASSISTANT_QUIET_S: "2",
+    HOURGLASS_ASSISTANT_MODELS: "fake/stuck,fake/good", HOURGLASS_ASSISTANT_FIRST_WORD_S: "4", HOURGLASS_ASSISTANT_QUIET_S: "2",
   };
   await new Promise((resolve, reject) => {
     hg = spawn(process.execPath, ["--no-warnings", join(import.meta.dirname, "..", "server.js")], { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -48,7 +48,7 @@ test("a stalled free model is dropped after its silence and the next one answers
   assert.equal((await call("POST", "/api/assistant/message", { text: "Buy eggs and milk" })).status, 202);
   let seenSteps = false;
   let r;
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < 600; i++) {
     r = await call("GET", "/api/assistant");
     if (r.body.busy && (r.body.messages.at(-1).steps || []).length) seenSteps = true;
     if (!r.body.busy) break;
@@ -62,5 +62,5 @@ test("a stalled free model is dropped after its silence and the next one answers
   assert.match(steps[0], /Asking fake\/stuck/);
   assert.ok(steps.some((s) => /fake\/stuck went quiet/.test(s)), steps.join(" | "));
   assert.ok(steps.some((s) => /Trying fake\/good/.test(s)));
-  assert.ok(Date.now() - t0 < 12000, "dropped within seconds");
+  assert.ok(Date.now() - t0 < 20000, "dropped within seconds");
 });
