@@ -717,7 +717,7 @@ private struct ModelPickerSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("EFFORT").font(H.mono(11)).tracking(1).foregroundStyle(H.muted)
             HStack(spacing: 6) {
-                ForEach(efforts, id: .self) { level in effortChip(level) }
+                ForEach(efforts, id: \.self) { level in effortChip(level) }
                 Spacer(minLength: 0)
             }
         }
