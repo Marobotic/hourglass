@@ -4,6 +4,16 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material.icons.outlined.ContentCopy
+import dev.marobotic.hourglass.core.ChatMd
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -73,7 +83,10 @@ fun inlineMd(s: String): AnnotatedString = buildAnnotatedString {
 fun NoteView(body: String, opener: FileOpener, modifier: Modifier = Modifier, onToggleTask: ((Int) -> Unit)? = null) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Renumbering keeps every line where it is, so indexes still match the body.
-        for ((index, line) in Md.renumber(body).split("\n").withIndex()) {
+        for (block in ChatMd.blocks(Md.renumber(body))) {
+            if (block is ChatMd.Block.Code) { CodeBlock(block.lang, block.code); continue }
+            if (block is ChatMd.Block.Table) { TableBlock(block); continue }
+            val (index, line) = (block as ChatMd.Block.Line).let { it.index to it.text }
             val img = IMG.find(line)
             val file = FILE.find(line)
             val task = Md.TASK.find(line)
@@ -84,6 +97,11 @@ fun NoteView(body: String, opener: FileOpener, modifier: Modifier = Modifier, on
                     opener.repo.store.get("files", file.groupValues[2])?.let { opener.open(it) } ?: run { opener.error = "That file is no longer in the Drive." }
                 }
                 line.isBlank() -> Spacer(Modifier.height(4.dp))
+                line.startsWith(">") -> Row(Modifier.height(IntrinsicSize.Min)) {
+                    Box(Modifier.width(3.dp).fillMaxHeight().background(HColors.border))
+                    Spacer(Modifier.width(10.dp))
+                    Text(inlineMd(line.removePrefix(">").trimStart()), color = HColors.muted, fontFamily = Mono, fontSize = 15.sp, lineHeight = 22.sp)
+                }
                 else -> {
                     val h = Regex("^(#{1,6}) (.*)").find(line)
                     val ul = Regex("^(\\s*)[-*] (.*)").find(line)
@@ -148,5 +166,53 @@ private fun FileChip(name: String, onClick: () -> Unit) {
         Icon(Icons.Outlined.AttachFile, null, tint = HColors.muted, modifier = Modifier.height(18.dp))
         Spacer(Modifier.width(8.dp))
         T(name, 14, maxLines = 1)
+    }
+}
+
+fun copyText(ctx: android.content.Context, text: String) {
+    val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    cm.setPrimaryClip(android.content.ClipData.newPlainText("Hourglass", text))
+}
+
+// A fenced code block: monospace, scrolls sideways instead of wrapping, with a copy button.
+@Composable
+private fun CodeBlock(lang: String, code: String) {
+    val ctx = LocalContext.current
+    var copied by remember(code) { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { delay(1500); copied = false } }
+    Column(Modifier.fillMaxWidth().border(1.dp, HColors.border).background(HColors.surface)) {
+        Row(Modifier.fillMaxWidth().background(HColors.surface2), verticalAlignment = Alignment.CenterVertically) {
+            T(lang.ifBlank { "code" }, 11, HColors.muted, modifier = Modifier.weight(1f).padding(start = 10.dp))
+            Row(Modifier.clickable { copyText(ctx, code); copied = true }.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy code", tint = if (copied) HColors.teal else HColors.muted, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                T(if (copied) "Copied" else "Copy", 11, if (copied) HColors.teal else HColors.muted)
+            }
+        }
+        Text(code, Modifier.horizontalScroll(rememberScrollState()).padding(10.dp), color = HColors.fg, fontFamily = Mono, fontSize = 13.sp, lineHeight = 19.sp, softWrap = false)
+    }
+}
+
+// A GitHub table: one line per row, columns as wide as their longest cell, scrolls sideways.
+@Composable
+private fun TableBlock(table: ChatMd.Block.Table) {
+    val allRows: List<List<String>> = listOf(table.header) + table.rows
+    Row(Modifier.horizontalScroll(rememberScrollState()).border(1.dp, HColors.border)) {
+        for (c in table.header.indices) {
+            Column(Modifier.width(IntrinsicSize.Max).drawBehind { if (c < table.header.lastIndex) drawRect(HColors.border, size = androidx.compose.ui.geometry.Size(1.dp.toPx(), size.height), topLeft = androidx.compose.ui.geometry.Offset(size.width - 1.dp.toPx(), 0f)) }) {
+                for ((r, row) in allRows.withIndex()) {
+                    val cell = row.getOrElse(c) { "" }
+                    Text(
+                        inlineMd(if (cell.isEmpty()) " " else cell), Modifier.fillMaxWidth()
+                            .background(if (r == 0) HColors.surface2 else HColors.surface)
+                            .drawBehind { if (r < table.rows.size) drawRect(HColors.border, size = androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx()), topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1.dp.toPx())) }
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        color = HColors.fg, fontFamily = Mono, fontSize = 13.sp, maxLines = 1, softWrap = false,
+                        fontWeight = if (r == 0) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = when (table.aligns.getOrNull(c)) { ChatMd.Align.Center -> TextAlign.Center; ChatMd.Align.Right -> TextAlign.End; else -> TextAlign.Start },
+                    )
+                }
+            }
+        }
     }
 }
