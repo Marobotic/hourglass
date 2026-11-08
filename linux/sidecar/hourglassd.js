@@ -6,6 +6,7 @@
 //   data:   ~/.local/share/hourglass/         (Windows: %LOCALAPPDATA%\Hourglass)
 //   config.json: { "server": "https://...", "token": "..." }
 import { createServer } from "node:http";
+import { relayAssistantStream } from "./assistant-stream.js";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -969,13 +970,17 @@ async function extra(req, res, url, path) {
   }
   // The assistant runs on the server (opencode there, on this account's data);
   // the sidecar only carries the account's session to it.
+  if (path === "/api/assistant/stream" && req.method === "GET" && config().token) {
+    await relayAssistantStream({ server: SERVER, headers: { authorization: `Bearer ${config().token}` }, res });
+    return true;
+  }
   if (path.startsWith("/api/assistant")) {
     if (!config().token) {
       if (req.method === "GET") return json(res, 200, { enabled: false, reason: "Sign in to use the assistant.", messages: [] }), true;
       return json(res, 401, { error: "Sign in to use the assistant." }), true;
     }
-    const body = req.method === "POST" ? await readBody(req) : undefined;
-    return json(res, 200, await remote(path, { method: req.method, body })), true;
+    const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
+    return json(res, 200, await remote(path + url.search, { method: req.method, body })), true;
   }
   if (path === "/api/sync/now" && req.method === "POST") {
     await syncOnce();
