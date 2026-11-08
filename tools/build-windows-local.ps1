@@ -92,10 +92,9 @@ try {
 Qt 6.8.3 msvc2022_64 with qtmultimedia not found (looked at -QtRoot, QT_ROOT_DIR,
 C:\Qt\6.8.3\msvc2022_64 and windows\qt in the repo). Install it with:
 
-  python -m pip install --user aqtinstall
-  python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtmultimedia -O C:\Qt
+  qt-online-installer-windows-x64-online.exe install qt.qt6.683.win64_msvc2022_64 qt.qt6.683.addons.qtmultimedia --root C:\Qt --accept-licenses --accept-obligations --confirm-command
 
-or pass -QtRoot <folder> pointing at a 6.8.3 msvc2022_64 tree.
+(the official Qt Online Installer, https://www.qt.io/download-qt-installer-oss, signed in with a free Qt account), or pass -QtRoot <folder> pointing at a 6.8.3 msvc2022_64 tree.
 "@
   }
   $qtVersion = ''
