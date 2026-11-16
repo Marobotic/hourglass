@@ -11,7 +11,7 @@ import './native.js';
 
 const TAURI = globalThis.__TAURI__;
 const invoke = (cmd, args) => TAURI?.core?.invoke(cmd, args);
-const VERSION = globalThis.HOURGLASS_VERSION || '0.3.0';
+const VERSION = globalThis.HOURGLASS_VERSION || '0.3.1';
 
 // ---- shared state -------------------------------------------------------------------------------------
 const listeners = new Map(); // event -> Set(fn); events: tick, state, data, page

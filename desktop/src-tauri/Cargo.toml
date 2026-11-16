@@ -1,6 +1,6 @@
 [package]
 name = "hourglass"
-version = "0.3.0"
+version = "0.3.1"
 description = "Calendar, notes, alarms and timers"
 authors = ["Marobotic"]
 edition = "2021"
