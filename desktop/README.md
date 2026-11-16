@@ -3,7 +3,9 @@
 Tauri 2 (Rust, `src-tauri/`) around a plain HTML/JS UI (`ui/`, ES modules bundled by esbuild into `dist/`). One app
 for Windows and Linux. It is only the window: the Node service (`windows|linux/sidecar/hourglassd.js`) owns the data,
 alarms and sync, and starts the window with `--port` and `--token`. Started on its own, the window reads the token
-file and starts the service if it isn't up. Design: `docs/REDESIGN.md`.
+file and starts the service if it isn't up. The service also starts it with `--hidden` as soon as it is up, and
+the Start menu runs this exe, so opening Hourglass shows a window that is already loaded (single instance).
+Design: `docs/REDESIGN.md`.
 
 ## Build
 
