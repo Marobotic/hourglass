@@ -894,7 +894,7 @@ struct ClockView: View {
                     }
                     ForEach(store.clocks) { c in
                         if let z = TimeZone(identifier: c.zone) {
-                            let isHome = z.identifier == home.identifier
+                            let isHome = c.id == store.homeClock?.id
                             let diff = (z.secondsFromGMT(for: now) - home.secondsFromGMT(for: now)) / 60
                             Card(stripe: isHome ? H.accent : nil) {
                                 HStack {

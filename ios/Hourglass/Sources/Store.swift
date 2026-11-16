@@ -504,21 +504,31 @@ final class Store: ObservableObject {
     // Every change this phone makes is stamped here: those don't glow.
     private func stamp(_ old: Int64) -> Int64 { Motion.shared.touchLocal(); return max(nowMs(), old + 1) }
 
+    // Also repairs what sync merged: extra homes are cleared and a city added on
+    // two devices is kept once (the home one, else the first).
     func ensureHomeClock() {
-        let active = db.clocks.filter { $0.deleted == 0 }
+        let active = clocks
         if active.isEmpty {
             let z = TimeZone.current.identifier
             let label = z.components(separatedBy: "/").last?.replacingOccurrences(of: "_", with: " ") ?? z
             save(Clock(zone: z, label: label, position: 0, home: 1))
-        } else if !active.contains(where: { $0.home == 1 }) {
-            var first = active[0]
-            first.home = 1
-            save(first)
+            return
+        }
+        let home = homeClock ?? active[0]
+        var kept: Set<String> = [home.zone]
+        for var c in active {
+            if c.id == home.id {
+                if c.home != 1 { c.home = 1; save(c) }
+            } else if !kept.insert(c.zone).inserted {
+                removeClock(c)
+            } else if c.home == 1 {
+                c.home = 0; save(c)
+            }
         }
     }
 
     func applyZone() {
-        Dates.zone = db.clocks.first { $0.deleted == 0 && $0.home == 1 }.flatMap { TimeZone(identifier: $0.zone) } ?? .current
+        Dates.zone = homeClock.flatMap { TimeZone(identifier: $0.zone) } ?? .current
         Ringtones.current = ringtone
         // Time format, week start and alarm sound are synced prefs (a change on
         // any device, or by the assistant, shows here); the screens read them
@@ -801,7 +811,11 @@ final class Store: ObservableObject {
         if let i = db.clocks.firstIndex(where: { $0.id == k.id }) { db.clocks[i] = k } else { db.clocks.append(k) }
         changed(); return k
     }
-    var clocks: [Clock] { db.clocks.filter { $0.deleted == 0 }.sorted { ($0.position, $0.updated_at) < ($1.position, $1.updated_at) } }
+    // Display order: position, then the older first, then id, so every device agrees.
+    var clocks: [Clock] { db.clocks.filter { $0.deleted == 0 }.sorted { ($0.position, $0.updated_at, $0.id) < ($1.position, $1.updated_at, $1.id) } }
+    // The one clock the app runs on: the first marked home. Devices that were
+    // offline can each mark one, and sync keeps both; this pick is the same on all.
+    var homeClock: Clock? { clocks.first { $0.home == 1 } }
     func addClock(_ zone: String) {
         guard !clocks.contains(where: { $0.zone == zone }) else { return }
         let isFirst = clocks.isEmpty
@@ -1047,6 +1061,7 @@ final class Store: ObservableObject {
             try check((data, res))
             let pull = try JSONDecoder().decode(Pull.self, from: data)
             merge(pull.changes)
+            if !pull.changes.clocks.isEmpty { ensureHomeClock() } // the repair is pushed on the next sync
             applyZone()
             cursor = pull.rev
             if let d = try? JSONEncoder().encode(db) { try? d.write(to: file, options: .atomic) }
