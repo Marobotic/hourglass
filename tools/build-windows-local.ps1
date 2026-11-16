@@ -5,17 +5,15 @@
 #   .\tools\build-windows-local.ps1                  # HEAD, clean tree
 #   .\tools\build-windows-local.ps1 -Dirty           # include uncommitted changes
 #   .\tools\build-windows-local.ps1 -Node 24         # use CI's Node, not this PC's
-#   .\tools\build-windows-local.ps1 -NoSmokeTest     # skip starting the app offscreen
+#   .\tools\build-windows-local.ps1 -NoSmokeTest     # skip starting the service on a throwaway profile
 #
 # The package is assembled from `git archive`, never from the working tree, so
 # no local data, tokens or untracked files can get into it. The installer is
-# named Hourglass-<version>-dev-setup.exe and goes to
-# Documents\Project Exports\Hourglass\Windows, so it is never taken for a
-# release build.
+# the normal Hourglass-<version>-setup.exe (bump server/app.js VERSION first) and
+# goes to Documents\Project Exports\Hourglass\Windows, replacing the older ones.
 param(
   [switch]$Dirty,
   [switch]$NoSmokeTest,
-  [string]$QtRoot = '',
   [string]$Node = '',
   [string]$OutDir = '',
   [switch]$KeepWork
@@ -71,44 +69,28 @@ try {
   if (-not $version) { throw 'no VERSION in server/app.js' }
   Write-Host "Hourglass $version"
 
-  # --- Qt: 6.8.3 msvc2022_64 with qtmultimedia, as install-qt-action gets it ---
-  $qt = ''
-  foreach ($c in @($QtRoot, $env:QT_ROOT_DIR, 'C:\Qt\6.8.3\msvc2022_64', (Join-Path $root 'windows\qt'))) {
-    if (-not $c -or -not (Test-Path $c)) { continue }
-    if (-not (Test-Path (Join-Path $c 'bin\qml.exe'))) { continue }
-    if (-not (Test-Path (Join-Path $c 'bin\windeployqt.exe'))) {
-      Write-Host "  $c has qml.exe but no bin\windeployqt.exe (a deployed runtime, not the Qt SDK)"
-      continue
-    }
-    if (-not (Test-Path (Join-Path $c 'plugins\multimedia'))) {
-      Write-Host "  $c has no plugins\multimedia: add the qtmultimedia module"
-      continue
-    }
-    $qt = $c
-    break
-  }
-  if (-not $qt) {
-    throw @"
-Qt 6.8.3 msvc2022_64 with qtmultimedia not found (looked at -QtRoot, QT_ROOT_DIR,
-C:\Qt\6.8.3\msvc2022_64 and windows\qt in the repo). Install it with:
-
-  qt-online-installer-windows-x64-online.exe install qt.qt6.683.win64_msvc2022_64 qt.qt6.683.addons.qtmultimedia --root C:\Qt --accept-licenses --accept-obligations --confirm-command
-
-(the official Qt Online Installer, https://www.qt.io/download-qt-installer-oss, signed in with a free Qt account), or pass -QtRoot <folder> pointing at a 6.8.3 msvc2022_64 tree.
-"@
-  }
-  $qtVersion = ''
-  if (Test-Path (Join-Path $qt 'bin\qmake.exe')) { $qtVersion = (& (Join-Path $qt 'bin\qmake.exe') -query QT_VERSION).Trim() }
-  Write-Host "Qt $qtVersion ($qt)"
-  if ($qtVersion -and $qtVersion -ne '6.8.3') { Write-Host "  note: CI uses 6.8.3" }
+  # --- the window: Tauri 2 (desktop\), built here; no Qt any more (0.3) ---
+  Push-Location (Join-Path $src 'desktop')
+  try {
+    & npm ci --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'desktop npm ci failed' }
+    & node build.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'desktop UI build failed' }
+    & cargo build --release --manifest-path src-tauri\Cargo.toml
+    if ($LASTEXITCODE -ne 0) { throw 'desktop cargo build failed' }
+  } finally { Pop-Location }
+  # Wherever cargo really put it: a shared target folder (CARGO_TARGET_DIR or ~/.cargo/config.toml) wins.
+  $tauriTarget = ((& cargo metadata --format-version 1 --no-deps --manifest-path (Join-Path $src 'desktop\src-tauri\Cargo.toml')) | ConvertFrom-Json).target_directory
+  Step 'window (Tauri, cargo)'
 
   # --- assemble the package exactly where the workflow puts it -------------
   # dist\Hourglass mirrors the repo, so the app finds its parts by the same
   # relative paths: windows\sidecar imports ..\..\core, the window is
-  # windows\qt\bin\Hourglass.exe.
+  # windows\window\Hourglass.exe.
   $d = Join-Path $src 'dist\Hourglass'
   $w = Join-Path $d 'windows'
-  New-Item -ItemType Directory -Force (Join-Path $w 'node'), (Join-Path $w 'qt\bin'), (Join-Path $w 'app\fonts') | Out-Null
+  New-Item -ItemType Directory -Force (Join-Path $w 'node'), (Join-Path $w 'window') | Out-Null
+  Copy-Item (Join-Path $tauriTarget 'release\hourglass.exe') (Join-Path $w 'window\Hourglass.exe') -Force
   Push-Location $src
   try {
     & cargo build --manifest-path windows\shell\hourglass-shell\Cargo.toml --release
@@ -116,7 +98,7 @@ C:\Qt\6.8.3\msvc2022_64 and windows\qt in the repo). Install it with:
   } finally { Pop-Location }
   New-Item -ItemType Directory -Force (Join-Path $w 'bin') | Out-Null
   # A shared CARGO_TARGET_DIR (this PC has one) puts the exe there, not beside the crate.
-  $shellTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $src 'windows\shell\hourglass-shell\target' }
+  $shellTarget = ((& cargo metadata --format-version 1 --no-deps --manifest-path (Join-Path $src 'windows\shell\hourglass-shell\Cargo.toml')) | ConvertFrom-Json).target_directory
   Copy-Item (Join-Path $shellTarget 'release\hourglass-shell.exe') (Join-Path $w 'bin\hourglass-shell.exe') -Force
   Step 'Cloud Files helper (cargo)'
   Push-Location (Join-Path $src 'server')
@@ -128,7 +110,7 @@ C:\Qt\6.8.3\msvc2022_64 and windows\qt in the repo). Install it with:
   Copy-Item (Join-Path $src 'server') (Join-Path $d 'server') -Recurse
   Copy-Item (Join-Path $src 'assets') (Join-Path $d 'assets') -Recurse
   Remove-Item (Join-Path $d 'core\test'), (Join-Path $d 'server\test') -Recurse -Force
-  foreach ($x in 'app', 'sidecar', 'bin', 'share', 'tools') { Copy-Item (Join-Path $src "windows\$x") $w -Recurse -Force }
+  foreach ($x in 'sidecar', 'bin', 'share', 'tools') { Copy-Item (Join-Path $src "windows\$x") $w -Recurse -Force }
   foreach ($f in 'Hourglass.ps1', 'Hourglass.vbs', 'Install.ps1', 'hourglass.ico', 'README.txt') { Copy-Item (Join-Path $src "windows\$f") $w }
   Step 'npm ci + copy core/server/assets/windows'
 
@@ -153,32 +135,10 @@ C:\Qt\6.8.3\msvc2022_64 and windows\qt in the repo). Install it with:
   Write-Host ('Node {0}' -f ((& (Join-Path $w 'node\node.exe') --version).Trim()))
   Step 'Node runtime'
 
-  # --- Qt runtime: qml.exe plus what it needs, and the media backend -------
-  Copy-Item (Join-Path $qt 'bin\qml.exe') (Join-Path $w 'qt\bin')
-  Push-Location $src
-  try {
-    & (Join-Path $qt 'bin\windeployqt.exe') --qmldir windows\app --release --no-translations --no-system-d3d-compiler (Join-Path $w 'qt\bin\qml.exe')
-    if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
-  } finally { Pop-Location }
-  # windeployqt leaves out the media backend: without it Drive cannot play audio or video.
-  New-Item -ItemType Directory -Force (Join-Path $w 'qt\bin\multimedia') | Out-Null
-  Copy-Item (Join-Path $qt 'plugins\multimedia\*.dll') (Join-Path $w 'qt\bin\multimedia')
-  # FFmpeg, which the multimedia plugin needs.
-  $ffmpeg = @(Get-ChildItem (Join-Path $qt 'bin\av*.dll'), (Join-Path $qt 'bin\sw*.dll') -ErrorAction SilentlyContinue)
-  if (-not $ffmpeg) { Write-Host '  note: no av*.dll / sw*.dll in Qt bin (audio and video will not play)' }
-  else { $ffmpeg | Copy-Item -Destination (Join-Path $w 'qt\bin') }
-  Step 'windeployqt + multimedia'
-
-  # --- icons: a full Nerd Font -------------------------------------------
-  $jbm = Fetch 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip' 'JetBrainsMono.zip'
-  Expand-Archive -Path $jbm -DestinationPath (Join-Path $work 'jbm') -Force
-  Copy-Item (Join-Path $work 'jbm\JetBrainsMonoNerdFont-Regular.ttf'), (Join-Path $work 'jbm\JetBrainsMonoNerdFont-Bold.ttf') (Join-Path $w 'app\fonts')
-  Step 'fonts'
-
-  # --- Hourglass.exe / hourglassd.exe: named copies, so Task Manager says Hourglass
+  # --- hourglassd.exe: a named copy of node, so Task Manager says Hourglass (the window is already Hourglass.exe)
   & (Join-Path $w 'tools\brand.ps1')
   if ($LASTEXITCODE -ne 0) { throw 'brand.ps1 failed' }
-  if (-not (Test-Path (Join-Path $w 'qt\bin\Hourglass.exe')) -or -not (Test-Path (Join-Path $w 'node\hourglassd.exe'))) { throw 'branding failed' }
+  if (-not (Test-Path (Join-Path $w 'window\Hourglass.exe')) -or -not (Test-Path (Join-Path $w 'node\hourglassd.exe'))) { throw 'the package has no window or service' }
   Step 'brand'
 
   # --- smoke test: start the service on a throwaway profile and render the
@@ -196,25 +156,11 @@ C:\Qt\6.8.3\msvc2022_64 and windows\qt in the repo). Install it with:
         try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8941/health' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep -Milliseconds 300 }
       }
       if (-not $up) { throw 'the service did not answer on 8941' }
-      $t = (Get-Content (Join-Path $env:HOURGLASS_CONFIG 'token') -Raw).Trim()
-      # windeployqt ships only platforms\qwindows.dll (the release package has
-      # nothing else to render with), so the offscreen platform comes from the
-      # Qt SDK, and offscreen is what keeps a window off the screen.
-      $env:QT_PLUGIN_PATH = Join-Path $qt 'plugins'
-      $env:QT_QPA_PLATFORM = 'offscreen'
-      $env:QT_FATAL_WARNINGS = '0'
-      $env:QT_QUICK_CONTROLS_STYLE = 'Basic'
-      $env:QT_FORCE_STDERR_LOGGING = '1'
-      Push-Location $work
-      try {
-        foreach ($page in 0, 1) {
-          $q = Start-Process -PassThru -NoNewWindow (Join-Path $w 'qt\bin\Hourglass.exe') -ArgumentList @('-I', ('"{0}"' -f (Join-Path $w 'app')), ('"{0}"' -f (Join-Path $w 'app\Main.qml')), '--', '--port', '8941', '--token', $t, '--page', $page, '--screenshot', "shot-$page.png", '--size', '1300x820')
-          if (-not $q.WaitForExit(60000)) { $q.Kill(); throw "page $page did not exit" }
-          if (-not (Test-Path "shot-$page.png")) { throw "page $page did not render" }
-        }
-      } finally { Pop-Location }
+      # The window is a web page now: the service must answer the window's own origin (CORS).
+      $r = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8941/api/app' -Method Options -Headers @{ Origin = 'http://tauri.localhost'; 'Access-Control-Request-Method' = 'GET'; 'Access-Control-Request-Headers' = 'authorization' } -TimeoutSec 5
+      if ($r.Headers['Access-Control-Allow-Origin'] -ne 'http://tauri.localhost') { throw 'the service does not let the window in (CORS)' }
     } finally { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
-    Step 'smoke test (2 pages offscreen)'
+    Step 'smoke test (service + window origin)'
   }
 
   # --- Inno Setup ----------------------------------------------------------
@@ -233,14 +179,15 @@ C:\Qt\6.8.3\msvc2022_64 and windows\qt in the repo). Install it with:
     ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
     if (-not $iscc) { throw 'ISCC.exe not found after installing Inno Setup' }
   }
-  # -dev in the version, so the installer says dev in Add/Remove too.
-  & $iscc "/DAppVersion=${version}-dev" "/DPackage=$d" (Join-Path $src 'windows\installer\Hourglass.iss')
+  & $iscc "/DAppVersion=$version" "/DPackage=$d" (Join-Path $src 'windows\installer\Hourglass.iss')
   if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
-  $exe = Get-ChildItem (Join-Path $src 'dist\Hourglass-*-dev-setup.exe') | Select-Object -First 1
+  $exe = Get-ChildItem (Join-Path $src 'dist\Hourglass-*-setup.exe') | Select-Object -First 1
   if (-not $exe) { throw 'the installer was not written' }
   Step 'ISCC'
 
   New-Item -ItemType Directory -Force $OutDir | Out-Null
+  # Only the newest installer stays (and the uninstaller, if there is one).
+  Get-ChildItem $OutDir -Filter 'Hourglass-*-setup.exe' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne $exe.Name } | Remove-Item -Force
   $out = Join-Path $OutDir $exe.Name
   Copy-Item $exe.FullName $out -Force
 } finally {

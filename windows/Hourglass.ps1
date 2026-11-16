@@ -1,18 +1,14 @@
 # Hourglass launcher for Windows: starts the background service if needed,
 # then has it open the window (the service is the window's parent). Layout of the package:
-#   node\node.exe  qt\qml.exe  app\Main.qml  sidecar\hourglassd.js
+#   node\hourglassd.exe  window\Hourglass.exe (Tauri, 0.3)  sidecar\hourglassd.js
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $conf = Join-Path $env:APPDATA 'Hourglass'
 $port = if ($env:HOURGLASS_PORT) { [int]$env:HOURGLASS_PORT } else { 8931 }
 $node = Join-Path $root 'node\node.exe'
 if (-not (Test-Path $node)) { $node = (Get-Command node -ErrorAction Stop).Source }
-# Hourglass.exe is qml.exe with Hourglass's name and icon (tools\brand.ps1), so
-# Task Manager says Hourglass rather than QML Runtime.
-$qml = Join-Path $root 'qt\bin\Hourglass.exe'
-if (-not (Test-Path $qml)) { $qml = Join-Path $root 'qt\bin\qml.exe' }
-if (-not (Test-Path $qml)) { $qml = Join-Path $root 'qt\qml.exe' }
-if (-not (Test-Path $qml)) { $qml = (Get-Command qml -ErrorAction Stop).Source }
+# The window is the Tauri app (window\Hourglass.exe); the service starts it as its child.
+$window = Join-Path $root 'window\Hourglass.exe'
 
 function Test-Up {
   try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 "http://127.0.0.1:$port/health").StatusCode -eq 200 } catch { $false }
@@ -37,7 +33,6 @@ if (-not (Test-Up)) {
 }
 
 $token = (Get-Content "$conf\token" -Raw).Trim()
-$env:QT_QUICK_CONTROLS_STYLE = 'Basic'
 
 Add-Type @'
 using System;
@@ -50,7 +45,7 @@ public static class HgWindow {
 # The service owns the window (one Hourglass in Task Manager): ask it to open
 # the window, or bring it back from the tray. A window that is already showing
 # is brought to the front here, straight away.
-$open = @(Get-Process Hourglass, qml -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
+$open = @(Get-Process Hourglass -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Hourglass' }) | Select-Object -First 1
 if ($open) {
   [HgWindow]::ShowWindow($open.MainWindowHandle, 9) | Out-Null
   [HgWindow]::SetForegroundWindow($open.MainWindowHandle) | Out-Null
@@ -75,7 +70,7 @@ for ($attempt = 1; $attempt -le 3; $attempt++) {
 }
 if ($oldService -and -not $open) {
   # An older service without /api/window: start the window ourselves.
-  Start-Process -FilePath $qml -ArgumentList @('--apptype', 'widget', '-platform', 'windows:menus=native', '-I', "`"$root\app`"", "`"$root\app\Main.qml`"", '--', '--port', $port, '--token', $token) -WindowStyle Normal
+  Start-Process -FilePath $window -ArgumentList @('--port', $port, '--token', $token) -WindowStyle Normal
 } elseif (-not $asked) {
   Add-Type -AssemblyName PresentationFramework
   [System.Windows.MessageBox]::Show('The Hourglass service is running but could not open its window. Try again in a moment.', 'Hourglass') | Out-Null

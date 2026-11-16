@@ -103,8 +103,9 @@ test("renumber counts each list from 1", () => {
 test("the desktop app carries the same file", () => {
   const strip = (s) => s.replace(/\r/g, "");
   const src = strip(readFileSync(join(import.meta.dirname, "..", "noteformat.js"), "utf8"));
-  for (const os of ["windows", "linux"]) {
-    const copy = strip(readFileSync(join(import.meta.dirname, "..", "..", os, "app", "Hourglass", "noteformat.mjs"), "utf8"));
-    assert.equal(copy, src, `${os}/app/Hourglass/noteformat.mjs differs from core/noteformat.js`);
+  // The Tauri window (desktop/ui), and the Linux Qt window until it is retired.
+  for (const rel of ["desktop/ui/noteformat.mjs", "linux/app/Hourglass/noteformat.mjs"]) {
+    const copy = strip(readFileSync(join(import.meta.dirname, "..", "..", rel), "utf8"));
+    assert.equal(copy, src, `${rel} differs from core/noteformat.js`);
   }
 });

@@ -9,6 +9,16 @@ ICONS="$HOME/.local/share/icons/hicolor"
 UNITS="$HOME/.config/systemd/user"
 mkdir -p "$BIN" "$APPS" "$UNITS" "$ICONS/scalable/apps"
 
+# The window (0.3): the Tauri app in desktop/, built here when Rust and Node are installed.
+if command -v cargo >/dev/null && command -v npm >/dev/null; then
+  ( cd "$ROOT/../desktop" && npm ci --no-audit --no-fund && node build.mjs && cargo build --release --manifest-path src-tauri/Cargo.toml )
+  TARGET="$(cd "$ROOT/../desktop/src-tauri" && cargo metadata --format-version 1 --no-deps | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).target_directory))')"
+  mkdir -p "$ROOT/window"
+  install -m 755 "$TARGET/release/hourglass" "$ROOT/window/hourglass"
+else
+  echo "Rust (cargo) or Node (npm) is missing: the older Qt window opens until Hourglass is installed again with both."
+fi
+
 ln -sf "$ROOT/bin/hourglass" "$BIN/hourglass"
 ln -sf "$ROOT/bin/hourglass-cli" "$BIN/hourglass-cli"
 sed -e "s|@ROOT@|$ROOT|g" -e "s|@NODE@|$NODE|g" "$ROOT/share/hourglassd.service" > "$UNITS/hourglassd.service"
