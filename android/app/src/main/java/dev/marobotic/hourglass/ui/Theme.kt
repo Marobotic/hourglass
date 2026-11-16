@@ -4,6 +4,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -66,16 +67,20 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-// Hourglass palette, taken from the dotrb Omarchy theme.
+// Hourglass tokens (docs/REDESIGN.md §2): the same numbers as the desktop window. The surfaces are the desktop's
+// mixes of bg and fg (surface 4.5 %, surface2 8.5 %, surface3 12 %, border 14 %, faint 36 %, muted 58 %).
 object HColors {
     val bg = Color(0xFF121212)
-    val surface = Color(0xFF1B1B1B)
-    val surface2 = Color(0xFF242424)
-    val border = Color(0xFF2E2E2E)
+    val surface = Color(0xFF1C1C1C)
+    val surface2 = Color(0xFF252525)
+    val surface3 = Color(0xFF2D2D2D)
+    val border = Color(0xFF323232)
     val fg = Color(0xFFF5F5F5)
-    val muted = Color(0xFFA3A3A3)
-    val faint = Color(0xFF6B6B6B)
+    val muted = Color(0xFF969696)
+    val faint = Color(0xFF646464)
     val accent = Color(0xFFB14242)
+    // Red text on a dark screen: lighter, so small text stays readable. Fills keep the identity red.
+    val accentInk = Color(0xFFDB8585)
     val orange = Color(0xFFD66E36)
     val gold = Color(0xFFF0BE66)
     val teal = Color(0xFF4A8B8B)
@@ -131,7 +136,7 @@ fun HCard(modifier: Modifier = Modifier, stripe: Color? = null, onClick: (() -> 
 fun HButton(text: String, modifier: Modifier = Modifier, primary: Boolean = false, icon: ImageVector? = null, danger: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     val shape = RectangleShape
     val bg = when { primary -> HColors.accent; danger -> HColors.accent.copy(alpha = 0.14f); else -> Color.Transparent }
-    val ink = when { primary -> Color.White; danger -> HColors.accent; else -> HColors.fg }
+    val ink = when { primary -> Color.White; danger -> HColors.accentInk; else -> HColors.fg }
     Row(
         modifier.heightIn(min = 44.dp).clip(shape).background(bg).let { if (!primary && !danger) it.border(1.dp, HColors.border, shape) else it }
             .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
@@ -147,7 +152,7 @@ fun HButton(text: String, modifier: Modifier = Modifier, primary: Boolean = fals
 
 @Composable
 fun Chip(text: String, tint: Color) {
-    Box(Modifier.clip(RectangleShape).background(tint.copy(alpha = 0.18f)).padding(horizontal = 7.dp, vertical = 3.dp)) {
+    Box(Modifier.clip(RectangleShape).background(tint.copy(alpha = 0.16f)).padding(horizontal = 7.dp, vertical = 3.dp)) {
         T(text.uppercase(), 10, tint, bold = true, spacing = 0.8)
     }
 }
@@ -164,6 +169,22 @@ fun Section(text: String, detail: String? = null, modifier: Modifier = Modifier)
 
 @Composable
 fun RowScope.Grow() = Spacer(Modifier.weight(1f))
+
+// The page header every screen draws (REDESIGN §3 Phones): 56 tall, the title (or the logo on Now), actions on the
+// right, a hairline under it. Same component on Android and iOS.
+@Composable
+fun PageHeader(title: String, modifier: Modifier = Modifier, logo: Boolean = false, onBack: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().height(56.dp).padding(start = if (onBack != null) 4.dp else 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (onBack != null) androidx.compose.material3.IconButton(onBack) { Icon(androidx.compose.material.icons.Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = HColors.fg) }
+            if (logo) { PixelLogo(2.7.dp, alive = true); Spacer(Modifier.width(10.dp)) }
+            T(title, 17, bold = true, maxLines = 1)
+            Grow()
+            actions()
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+    }
+}
 
 private val LOGO = listOf("#########", ".#.....#.", ".#ooooo#.", "..#ooo#..", "...#o#...", "...#o#...", "..#.o.#..", ".#.ooo.#.", ".#ooooo#.", "#########")
 
@@ -275,7 +296,7 @@ fun DayToggles(days: List<Int>, onChange: (List<Int>) -> Unit) {
     }
 }
 
-val ScreenPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)
+val ScreenPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)
 
 // Square on/off toggle (Material's Switch is a pill).
 @Composable

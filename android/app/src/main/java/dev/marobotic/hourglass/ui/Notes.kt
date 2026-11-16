@@ -72,7 +72,7 @@ fun NotesScreen(nav: Nav, version: Int, initial: String = "all") {
     ) {
         item(span = StaggeredGridItemSpan.FullLine) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                T("Notes", 22, bold = true, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                T("Your notes", 13, HColors.muted, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 IconButton({ searching = !searching; if (!searching) query = "" }) { Icon(if (searching) Icons.Outlined.Close else Icons.Outlined.Search, "Search", tint = HColors.muted) }
             }
         }

@@ -311,7 +311,7 @@ fun DriveScreen(nav: Nav, version: Int) {
                 val (mod, over) = dropTarget(upFolder, upCourse) { drop(it, upFolder, upCourse) }
                 IconButton({ up() }, mod.background(if (over) HColors.accent.copy(alpha = 0.3f) else Color.Transparent)) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Up", tint = HColors.fg) }
             } else Spacer(Modifier.width(12.dp))
-            T(view.folder?.optString("name") ?: view.course?.optString("name") ?: "Drive", 22, bold = true, maxLines = 1, modifier = Modifier.weight(1f))
+            T(view.folder?.optString("name") ?: view.course?.optString("name") ?: "All files", 15, if (folderId != null || courseId != null) HColors.fg else HColors.muted, bold = folderId != null || courseId != null, maxLines = 1, modifier = Modifier.weight(1f))
             IconButton({ naming = "New folder" to { n: String -> if (n.isNotBlank()) repo.addFolder(n, folderId, courseId) } }) {
                 Icon(Icons.Outlined.CreateNewFolder, "New folder", tint = HColors.muted)
             }

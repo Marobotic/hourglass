@@ -61,6 +61,16 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.NotificationsNone
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
@@ -104,8 +114,14 @@ class Sheets {
     var confirm by mutableStateOf<Triple<String, String, () -> Unit>?>(null)
 }
 
-// open_tab "reminders": the Time tab's Reminders page.
+// The five tabs (REDESIGN §3 Phones). open_tab "reminders": the Time tab's Reminders page; "drive": Notes' Drive.
+const val TAB_NOW = 0
+const val TAB_SCHEDULE = 1
+const val TAB_NOTES = 2
+const val TAB_TIME = 3
+const val TAB_ASK = 4
 const val REMINDERS_TAB = 41
+const val DRIVE_TAB = 42
 
 class Nav(val repo: Repo) {
     val stack = mutableStateListOf<Route>()
@@ -114,6 +130,9 @@ class Nav(val repo: Repo) {
     // (Alarms, Reminders, Timers, Clock).
     var scheduleSub by mutableStateOf(0)
     var timeSub by mutableStateOf(0)
+    // Notes | Drive at the top of the Notes tab.
+    var notesSub by mutableStateOf(0)
+    var newMenu by mutableStateOf(false)
     val sheets = Sheets()
     fun push(r: Route) { stack.add(r) }
     fun pop() { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) }
@@ -127,7 +146,7 @@ class Nav(val repo: Repo) {
 class MainActivity : ComponentActivity() {
     // The share screen's "Open Drive" / "Open Notes" asks for a tab.
     private val openTab = mutableStateOf<Int?>(null)
-    private fun tabOf(i: android.content.Intent?) = when (i?.getStringExtra("open_tab")) { "notes" -> 2; "drive" -> 3; "reminders" -> REMINDERS_TAB; else -> null }
+    private fun tabOf(i: android.content.Intent?) = when (i?.getStringExtra("open_tab")) { "notes" -> TAB_NOTES; "drive" -> DRIVE_TAB; "reminders" -> REMINDERS_TAB; else -> null }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
@@ -156,7 +175,11 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
     LaunchedEffect(requestedTab?.value) {
         requestedTab?.value?.let {
             nav.stack.clear()
-            if (it == REMINDERS_TAB) { nav.tab = 4; nav.timeSub = 1 } else nav.tab = it
+            when (it) {
+                REMINDERS_TAB -> { nav.tab = TAB_TIME; nav.timeSub = 1 }
+                DRIVE_TAB -> { nav.tab = TAB_NOTES; nav.notesSub = 1 }
+                else -> nav.tab = it
+            }
             requestedTab.value = null
         }
     }
@@ -180,13 +203,9 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
             is Route.CourseR -> Box(Modifier.statusBarsPadding()) { NotesScreen(nav, version, top.id) }
             is Route.AssistantR -> AssistantScreen(nav)
             null -> Column(Modifier.fillMaxSize()) {
-                // Header
-                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 6.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    PixelLogo(3.dp, alive = true)
-                    Spacer(Modifier.width(12.dp))
-                    T("Hourglass", 18, bold = true)
-                    Grow()
-                    IconButton({ nav.push(Route.AssistantR) }) { Icon(Icons.Outlined.Forum, "Assistant", tint = HColors.muted) }
+                // The page header (REDESIGN §3): the logo on Now, the title elsewhere; Settings always.
+                val titles = listOf("Hourglass", "Schedule", if (nav.notesSub == 0) "Notes" else "Drive", "Time", "Assistant")
+                if (nav.tab != TAB_ASK) PageHeader(titles[nav.tab], Modifier.statusBarsPadding(), logo = nav.tab == TAB_NOW) {
                     IconButton({ nav.sheets.settings = true }) { Icon(Icons.Outlined.Settings, "Settings", tint = HColors.muted) }
                 }
                 // Alarms can only take over the screen with this permission (Android 14+).
@@ -197,7 +216,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                 if (!fsiOk) Row(
                     Modifier.fillMaxWidth().background(HColors.accent.copy(alpha = 0.2f)).clickable {
                         ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse("package:" + ctx.packageName)))
-                    }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    }.padding(horizontal = 16.dp, vertical = 10.dp),
                 ) { T("Allow full-screen alarms so they show over the lock screen  →", 13) }
                 // A newer Hourglass is on marobotic.dev (Updates.kt).
                 val upd by Updates.state.collectAsState()
@@ -208,7 +227,7 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                     Row(
                         Modifier.fillMaxWidth().background(HColors.teal.copy(alpha = 0.18f)).clickable(enabled = !upd.downloading) {
                             if (!allowed) Updates.allowInstalls(ctx) else updScope.launch { Updates.install(ctx) }
-                        }.padding(horizontal = 18.dp, vertical = 10.dp),
+                        }.padding(horizontal = 16.dp, vertical = 10.dp),
                     ) {
                         T(when {
                             upd.downloading -> "Downloading Hourglass ${a.version}…  ${(upd.progress * 100).toInt()}%"
@@ -218,64 +237,134 @@ fun HourglassApp(repo: Repo, initialTab: Int = 0, initialRoute: Route? = null, r
                         }, 13)
                     }
                 }
-                // The tab you go to rises in.
-                androidx.compose.animation.AnimatedContent(
-                    nav.tab, Modifier.weight(1f), label = "tab",
-                    transitionSpec = {
-                        (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)) + androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(340)) { it / 40 }) togetherWith
-                            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(90))
-                    },
-                ) { tab ->
-                Box(Modifier.fillMaxSize()) {
-                    when (tab) {
-                        0 -> NowScreen(nav, version, clock)
-                        1 -> Column(Modifier.fillMaxSize()) {
-                            SubTabs(listOf("Week", "Attendance"), nav.scheduleSub) { nav.scheduleSub = it }
-                            Box(Modifier.weight(1f)) {
-                                if (nav.scheduleSub == 0) ScheduleScreen(nav, version, clock) else AttendanceScreen(nav, version, clock)
-                            }
-                        }
-                        2 -> NotesScreen(nav, version)
-                        3 -> DriveScreen(nav, version)
-                        else -> Column(Modifier.fillMaxSize()) {
-                            SubTabs(listOf("Alarms", "Reminders", "Timers", "Clock"), nav.timeSub) { nav.timeSub = it }
-                            Box(Modifier.weight(1f)) {
-                                when (nav.timeSub) {
-                                    0 -> TimeScreen(nav, version, clock)
-                                    1 -> RemindersScreen(nav, version, clock)
-                                    2 -> TimersScreen(nav, version, clock)
-                                    else -> ClockScreen(nav, version, clock)
+                // The tab you go to rises in (260 ms, from 8 dp below: REDESIGN §4).
+                Box(Modifier.weight(1f)) {
+                    androidx.compose.animation.AnimatedContent(
+                        nav.tab, Modifier.fillMaxSize(), label = "tab",
+                        transitionSpec = {
+                            (androidx.compose.animation.fadeIn(HMotion.page()) + androidx.compose.animation.slideInVertically(HMotion.pageOffset()) { 24 }) togetherWith
+                                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(90))
+                        },
+                    ) { tab ->
+                        Box(Modifier.fillMaxSize()) {
+                            when (tab) {
+                                TAB_NOW -> NowScreen(nav, version, clock)
+                                TAB_SCHEDULE -> Column(Modifier.fillMaxSize()) {
+                                    SubTabs(listOf("Week", "Attendance"), nav.scheduleSub) { nav.scheduleSub = it }
+                                    Box(Modifier.weight(1f)) {
+                                        if (nav.scheduleSub == 0) ScheduleScreen(nav, version, clock) else AttendanceScreen(nav, version, clock)
+                                    }
                                 }
+                                TAB_NOTES -> Column(Modifier.fillMaxSize()) {
+                                    SubTabs(listOf("Notes", "Drive"), nav.notesSub) { nav.notesSub = it }
+                                    Box(Modifier.weight(1f)) { if (nav.notesSub == 0) NotesScreen(nav, version) else DriveScreen(nav, version) }
+                                }
+                                TAB_TIME -> Column(Modifier.fillMaxSize()) {
+                                    SubTabs(listOf("Alarms", "Reminders", "Timers", "Clock"), nav.timeSub) { nav.timeSub = it }
+                                    Box(Modifier.weight(1f)) {
+                                        when (nav.timeSub) {
+                                            0 -> TimeScreen(nav, version, clock)
+                                            1 -> RemindersScreen(nav, version, clock)
+                                            2 -> TimersScreen(nav, version, clock)
+                                            else -> ClockScreen(nav, version, clock)
+                                        }
+                                    }
+                                }
+                                else -> AssistantScreen(nav, inTab = true)
                             }
                         }
                     }
+                    // The floating New button on Now, Schedule and Notes: a 52 square accent button.
+                    if (nav.tab == TAB_NOW || nav.tab == TAB_SCHEDULE || (nav.tab == TAB_NOTES && nav.notesSub == 0)) NewButton(Modifier.align(Alignment.BottomEnd).padding(16.dp)) { nav.newMenu = true }
                 }
-                }
-                // Square tab bar (Material's has a pill indicator).
-                Row(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
-                    // Five: more did not fit a phone. Related pages share a tab
-                    // and a switcher at its top.
-                    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Drive" to Icons.Outlined.Folder, "Time" to Icons.Outlined.Alarm)
-                    for ((i, it) in items.withIndex()) {
-                        val on = nav.tab == i
-                        Column(
-                            Modifier.weight(1f).clickable { nav.tab = i }.padding(vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Box(Modifier.width(28.dp).height(2.dp).background(if (on) HColors.accent else androidx.compose.ui.graphics.Color.Transparent))
-                            Spacer(Modifier.height(6.dp))
-                            Icon(it.second, it.first, tint = if (on) HColors.fg else HColors.muted)
-                            T(it.first, 11, if (on) HColors.fg else HColors.muted, bold = on, maxLines = 1)
-                        }
-                    }
-                }
+                TabBar(nav)
             }
         }
         BurstLayer()
         // Above the tab bar (or the bottom of a note): the upload panel.
         UploadPanel(repo, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (top == null) 64.dp else 0.dp))
         SheetHost(nav, version)
+        NewMenu(nav)
     }
+}
+
+// Square tab bar (Material's has a pill indicator): five tabs, and a 2 x 24 accent bar on top of the current one that
+// slides between tabs with a spring.
+@Composable
+private fun TabBar(nav: Nav) {
+    val items = listOf("Now" to Icons.Outlined.Schedule, "Schedule" to Icons.Outlined.CalendarMonth, "Notes" to Icons.Outlined.StickyNote2, "Time" to Icons.Outlined.Alarm, "Ask" to Icons.Outlined.AutoAwesome)
+    Column(Modifier.fillMaxWidth().background(HColors.surface).navigationBarsPadding()) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val cell = maxWidth / items.size
+            val x by androidx.compose.animation.core.animateDpAsState(cell * nav.tab + (cell - 24.dp) / 2, HMotion.indicator(), label = "tab-bar")
+            Row(Modifier.fillMaxWidth().height(64.dp)) {
+                for ((i, it) in items.withIndex()) {
+                    val on = nav.tab == i
+                    val tint by androidx.compose.animation.animateColorAsState(if (on) HColors.fg else HColors.muted, HMotion.quickColor(), label = "tab-ink")
+                    Column(
+                        Modifier.weight(1f).fillMaxHeight().clickable { nav.tab = i },
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(it.second, it.first, tint = tint, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.height(4.dp))
+                        T(it.first, 11, tint, bold = on, maxLines = 1)
+                    }
+                }
+            }
+            Box(Modifier.offset(x = x).width(24.dp).height(2.dp).background(HColors.accent))
+        }
+    }
+}
+
+@Composable
+private fun NewButton(modifier: Modifier, onClick: () -> Unit) {
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val down by press.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (down) 0.94f else 1f, HMotion.press(), label = "new-press")
+    Box(
+        modifier.size(52.dp).graphicsLayer { scaleX = scale; scaleY = scale }.shadow(10.dp, RectangleShape).background(HColors.accent)
+            .clickable(interactionSource = press, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(Icons.Outlined.Add, "New", tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(26.dp)) }
+}
+
+// The New menu (the desktop's New button): a bottom sheet that slides up over a scrim.
+@Composable
+private fun NewMenu(nav: Nav) {
+    androidx.compose.animation.AnimatedVisibility(nav.newMenu, enter = androidx.compose.animation.fadeIn(HMotion.sheet()), exit = androidx.compose.animation.fadeOut(HMotion.exit())) {
+        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f)).clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { nav.newMenu = false })
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        nav.newMenu, Modifier.fillMaxSize(),
+        enter = androidx.compose.animation.slideInVertically(HMotion.sheetOffset()) { it },
+        exit = androidx.compose.animation.slideOutVertically(HMotion.exitOffset()) { it },
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            Column(Modifier.fillMaxWidth().background(HColors.surface).border(1.dp, HColors.border).navigationBarsPadding().padding(vertical = 8.dp)) {
+                Box(Modifier.align(Alignment.CenterHorizontally).padding(vertical = 6.dp).width(36.dp).height(4.dp).background(HColors.surface3))
+                T("NEW", 11, HColors.faint, bold = true, spacing = 1.4, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+                val repo = nav.repo
+                val items: List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, () -> Unit>> = listOf(
+                    Triple("Note", Icons.Outlined.StickyNote2) { nav.openNote(repo.addNote(null, java.time.LocalDate.now(repo.zone), null)) },
+                    Triple("Event", Icons.Outlined.CalendarMonth) { nav.sheets.event = null to emptyMap() },
+                    Triple("Course", Icons.Outlined.Folder) { nav.sheets.course = true to null },
+                    Triple("Alarm", Icons.Outlined.Alarm) { nav.sheets.alarm = true },
+                    Triple("Reminder", Icons.Outlined.NotificationsNone) { nav.sheets.reminder = true to null },
+                    Triple("Timer", Icons.Outlined.HourglassEmpty) { nav.tab = TAB_TIME; nav.timeSub = 2 },
+                )
+                for ((label, ic, run) in items) Row(
+                    Modifier.fillMaxWidth().clickable { nav.newMenu = false; run() }.height(52.dp).padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(ic, null, tint = HColors.muted, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(16.dp))
+                    T(label, 15)
+                }
+            }
+        }
+    }
+    BackHandler(enabled = nav.newMenu) { nav.newMenu = false }
 }
 
 // Signed out, this is the whole app: sign in or create an account. Same page
