@@ -11,7 +11,7 @@ import './native.js';
 
 const TAURI = globalThis.__TAURI__;
 const invoke = (cmd, args) => TAURI?.core?.invoke(cmd, args);
-const VERSION = globalThis.HOURGLASS_VERSION || '0.3.1';
+const VERSION = globalThis.HOURGLASS_VERSION || '0.3.2';
 
 // ---- shared state -------------------------------------------------------------------------------------
 const listeners = new Map(); // event -> Set(fn); events: tick, state, data, page
@@ -76,9 +76,12 @@ const ctx = {
 
 // ---- boot -------------------------------------------------------------------------------------------
 async function boot() {
+  let hidden = false;
   if (TAURI) {
     try {
-      const b = await invoke('boot');
+      // The window hands this over before the page runs (__HG_BOOT); asking is the fallback.
+      const b = globalThis.__HG_BOOT || await invoke('boot');
+      hidden = !!b.hidden;
       api.base = `http://127.0.0.1:${b.port}`;
       api.token = b.token;
     } catch (e) { console.error(e); }
@@ -104,8 +107,9 @@ async function boot() {
   if (TAURI) {
     askWindow();
     listenDrops();
-    // The window starts hidden so it never flashes white; show it once the shell is drawn.
-    requestAnimationFrame(() => invoke('show_window'));
+    // The window starts hidden so it never flashes white; show it once the shell is drawn. Warmed up
+    // at sign-in (--hidden), it stays in the tray until Hourglass is opened.
+    if (!hidden) requestAnimationFrame(() => invoke('show_window'));
   }
   document.addEventListener('keydown', onKey);
   document.addEventListener('contextmenu', (e) => { if (!e.target.closest('input, textarea, [contenteditable], .selectable')) e.preventDefault(); });
@@ -130,6 +134,9 @@ async function refresh() {
   if (now) {
     state.now = now;
     if (!state.loaded) { state.loaded = true; hideStarting(); }
+  } else if (!state.loaded) {
+    // The service is still starting: ask again soon, not at the next 15 s refresh.
+    setTimeout(refresh, 250);
   }
   emit('data');
   renderSide();
