@@ -425,3 +425,20 @@ desktop/
   streaming, tools) and Settings side by side look like one product.
 - No radius other than 0 (menus 4), no colour outside §2, no purple.
 - Reduce-motion turns every animation off.
+
+---
+
+## 9. As built (0.3.0)
+
+Where the build differs from the plan above, on purpose:
+
+- **Keys stay the 0.2 ones** (Now 1, Schedule 2, Notes 3, Alarms 4, Timers 5, World clock 6, Attendance 7,
+  Drive 8, Assistant 9, Settings 0; a, r, t, w; n), so nobody's habits break. The sidebar groups the pages; the
+  key hint shows on hover.
+- **Reminders** is its own page under TIME (it existed on Windows in 0.2 and was missing from the plan).
+- **Notes** is course folders on the left and the masonry grid on the right; a note opens full width with Back.
+- **The note editor is a word processor** (what you see is the note), as the Qt one was: no separate edit mode.
+- **Linux** keeps the Qt window until the Tauri one is built on a Linux machine: `linux/install.sh` builds it when
+  Rust and Node are there, and `linux/bin/hourglass` opens it when it exists. `windows/app` is gone.
+- **Dev screenshots**: `desktop/ui/dev/serve.mjs --shot out.png --page now,schedule` runs the real service with the
+  demo week and renders pages in headless Edge (`?open=note|event|session`, `?fakechat` for the assistant).
