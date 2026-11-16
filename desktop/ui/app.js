@@ -248,6 +248,20 @@ function buildShell() {
   showStarting();
   renderSide();
   mount(state.page, state.arg);
+  devOpen();
+}
+
+// Dev screenshots: ?open=note | event | course | session | palette | new opens that over the page.
+async function devOpen() {
+  const what = state.dev.get('open');
+  if (!what) return;
+  await new Promise((r) => setTimeout(r, 900));
+  if (what === 'note') { const ns = await api.get('/api/notes').catch(() => []); const n = ns.find((x) => x.body && x.body.includes(String.fromCharCode(10))) || ns[0]; if (n) ctx.openNote(n); }
+  else if (what === 'event') ctx.editEvent(null);
+  else if (what === 'course') ctx.editCourse(null);
+  else if (what === 'session') { const f = state.now?.active || state.now?.next || state.now?.today?.[0]; if (f) ctx.openSession(f); }
+  else if (what === 'palette') openPalette();
+  else if (what === 'new') newMenu(side.querySelector('.new'));
 }
 
 function navRow(p) {
@@ -479,7 +493,7 @@ function hideStarting() {
 
 let loginEl = null;
 function renderLogin() {
-  const out = state.loaded && state.app.account && !state.app.account.signed_in && !state.dev.has('nologin');
+  const out = state.dev.has('login') || (state.loaded && state.app.account && !state.app.account.signed_in && !state.dev.has('nologin'));
   if (out && !loginEl) {
     loginEl = h('div', { class: 'login-wrap' });
     document.body.append(loginEl);

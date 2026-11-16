@@ -77,7 +77,7 @@ a { color: var(--fg); text-decoration-color: var(--accent); }
 /* ---- picker (never a native <select>: Windows draws those white) ---- */
 .picker { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 11px; background: var(--bg); border: 1px solid var(--border); cursor: pointer; min-width: 0; font-size: 14px; transition: border-color var(--quick) var(--ease); }
 .picker:hover, .picker.open { border-color: var(--faint); }
-.picker .val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker .val { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker .val.none { color: var(--faint); }
 .picker .caret { color: var(--muted); font-size: 11px; }
 .swatch { width: 10px; height: 10px; flex: none; background: var(--c); }

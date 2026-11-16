@@ -473,7 +473,7 @@ export default {
       if (!usage) { usageEl.replaceChildren(); return; }
       const used = usage.used ?? usage.used_bytes, total = usage.total ?? usage.total_bytes ?? usage.quota;
       const frac = total ? used / total : 0;
-      usageEl.replaceChildren(h('small', { class: 'muted tnum', text: total ? `${size(used)} of ${size(total)}` : size(used) }), total ? kit.meter(frac, { cls: frac > 0.92 ? 'warn thin' : 'thin' }) : null);
+      swap(usageEl, h('small', { class: 'muted tnum', text: total ? `${size(used)} of ${size(total)}` : size(used) }), total ? kit.meter(frac, { cls: frac > 0.92 ? 'warn thin' : 'thin' }) : null);
       usageEl.dataset.tip = usage.free != null ? `${size(usage.free)} free on the server` : '';
     }
     function paintCrumbs() {

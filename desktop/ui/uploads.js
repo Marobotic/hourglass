@@ -1,6 +1,6 @@
 // The upload panel, bottom right (UploadPanel.qml): each file going up with its progress and speed; cancel one;
 // close the panel when they're done. Polls the service's /api/uploads while anything is in flight.
-import { h, icon } from './dom.js';
+import { h, icon, swap } from './dom.js';
 import { api } from './api.js';
 import * as U from './util.js';
 
@@ -42,7 +42,7 @@ export function startUploadPanel() {
     el.hidden = !open || (!items.length && api.uploading === 0);
     if (el.hidden) return;
     const waiting = Math.max(0, api.uploading - items.filter((u) => u.state === 'sending').length);
-    el.replaceChildren(
+    swap(el,
       h('div', { class: 'up-head' }, h('b', { class: 'grow', text: title() }),
         h('button', { class: 'btn subtle compact sq', title: 'Close', onclick: close }, icon('close'))),
       waiting > 0 ? h('div', { class: 'up-wait faint', text: waiting === 1 ? '1 file getting ready…' : `${waiting} files getting ready…` }) : null,

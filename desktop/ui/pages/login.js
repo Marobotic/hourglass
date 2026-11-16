@@ -18,7 +18,7 @@ export default {
     const confirm = kit.field({ type: 'password', onenter: () => submit() });
     const errorEl = h('div', { class: 'login-error', role: 'alert' });
     const noticeEl = h('div', { class: 'login-notice' });
-    const submitBtn = kit.btn('', () => submit(), { kind: 'primary', big: true, cls: 'login-submit' });
+    const submitBtn = kit.btn('Sign in', () => submit(), { kind: 'primary', big: true, cls: 'login-submit' });
     const modeSeg = kit.seg([{ label: 'Sign in', value: false }, { label: 'Create account', value: true }], creating, (v) => setMode(v, false), { cls: 'login-seg' });
     const forgotText = h('p', { class: 'login-forgot-text', text: "Forgot your password? Enter your email and we'll send you a link to choose a new one." });
     const pwLabel = kit.labeled('Password', password);

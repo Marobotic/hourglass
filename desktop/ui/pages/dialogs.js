@@ -1,5 +1,5 @@
 // Session, event and course sheets: ports of SessionDialog.qml, EventDialog.qml and CourseDialog.qml.
-import { h, icon } from '../dom.js';
+import { h, icon, swap } from '../dom.js';
 import { noteCard } from './parts.js';
 
 // ---- one occurrence: its notes, its mark, and actions for that date ----
@@ -23,7 +23,7 @@ export function session(ctx, occ) {
   const loadNotes = async () => {
     if (!occ.course_id) return;
     const list = await api.action('get_notes', { course: occ.course_id, date: day }).catch(() => []);
-    notesBox.replaceChildren(
+    swap(notesBox,
       ...list.map((n) => noteCard(ctx, n, { showCourse: false, today: U.dayOf(ctx.state.clock), onclick: () => { s.close(); ctx.openNote(n); } })),
       list.length ? null : h('div', { class: 'quiet', text: 'No notes for this session yet.' }),
       kit.btn(list.length ? 'Add another note' : 'Start a note for this session', () => {

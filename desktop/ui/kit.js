@@ -39,7 +39,9 @@ export function picker({ options = [], value = null, placeholder = 'Choose', onC
   const sw = h('i', { class: 'swatch' });
   const el = h('button', { class: 'picker', type: 'button', style: width ? { width: `${width}px` } : null }, sw, val, h('i', { class: 'ic caret', text: '\u{f078}' }));
   el.options = options;
-  el.value = value;
+  // A <button>'s own value is a string: keep the real one (a number, null, an id) beside it.
+  let current = value;
+  Object.defineProperty(el, 'value', { get: () => current, set: (v) => { current = v; } });
   const paint = () => {
     const cur = el.options.find((o) => o.value === el.value);
     val.textContent = cur ? cur.label : placeholder;
@@ -85,7 +87,8 @@ export function seg(options, value, onChange, { cls = '' } = {}) {
 
 export function toggle(on, onChange, { title } = {}) {
   const el = h('button', { class: `switch ${on ? 'on' : ''}`, type: 'button', role: 'switch', 'aria-checked': String(!!on), title });
-  el.value = !!on;
+  let current = !!on;
+  Object.defineProperty(el, 'value', { get: () => current, set: (v) => { current = !!v; } });
   el.set = (v) => { el.value = !!v; el.classList.toggle('on', el.value); el.setAttribute('aria-checked', String(el.value)); };
   el.addEventListener('click', (e) => { e.stopPropagation(); el.set(!el.value); onChange?.(el.value); });
   return el;

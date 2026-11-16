@@ -53,7 +53,7 @@ export default {
     const dayLabel = h('span', { class: 'muted ellipsis grow' });
     const prevDay = kit.btn('', () => move({ session_date: U.addDays(current.session_date, -1) }), { icon: 'left', compact: true, title: 'Day before' });
     const nextDay = kit.btn('', () => move({ session_date: U.addDays(current.session_date, 1) }), { icon: 'right', compact: true, title: 'Day after' });
-    const todayBtn = kit.btn('', () => move({ session_date: current.session_date ? null : U.dayOf(state.clock) }), { kind: 'subtle', compact: true });
+    const todayBtn = kit.btn('Today', () => move({ session_date: current.session_date ? null : U.dayOf(state.clock) }), { kind: 'subtle', compact: true });
     async function move(patch) {
       await flush();
       const n = await api.put('/api/notes/' + current.id, patch).catch(() => null);

@@ -68,7 +68,7 @@ export default {
       const live = isLive(windowed()[0]);
       const hm = h('span', { class: 'hm' }, ...[...p.hm].map((ch, i) => h('span', { class: clockEl.dataset.hm && clockEl.dataset.hm[i] !== ch ? 'roll' : '', text: ch })));
       clockEl.dataset.hm = p.hm;
-      clockEl.replaceChildren(hm, live || (state.now?.timers || []).some((t) => t.state === 'running') ? h('small', { class: 'sec', text: ':' + p.s }) : null, p.ap ? h('small', { class: 'ap', text: p.ap }) : null);
+      swap(clockEl, hm, live || (state.now?.timers || []).some((t) => t.state === 'running') ? h('small', { class: 'sec', text: ':' + p.s }) : null, p.ap ? h('small', { class: 'ap', text: p.ap }) : null);
       dateEl.textContent = state.now ? U.longDate(state.now.now?.date || today()) : U.longDate(today());
     }
 
