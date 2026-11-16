@@ -480,6 +480,7 @@ fun TimersScreen(nav: Nav, version: Int, clock: Long) {
 fun ClockScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
     val clocks = remember(version) { repo.clocks() }
+    val homeId = remember(version) { repo.homeClock()?.optString("id") }
     var query by rememberSaveable { mutableStateOf("") }
     val now = java.time.Instant.ofEpochMilli(clock)
     val home = repo.zone
@@ -514,7 +515,7 @@ fun ClockScreen(nav: Nav, version: Int, clock: Long) {
         items(clocks, key = { it.optString("id") }) { c ->
             val z = runCatching { java.time.ZoneId.of(c.optString("zone")) }.getOrNull() ?: return@items
             val t = now.atZone(z)
-            val isHome = z.id == home.id
+            val isHome = c.optString("id") == homeId
             val diff = z.rules.getOffset(now).totalSeconds / 60 - homeOff
             val day = when { t.toLocalDate() == homeDate -> "Today"; t.toLocalDate().isAfter(homeDate) -> "Tomorrow"; else -> "Yesterday" }
             HCard(Modifier.fillMaxWidth(), stripe = if (isHome) HColors.accent else null) {

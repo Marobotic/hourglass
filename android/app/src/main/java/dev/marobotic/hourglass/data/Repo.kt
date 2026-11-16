@@ -49,7 +49,7 @@ val BUILTIN_RINGTONES = listOf("classic", "klaxon", "siren", "digital", "rising"
 class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     val store = Store(File(ctx.filesDir, "hourglass.json"))
     // The home clock (synced) is the app's time zone on every device.
-    val zone: ZoneId get() = store.all("clocks").firstOrNull { it.optInt("home") == 1 }?.optString("zone")
+    val zone: ZoneId get() = homeClock()?.optString("zone")
         ?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneId.systemDefault()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _sync = MutableStateFlow(SyncState())
@@ -245,14 +245,29 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         ))
 
     // --- world clock (synced) ---
-    fun clocks() = store.all("clocks").sortedWith(compareBy({ it.optInt("position") }, { it.optLong("updated_at") }))
+    // Display order: position, then the older first, then id, so every device agrees.
+    fun clocks() = store.all("clocks").sortedWith(compareBy({ it.optInt("position") }, { it.optLong("updated_at") }, { it.optString("id") }))
+    // The one clock the app runs on: the first marked home. Devices that were
+    // offline can each mark one, and sync keeps both; this pick is the same on all.
+    fun homeClock(): JSONObject? = clocks().firstOrNull { it.optInt("home") == 1 }
+    // Also repairs what sync merged: extra homes are cleared and a city added on
+    // two devices is kept once (the home one, else the first).
     fun ensureHomeClock() {
-        val list = clocks().filter { it.optInt("deleted") == 0 }
+        val list = clocks()
         if (list.isEmpty()) {
             val z = ZoneId.systemDefault().id
             store.upsert("clocks", mapOf("zone" to z, "label" to z.substringAfterLast('/').replace('_', ' '), "position" to 0, "home" to 1))
-        } else if (list.none { it.optInt("home") == 1 }) {
-            store.upsert("clocks", mapOf("home" to 1), list[0].optString("id"))
+            return
+        }
+        val home = homeClock() ?: list[0]
+        val kept = mutableSetOf(home.optString("zone"))
+        for (c in list) {
+            val id = c.optString("id")
+            when {
+                id == home.optString("id") -> if (c.optInt("home") != 1) store.upsert("clocks", mapOf("home" to 1), id)
+                !kept.add(c.optString("zone")) -> store.remove("clocks", id)
+                c.optInt("home") == 1 -> store.upsert("clocks", mapOf("home" to 0), id)
+            }
         }
     }
     fun addClock(zone: String) {
@@ -977,6 +992,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
             val res = JSONObject(http("GET", "$server/api/sync?since=${store.metaLong("cursor")}", token, null))
             val changes = res.getJSONObject("changes")
             for (t in Store.TABLES) changes.optJSONArray(t)?.let { a -> for (i in 0 until a.length()) store.applyRemote(t, a.getJSONObject(i)) }
+            if (changes.has("clocks")) ensureHomeClock() // the repair is pushed on the next sync
             store.setMeta("cursor", res.getLong("rev"))
             if (account == null) store.setMeta("account", JSONObject(http("GET", "$server/api/account", token, null)).optString("email").lowercase())
             fetchSounds(server, token)
