@@ -1447,7 +1447,8 @@ const pathsOverlap = (a, b) => withinPath(a, b) || withinPath(b, a);
 // The service starts the window as its own child, so Task Manager shows one
 // Hourglass, not a window and a service side by side. The launcher asks for it
 // with POST /api/window/show; a window hidden in the tray sees show_seq change
-// and comes back. "Quit Hourglass" in the tray ends both.
+// and comes back. "Quit Hourglass" in the tray ends both. The service starts it
+// hidden as soon as it is up, so opening Hourglass only shows a loaded window.
 const APP_ROOT = join(import.meta.dirname, "..");
 let ui = null;
 let showSeq = 0;
@@ -1477,8 +1478,8 @@ function windowExe() {
   return null;
 }
 
-function openWindow() {
-  bumpShow();
+function openWindow({ hidden = false } = {}) {
+  if (!hidden) bumpShow();
   if (ui) return { started: false };
   if (process.env.HOURGLASS_TEST_WINDOW === "1") return { started: true };
   const exe = windowExe();
@@ -1487,7 +1488,7 @@ function openWindow() {
   // Qt: menus=native, or Qt's own tray menu opens and Windows closes it at once
   // (the app is not in the foreground); the native one stays up like any tray menu.
   const args = tauri
-    ? ["--port", String(PORT), "--token", TOKEN]
+    ? ["--port", String(PORT), "--token", TOKEN, ...(hidden ? ["--hidden"] : [])]
     : ["--apptype", "widget", "-platform", "windows:menus=native", "-I", join(APP_ROOT, "app"), join(APP_ROOT, "app", "Main.qml"), "--", "--port", String(PORT), "--token", TOKEN];
   ui = spawn(exe, args, {
     cwd: APP_ROOT,
@@ -1752,6 +1753,8 @@ createServer((req, res) => {
   return handler(req, res);
 }).listen(PORT, "127.0.0.1", async () => {
   log(`hourglassd on http://127.0.0.1:${PORT} (data ${DATA_DIR}, tz ${service.tz})`);
+  // Only the Tauri window warms up hidden (the Qt one has no --hidden).
+  if (WIN && windowExe()?.match(/[\\/]window[\\/]Hourglass\.exe$/)) openWindow({ hidden: true });
   try {
     await adoptToken();
     await loadCredentials();

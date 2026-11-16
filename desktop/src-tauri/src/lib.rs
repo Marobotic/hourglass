@@ -1,6 +1,8 @@
 // Hourglass's window. The Node service (hourglassd) owns the data, alarms and sync; this is only the window
 // onto it. The service normally starts the window as its child with --port and --token. Started on its own
 // (a dev run, a Linux launcher), the window reads the token file and starts the service when it isn't up.
+// The service also starts it with --hidden at sign-in, so opening Hourglass later only shows a window that
+// is already loaded; the Start menu runs this exe, and a second copy hands over to the first and exits.
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
@@ -11,8 +13,10 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    window::Color,
+    Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_window_state::StateFlags;
 
 #[derive(Clone, serde::Serialize)]
 struct Boot {
@@ -20,12 +24,15 @@ struct Boot {
     token: String,
     started_service: bool,
     dev: Option<String>,
+    hidden: bool,
 }
 
 fn arg(name: &str) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
 }
+
+fn flag(name: &str) -> bool { std::env::args().any(|a| a == name) }
 
 fn config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("HOURGLASS_CONFIG") { return PathBuf::from(dir); }
@@ -99,16 +106,32 @@ pub fn run() {
     let port: u16 = arg("--port").and_then(|p| p.parse().ok()).unwrap_or(8931);
     let token = arg("--token").unwrap_or_else(read_token);
     let started_service = !service_up(port) && start_service();
-    let boot_state = Boot { port, token: token.clone(), started_service, dev: arg("--dev") };
+    let boot_state = Boot { port, token: token.clone(), started_service, dev: arg("--dev"), hidden: flag("--hidden") };
+    // Handed to the page before its scripts run, so it draws without a round trip to ask for it.
+    let boot_script = format!("window.__HG_BOOT = {};", serde_json::to_string(&boot_state).unwrap_or_else(|_| "null".into()));
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show(app)))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Another start (the Start menu, the service) shows this window; the service's
+        // --hidden warm-up start leaves it in the tray.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|a| a == "--hidden") { show(app); }
+        }))
+        // Size and place come back; whether it was showing does not (the page shows it once drawn).
+        .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(StateFlags::all() & !StateFlags::VISIBLE).build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(boot_state)
         .invoke_handler(tauri::generate_handler![boot, show_window])
         .setup(move |app| {
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("Hourglass")
+                .inner_size(1240.0, 820.0)
+                .min_inner_size(720.0, 520.0)
+                .background_color(Color(18, 18, 18, 255))
+                .visible(false)
+                .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection")
+                .initialization_script(&boot_script)
+                .build()?;
             let show_item = MenuItem::with_id(app, "show", "Show Hourglass", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Hourglass", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
