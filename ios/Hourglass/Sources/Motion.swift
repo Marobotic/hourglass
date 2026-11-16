@@ -154,3 +154,18 @@ struct BurstLayer: View {
         }
     }
 }
+
+
+// The one motion set (docs/REDESIGN.md §4), the same curves as the desktop's motion.css and Android's HMotion.
+// SwiftUI drops these when Reduce Motion is on through `HMotion.allowed`.
+enum HMotion {
+    static var allowed: Bool { !UIAccessibility.isReduceMotionEnabled }
+    static let ease = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.26)
+    static let quick = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.12)
+    static let press = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.08)
+    static let sheet = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.22)
+    static let exit = Animation.timingCurve(0.4, 0, 1, 1, duration: 0.12)
+    static let indicator = Animation.timingCurve(0.34, 1.4, 0.64, 1, duration: 0.24)
+    static let meter = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.6)
+    static func on(_ a: Animation) -> Animation? { allowed ? a : nil }
+}

@@ -71,15 +71,17 @@ struct EventDraft: Identifiable { let id = UUID(); var event: Event?; var date: 
 struct CourseDraft: Identifiable { let id = UUID(); var course: Course? }
 
 struct RootView: View {
-    // Five: more did not fit a phone. Related pages share a tab and a
-    // switcher at its top.
-    static let tabs = [("Now", "clock"), ("Schedule", "calendar"), ("Notes", "note.text"), ("Drive", "folder"), ("Time", "alarm")]
+    // Five tabs (REDESIGN §3 Phones): Now · Schedule · Notes · Time · Ask. Drive sits under Notes, Attendance under
+    // Schedule; the assistant is a tab of its own.
+    static let tabs = [("Now", "clock"), ("Schedule", "calendar"), ("Notes", "note.text"), ("Time", "alarm"), ("Ask", "sparkles")]
     @EnvironmentObject var store: Store
     @StateObject private var sheets = Sheets()
     @State private var path: [Route] = []
     @State private var tab = 0
     @State private var scheduleSub = 0
     @State private var timeSub = 0
+    @State private var notesSub = 0
+    @State private var newMenu = false
     @StateObject private var update = UpdateCheck()
 
     var body: some View {
@@ -87,18 +89,13 @@ struct RootView: View {
             // Six tabs: a square bar of our own (the system one folds the
             // sixth into "More").
             VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    PixelLogo(cell: 2.6, alive: true)
-                    T("Hourglass", 18, bold: true)
-                    Spacer()
-                    Button { path.append(.assistant) } label: {
-                        Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 18)).foregroundStyle(H.muted).frame(width: 44, height: 44)
-                    }
-                    Button { sheets.settings = true } label: {
-                        Image(systemName: "gearshape").font(.system(size: 19)).foregroundStyle(H.muted).frame(width: 44, height: 44)
+                if tab != 4 {
+                    PageHeader(title: Self.titles(tab, notesSub), logo: tab == 0) {
+                        Button { sheets.settings = true } label: {
+                            Image(systemName: "gearshape").font(.system(size: 19)).foregroundStyle(H.muted).frame(width: 44, height: 44)
+                        }
                     }
                 }
-                .padding(.leading, 18).padding(.trailing, 8).padding(.top, 4)
                 // A newer build is on marobotic.dev: SideStore installs it.
                 if let v = update.version {
                     Button { update.open() } label: {
@@ -119,8 +116,12 @@ struct RootView: View {
                             SubTabs(items: ["Week", "Attendance"], selected: $scheduleSub)
                             if scheduleSub == 0 { ScheduleView() } else { AttendanceView() }
                         }
-                    case 2: NotesView(path: $path)
-                    case 3: DriveView()
+                    case 2:
+                        VStack(spacing: 0) {
+                            SubTabs(items: ["Notes", "Drive"], selected: $notesSub)
+                            if notesSub == 0 { NotesView(path: $path) } else { DriveView() }
+                        }
+                    case 4: AssistantView(inTab: true)
                     default:
                         VStack(spacing: 0) {
                             SubTabs(items: ["Alarms", "Reminders", "Timers", "Clock"], selected: $timeSub)
@@ -134,26 +135,15 @@ struct RootView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // The tab you go to rises in.
+                // The tab you go to rises in (260 ms, from 8 pt below: REDESIGN §4).
                 .id(tab)
-                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity))
-                .animation(.easeOut(duration: 0.3), value: tab)
-                HStack(spacing: 0) {
-                    ForEach(Array(RootView.tabs.enumerated()), id: \.offset) { i, t in
-                        let on = tab == i
-                        Button { tab = i } label: {
-                            VStack(spacing: 4) {
-                                Rectangle().fill(on ? H.accent : .clear).frame(width: 28, height: 2)
-                                Image(systemName: t.1).font(.system(size: 18)).foregroundStyle(on ? H.fg : H.muted).frame(height: 22)
-                                Text(t.0).font(H.mono(10, bold: on)).foregroundStyle(on ? H.fg : H.muted).lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity).padding(.bottom, 6)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
+                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 8)), removal: .opacity))
+                .animation(HMotion.on(HMotion.ease), value: tab)
+                // The floating New button on Now, Schedule and Notes.
+                .overlay(alignment: .bottomTrailing) {
+                    if tab == 0 || tab == 1 || (tab == 2 && notesSub == 0) { NewButton { newMenu = true }.padding(16) }
                 }
-                .background(H.surface.ignoresSafeArea(edges: .bottom))
+                TabBar(tab: $tab)
             }
             .task { await update.check() }
             // Our own header: iOS 26 wraps toolbar items in round glass
@@ -171,6 +161,7 @@ struct RootView: View {
         // Above the tab bar (or the bottom of a page): the upload panel.
         .overlay(alignment: .bottom) { UploadPanel().padding(.bottom, path.isEmpty ? 58 : 4) }
         .overlay { BurstLayer() }
+        .overlay { NewMenu(open: $newMenu, path: $path, tab: $tab, timeSub: $timeSub) }
         .environmentObject(sheets)
         .sheet(item: $sheets.event) { d in EventSheet(draft: d).environmentObject(store) }
         .sheet(item: $sheets.course) { d in CourseSheet(draft: d, path: $path).environmentObject(store) }
@@ -178,6 +169,119 @@ struct RootView: View {
         .sheet(isPresented: $sheets.alarm) { AlarmSheet().environmentObject(store) }
         .sheet(item: $sheets.reminder) { d in ReminderSheet(draft: d).environmentObject(store) }
         .sheet(isPresented: $sheets.settings) { SettingsSheet().environmentObject(store) }
+    }
+}
+
+extension RootView {
+    static func titles(_ tab: Int, _ notesSub: Int) -> String {
+        switch tab { case 0: return "Hourglass"; case 1: return "Schedule"; case 2: return notesSub == 0 ? "Notes" : "Drive"; case 3: return "Time"; default: return "Assistant" }
+    }
+}
+
+// Square tab bar (the system one has a pill): five tabs, and a 2 x 24 accent bar on top of the current one that slides
+// between tabs with a spring.
+struct TabBar: View {
+    @Binding var tab: Int
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(H.border).frame(height: 1)
+            GeometryReader { geo in
+                let cell: CGFloat = geo.size.width / CGFloat(RootView.tabs.count)
+                ZStack(alignment: .topLeading) {
+                    HStack(spacing: 0) {
+                        ForEach(Array(RootView.tabs.enumerated()), id: \.offset) { i, t in
+                            TabCell(title: t.0, icon: t.1, on: tab == i) { tab = i }
+                        }
+                    }
+                    Rectangle().fill(H.accent).frame(width: 24, height: 2)
+                        .offset(x: cell * CGFloat(tab) + (cell - 24) / 2)
+                        .animation(HMotion.on(HMotion.indicator), value: tab)
+                }
+            }
+            .frame(height: 64)
+        }
+        .background(H.surface.ignoresSafeArea(edges: .bottom))
+    }
+}
+
+private struct TabCell: View {
+    let title: String
+    let icon: String
+    let on: Bool
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 19)).foregroundStyle(on ? H.fg : H.muted).frame(height: 24)
+                Text(title).font(H.mono(11, bold: on)).foregroundStyle(on ? H.fg : H.muted).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .animation(HMotion.on(HMotion.quick), value: on)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// A 52 square accent button; a press squishes it.
+struct NewButton: View {
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus").font(.system(size: 22, weight: .medium)).foregroundStyle(.white)
+                .frame(width: 52, height: 52).background(H.accent)
+                .shadow(color: .black.opacity(0.45), radius: 10, y: 6)
+        }
+        .buttonStyle(PressStyle())
+    }
+}
+
+struct PressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.scaleEffect(configuration.isPressed ? 0.94 : 1).animation(HMotion.on(HMotion.press), value: configuration.isPressed)
+    }
+}
+
+// The New menu (the desktop's New button): a square bottom sheet over a scrim.
+struct NewMenu: View {
+    @EnvironmentObject var store: Store
+    @EnvironmentObject var sheets: Sheets
+    @Binding var open: Bool
+    @Binding var path: [Route]
+    @Binding var tab: Int
+    @Binding var timeSub: Int
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            if open {
+                Color.black.opacity(0.55).ignoresSafeArea().onTapGesture { open = false }.transition(.opacity)
+                VStack(alignment: .leading, spacing: 0) {
+                    Rectangle().fill(H.surface3).frame(width: 36, height: 4).frame(maxWidth: .infinity).padding(.vertical, 8)
+                    Text("NEW").font(H.mono(11, bold: true)).tracking(1.4).foregroundStyle(H.faint).padding(.horizontal, 20).padding(.vertical, 6)
+                    row("Note", "note.text") { path.append(.note(store.addNote(course: nil, date: Dates.today(), event: nil).id)) }
+                    row("Event", "calendar.badge.plus") { sheets.event = EventDraft() }
+                    row("Course", "folder") { sheets.course = CourseDraft() }
+                    row("Alarm", "alarm") { sheets.alarm = true }
+                    row("Reminder", "bell") { sheets.reminder = ReminderDraft() }
+                    row("Timer", "timer") { tab = 3; timeSub = 2 }
+                }
+                .padding(.bottom, 12)
+                .background(H.surface.ignoresSafeArea(edges: .bottom))
+                .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                .transition(.move(edge: .bottom))
+            }
+        }
+        .animation(HMotion.on(HMotion.sheet), value: open)
+    }
+    private func row(_ title: String, _ icon: String, _ run: @escaping () -> Void) -> some View {
+        Button { open = false; run() } label: {
+            HStack(spacing: 16) {
+                Image(systemName: icon).font(.system(size: 17)).foregroundStyle(H.muted).frame(width: 24)
+                T(title, 15)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20).frame(height: 52).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
