@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Hourglass launcher: makes sure the sidecar is up, then opens the window.
+# The window is the Tauri app (desktop/, 0.3): linux/window/hourglass, built with
+#   cd desktop && npm ci && node build.mjs && cargo build --release --manifest-path src-tauri/Cargo.toml
+# and copied there by linux/install.sh. Until it is built on this machine, the Qt window still opens.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 CONF="${HOURGLASS_CONFIG:-$HOME/.config/hourglass}"
@@ -17,5 +20,8 @@ if ! up; then
 fi
 up || { notify-send -a Hourglass "Hourglass" "The Hourglass service did not start. Check: journalctl --user -u hourglassd" 2>/dev/null; exit 1; }
 
+if [ -x "$ROOT/window/hourglass" ]; then
+  exec "$ROOT/window/hourglass" --port "$PORT" --token "$(cat "$CONF/token")" "$@"
+fi
 export QT_QUICK_CONTROLS_STYLE=Basic
 exec qml6 -I "$ROOT/app" "$ROOT/app/Main.qml" -- --port "$PORT" --token "$(cat "$CONF/token")" "$@"

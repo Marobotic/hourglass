@@ -10,6 +10,9 @@ import UIKit
 // go to the Drive's "Assistant" folder).
 struct Attachment: Identifiable { let id = UUID(); let name: String; let mime: String; var fileId: String?; var error: String? }
 struct AssistantView: View {
+    // In the Ask tab there is no back arrow and the tab bar keeps the bottom inset.
+    var inTab = false
+    init(inTab: Bool = false) { self.inTab = inTab }
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     @StateObject private var opener = FileOpener()
@@ -257,19 +260,34 @@ struct AssistantView: View {
     private func queueRow(_ q: [String: Any]) -> some View {
         let id: String = q["id"] as? String ?? ""
         let text: String = q["text"] as? String ?? ""
-        return HStack(alignment: .top, spacing: 8) {
-            Spacer(minLength: 48)
-            VStack(alignment: .trailing, spacing: 3) {
-                T(text, 15, H.muted)
+        let steer: Bool = ["anthropic", "openai"].contains(chat["engine"] as? String ?? "")
+        return VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 0) {
+                Spacer(minLength: 60)
+                T(text, 14, H.muted)
                     .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
-                T("Queued", 10, H.faint)
+                    .background(H.surface).overlay(Rectangle().stroke(H.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
             }
-            Button { cancelQueued(id) } label: {
-                Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(H.muted).frame(width: 30, height: 36)
+            // Metro's tag: gold "Queued · after this reply", Send now (engines that take a steer), and a cancel.
+            HStack(spacing: 8) {
+                T("Queued · after this reply", 11, H.gold)
+                if steer {
+                    Button {
+                        cancelQueued(id)
+                        Task { _ = try? await store.assistant("POST", "/message", ["text": text, "steer": true]); await load() }
+                    } label: {
+                        T("Send now", 11, H.fg).padding(.horizontal, 8).padding(.vertical, 2)
+                            .background(H.accent.opacity(0.14)).overlay(Rectangle().stroke(H.accent.opacity(0.6), lineWidth: 1))
+                    }.buttonStyle(.plain)
+                }
+                Button { cancelQueued(id) } label: {
+                    Image(systemName: "xmark").font(.system(size: 10)).foregroundStyle(H.muted).frame(width: 24, height: 24)
+                }.buttonStyle(.plain)
             }
+            .padding(.leading, 8)
+            .overlay(Rectangle().stroke(H.border, lineWidth: 1))
         }
-        .opacity(0.8)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private static let modes: [(String, String)] = [("ask", "Ask"), ("auto", "Auto"), ("plan", "Plan"), ("dangerous", "Dangerous")]
@@ -277,16 +295,27 @@ struct AssistantView: View {
 
     // The model chip and the permission modes (as on the desktop assistant).
     private var modeBar: some View {
-        HStack(spacing: 6) {
-            Button { modelOpen = true } label: {
-                T(engineLabel + effortSuffix + " ▾", 11, H.fg, lines: 1).padding(.horizontal, 9).padding(.vertical, 5)
-                    .background(H.surface2).overlay(Rectangle().stroke(H.border, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: 190)
-            ForEach(Self.modes, id: \.0) { pair in modeChip(pair.0, pair.1) }
+        let modeInk: Color = mode == "dangerous" ? H.accentInk : mode == "plan" ? H.teal : H.muted
+        let modelName: String = engineLabel.components(separatedBy: " · ").last ?? engineLabel
+        return HStack(spacing: 4) {
+            if mode == "dangerous" { T("Changes apply without asking", 11, H.accentInk, lines: 1) }
+            else if mode == "plan" { T("Reads and plans, changes nothing", 11, H.teal, lines: 1) }
+            else if let p = contextPercent { Button { usageOpen = true } label: { ContextMeter(percent: p) }.buttonStyle(.plain) }
             Spacer(minLength: 0)
-        }.padding(.horizontal, 14).padding(.top, 4)
+            Button { modelOpen = true } label: {
+                HStack(spacing: 3) { T(modelName + effortSuffix.capitalized, 11, H.muted, lines: 1); T("⌄", 12, H.faint) }.padding(.horizontal, 6).padding(.vertical, 6)
+            }.buttonStyle(.plain)
+            Rectangle().fill(H.border).frame(width: 1, height: 16)
+            Menu {
+                ForEach(Self.modes, id: \.0) { pair in
+                    Button { setMode(pair.0) } label: { if mode == pair.0 { Label(pair.1, systemImage: "checkmark") } else { Text(pair.1) } }
+                }
+            } label: {
+                HStack(spacing: 3) { T(mode.capitalized, 11, modeInk, lines: 1); T("⌄", 12, H.faint) }.padding(.horizontal, 6).padding(.vertical, 6)
+            }
+            .disabled(serverBusy)
+        }
+        .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, inTab ? 6 : 2)
     }
     private func modeChip(_ value: String, _ title: String) -> some View {
         let on: Bool = mode == value
@@ -311,57 +340,91 @@ struct AssistantView: View {
     }
 
     // The message box stays usable while a reply runs: what is sent then is queued.
+    private var composerPrompt: String {
+        if !enabled { return "The assistant is off" }
+        if serverBusy { return ["anthropic", "openai"].contains(chat["engine"] as? String ?? "") ? "Steer the running answer…" : "Queue a message for after this reply…" }
+        return "Ask Hourglass…"
+    }
+    // The composer (Metro): one surface box with + (files, photos, Drive), the text, and a 42 square send that
+    // becomes Stop while it works.
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: 6) {
             Menu {
                 Button { importing = true } label: { Label("Files", systemImage: "doc") }
                 PhotosPicker(selection: $photoItems, matching: .images) { Label("Photos", systemImage: "photo") }
-                Button { driveOpen = true; loadDrive() } label: { Label("From Drive", systemImage: "externaldrive") }
-            } label: { Image(systemName: "paperclip").font(.system(size: 18)).foregroundStyle(H.muted).frame(width: 36, height: 44) }
+                Button { driveOpen = true; loadDrive() } label: { Label("From your Drive", systemImage: "externaldrive") }
+            } label: { Image(systemName: "plus").font(.system(size: 18)).foregroundStyle(H.muted).frame(width: 36, height: 42) }
             .disabled(!enabled)
-            TextField("", text: $input, prompt: Text(serverBusy ? "Queue a message…" : "Ask Hourglass…").foregroundStyle(H.faint), axis: .vertical)
+            TextField("", text: $input, prompt: Text(composerPrompt).foregroundStyle(H.faint), axis: .vertical)
                 .lineLimit(1...6)
                 .focused($typing)
                 .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent)
-                .padding(.horizontal, 12).padding(.vertical, 11)
-                .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                .padding(.horizontal, 4).padding(.vertical, 10)
                 .disabled(!enabled)
             actionButton
         }
-        .padding(12)
+        .padding(6)
+        .background(H.surface).overlay(Rectangle().stroke(typing ? H.faint : H.border, lineWidth: 1))
+        .padding(.horizontal, 16).padding(.top, 8)
     }
     @ViewBuilder private var actionButton: some View {
         let hasContent: Bool = !input.trimmingCharacters(in: .whitespaces).isEmpty || attachments.contains { $0.fileId != nil }
-        if serverBusy && !hasContent {
-            HButton("", icon: "stop.fill") { Task { _ = try? await store.assistant("POST", "/stop"); await load() } }
-        } else {
-            HButton("", icon: "paperplane.fill", primary: true, enabled: enabled && !uploading && !sending && hasContent) { send(input) }
+        let stopping: Bool = serverBusy && !hasContent
+        let canSend: Bool = enabled && !uploading && !sending && hasContent
+        Button {
+            if stopping { Task { _ = try? await store.assistant("POST", "/stop"); await load() } } else { send(input) }
+        } label: {
+            Image(systemName: stopping ? "stop.fill" : "arrow.right").font(.system(size: 15, weight: .semibold)).foregroundStyle(H.fg)
+                .frame(width: 42, height: 42)
+                .background(stopping ? H.surface3 : H.accent.opacity(canSend ? 1 : 0.45))
+                .overlay(Rectangle().stroke(stopping ? H.faint : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(PressStyle())
+        .disabled(!stopping && !canSend)
+    }
+
+    // Metro's chat head: the glyph, "Assistant", engine · model · effort (never just the model), a state chip.
+    private var stateWord: String {
+        if !enabled { return "off" }
+        if serverBusy { return "working" }
+        if !((chat["queue"] as? [Any]) ?? []).isEmpty { return "queued" }
+        if quota != nil { return "limit" }
+        return "idle"
+    }
+    private var chatHead: some View {
+        let st: String = stateWord
+        let ink: Color = st == "working" ? H.accentInk : (st == "queued" || st == "limit") ? H.gold : H.faint
+        return VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                if !inTab {
+                    Button { dismiss() } label: { Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium)).foregroundStyle(H.fg).frame(width: 40, height: 44) }
+                }
+                T("✦", 18, H.accentInk)
+                Button { settingsOpen = true } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        T("Assistant", 15, bold: true)
+                        T(engineLabel + effortSuffix, 11, H.muted, lines: 1)
+                    }
+                }.buttonStyle(.plain)
+                Spacer(minLength: 0)
+                // Puts the keyboard away (dragging the list down does too).
+                if typing {
+                    Button { typing = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.system(size: 16)).foregroundStyle(H.muted).frame(width: 36, height: 44) }
+                }
+                T(st, 11, ink).padding(.horizontal, 8).padding(.vertical, 3)
+                    .overlay(Rectangle().stroke(st == "working" ? H.accent.opacity(0.6) : H.border, lineWidth: 1))
+                Button { Task { _ = try? await store.assistant("POST", "/new"); pending = nil; await load() } } label: {
+                    Image(systemName: "plus").font(.system(size: 17)).foregroundStyle(!shown.isEmpty && !busy ? H.muted : H.faint).frame(width: 40, height: 44)
+                }.disabled(shown.isEmpty || busy)
+            }
+            .padding(.leading, inTab ? 16 : 4).padding(.trailing, 4).frame(height: 56)
+            Rectangle().fill(H.border).frame(height: 1)
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Button { dismiss() } label: { Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium)).foregroundStyle(H.fg).frame(width: 44, height: 44) }
-                T("Assistant", 18, bold: true)
-                Spacer()
-                // Puts the keyboard away (dragging the list down does too).
-                if typing {
-                    Button { typing = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.system(size: 17)).foregroundStyle(H.muted).frame(width: 40, height: 44) }
-                }
-                if let p = contextPercent { Button { usageOpen = true } label: { ContextMeter(percent: p) }.buttonStyle(.plain) }
-                // Who answers: opens the AI settings.
-                Button { settingsOpen = true } label: {
-                    HStack(spacing: 3) {
-                        T(engineLabel, 12, H.muted, lines: 1).frame(maxWidth: 150, alignment: .trailing)
-                        Image(systemName: "chevron.down").font(.system(size: 10)).foregroundStyle(H.muted)
-                    }.padding(.horizontal, 6).frame(height: 44)
-                }
-                if !shown.isEmpty && !busy {
-                    HButton("New") { Task { _ = try? await store.assistant("POST", "/new"); pending = nil; await load() } }
-                }
-            }
-            .padding(.horizontal, 8)
+            chatHead
 
             if shown.isEmpty {
                 // Scrolls when the keyboard leaves less room than it needs; otherwise
@@ -375,7 +438,14 @@ struct AssistantView: View {
                         .multilineTextAlignment(.center)
                     if enabled {
                         T("It can read and change your notes, schedule, alarms, timers and Drive.", 13, H.muted).multilineTextAlignment(.center)
-                        ForEach(Self.suggestions, id: \.self) { s in HButton(s) { send(s) }.frame(maxWidth: .infinity) }
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                            ForEach(Self.suggestions, id: \.self) { s in
+                                Button { send(s) } label: {
+                                    T(s, 13, lines: 2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                                        .padding(.horizontal, 12).overlay(Rectangle().stroke(H.border, lineWidth: 1)).contentShape(Rectangle())
+                                }.buttonStyle(PressStyle())
+                            }
+                        }.padding(.top, 8)
                     }
                 }
                 .padding(24)
@@ -428,11 +498,9 @@ struct AssistantView: View {
                 }
             }
 
-            modeBar
-            if mode == "dangerous" { T("⚠ Changes apply immediately", 11, H.accent).padding(.horizontal, 14) }
-            if mode == "plan" { T("Plan: it reads and plans, nothing is changed", 11, H.muted).padding(.horizontal, 14) }
             if editing != nil { editBar }
             composer
+            modeBar
         }
         .background(H.bg)
         .toolbar(.hidden, for: .navigationBar)
@@ -562,8 +630,8 @@ private struct Message: View {
                         .onTapGesture { if let id = f["id"] as? String, let row = store.file(id) { opener.open(row, store) } }
                 }
                 HStack {
-                    Spacer(minLength: 48)
-                    T(text, 15)
+                    Spacer(minLength: 60)
+                    T(text, 14)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(H.surface2).overlay(Rectangle().stroke(H.border, lineWidth: 1))
                         .contextMenu { copyMenu(text) }
@@ -571,8 +639,7 @@ private struct Message: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
-            HStack(alignment: .top, spacing: 12) {
-                Rectangle().fill(H.accent).frame(width: 3)
+            HStack(alignment: .top, spacing: 0) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array((m["tools"] as? [[String: Any]] ?? []).enumerated()), id: \.offset) { _, t in
                         ToolRow(tool: t)
@@ -592,7 +659,7 @@ private struct Message: View {
                     // How it got there.
                     if canShowSteps, let steps = m["steps"] as? [[String: Any]], !steps.isEmpty {
                         let model = (m["model"] as? String).map { " · " + $0.replacingOccurrences(of: "opencode/", with: "") } ?? ""
-                        Button(action: onToggleSteps) { T((stepsShown ? "▴" : "▾") + " Steps" + model, 11, H.faint) }
+                        Button(action: onToggleSteps) { T((stepsShown ? "▾ " : "▸ ") + "Thought it through" + model, 12, H.muted) }
                         if stepsShown { StepList(steps: steps).transition(.opacity.combined(with: .move(edge: .top))) }
                     }
                 }
@@ -860,20 +927,19 @@ private struct Rise: ViewModifier {
 struct ToolLine: View {
     let label: String
     let status: String
-    @State private var spin = false
+    @State private var pulse = false
     var body: some View {
-        let done = status == "completed" || status == "error"
+        let done: Bool = status == "completed" || status == "error"
         HStack(spacing: 8) {
-            Image(systemName: status == "completed" ? "checkmark" : status == "error" ? "xmark" : "arrow.triangle.2.circlepath")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(status == "completed" ? H.teal : status == "error" ? H.accent : H.muted)
-                .rotationEffect(.degrees(!done && spin ? 360 : 0))
-                .animation(done ? .default : .linear(duration: 1.2).repeatForever(autoreverses: false), value: spin)
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, value: done)
-            T(label, 13, H.muted)
+            Text(status == "completed" ? "✓" : status == "error" ? "✕" : "●")
+                .font(H.mono(13, bold: true))
+                .foregroundStyle(status == "completed" ? H.teal : H.accentInk)
+                .frame(width: 14)
+                .opacity(!done && pulse ? 0.35 : 1)
+                .animation(done || !HMotion.allowed ? nil : .easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: pulse)
+            T(label, 13, status == "error" ? H.accentInk : H.fg, lines: 1)
         }
-        .onAppear { spin = true }
+        .onAppear { pulse = true }
     }
 }
 
@@ -888,28 +954,32 @@ private struct Working: View {
         let toolName = (running?["tool"] as? String ?? "").lowercased()
         let verb = toolName.range(of: "read|get|list", options: .regularExpression) != nil ? "Reading" : toolName.range(of: "search|find", options: .regularExpression) != nil ? "Searching" : toolName.range(of: "edit|write|move|add|update|set|remove|delete|restore", options: .regularExpression) != nil ? "Editing" : running == nil ? "Simmering" : "Running"
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                TimelineView(.animation) { tl in
-                    let t = tl.date.timeIntervalSinceReferenceDate
-                    HStack(spacing: 5) {
-                        ForEach(0..<3, id: \.self) { i in
-                            let phase = (t - Double(i) * 0.14).truncatingRemainder(dividingBy: 1.2)
-                            let y = phase < 0.22 ? -6 * phase / 0.22 : phase < 0.48 ? -6 * (1 - (phase - 0.22) / 0.26) : 0
-                            Circle().fill([H.accent, H.orange, H.gold][i]).frame(width: 7, height: 7).offset(y: y)
-                        }
-                    }.frame(height: 14)
-                }
+            HStack(spacing: 8) {
+                Spark()
                 let secs: String = {
                     guard let started = (current?["time"] as? Double) ?? (current?["time"] as? Int).map(Double.init), started > 0 else { return "" }
                     return " \(max(0, Int((now.timeIntervalSince1970 * 1000 - started) / 1000))) s"
                 }()
-                T(verb + "…" + secs, 13, H.muted)
+                T(verb + "…", 13, H.accentInk)
+                if !secs.isEmpty { T(secs.trimmingCharacters(in: .whitespaces), 12, H.faint) }
                 if current != nil {
-                    Button { withAnimation(.easeOut(duration: 0.2)) { showSteps.toggle() } } label: { T((showSteps ? "▴ " : "▾ ") + (showSteps ? "Simmering" : "What it's doing") + secs, 12, H.faint) }
+                    Button { withAnimation(.easeOut(duration: 0.2)) { showSteps.toggle() } } label: { T(showSteps ? "▾ Hide steps" : "▸ What it's doing", 12, H.faint) }
                 }
             }
             if showSteps, let steps = current?["steps"] as? [[String: Any]], !steps.isEmpty { StepList(steps: steps) }
         }
-        .padding(.leading, 14)
+    }
+}
+
+// Metro's spark: the glyph steps through its frames and shimmers while a turn runs (still under Reduce Motion).
+struct Spark: View {
+    private static let frames = ["·", "✢", "✳", "✶", "✻", "✽", "✻"]
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.17)) { tl in
+            let t: Double = tl.date.timeIntervalSinceReferenceDate
+            let i: Int = HMotion.allowed ? Int(t / 0.17) % Self.frames.count : 4
+            let glow: Double = HMotion.allowed ? (sin(t * .pi) + 1) / 2 : 0
+            Text(Self.frames[i]).font(H.mono(13, bold: true)).foregroundStyle(H.accentInk.opacity(1 - glow * 0.35)).frame(width: 14)
+        }
     }
 }

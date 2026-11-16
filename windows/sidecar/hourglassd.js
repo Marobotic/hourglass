@@ -1468,8 +1468,9 @@ function waitForShow(since) {
   });
 }
 
+// The Tauri window (0.3) first; the Qt one while an older install still has it.
 function windowExe() {
-  for (const p of ["qt/bin/Hourglass.exe", "qt/bin/qml.exe", "qt/qml.exe"]) {
+  for (const p of ["window/Hourglass.exe", "qt/bin/Hourglass.exe", "qt/bin/qml.exe", "qt/qml.exe"]) {
     const f = join(APP_ROOT, p);
     if (existsSync(f)) return f;
   }
@@ -1481,13 +1482,17 @@ function openWindow() {
   if (ui) return { started: false };
   if (process.env.HOURGLASS_TEST_WINDOW === "1") return { started: true };
   const exe = windowExe();
-  if (!exe) return { error: "the Qt runtime is missing" };
-  // menus=native: Qt's own tray menu opens and Windows closes it at once (the app
-  // is not in the foreground); the native one stays up like any tray menu.
-  ui = spawn(exe, ["--apptype", "widget", "-platform", "windows:menus=native", "-I", join(APP_ROOT, "app"), join(APP_ROOT, "app", "Main.qml"), "--", "--port", String(PORT), "--token", TOKEN], {
+  if (!exe) return { error: "the Hourglass window is missing" };
+  const tauri = /[\\/]window[\\/]Hourglass(\.exe)?$/.test(exe);
+  // Qt: menus=native, or Qt's own tray menu opens and Windows closes it at once
+  // (the app is not in the foreground); the native one stays up like any tray menu.
+  const args = tauri
+    ? ["--port", String(PORT), "--token", TOKEN]
+    : ["--apptype", "widget", "-platform", "windows:menus=native", "-I", join(APP_ROOT, "app"), join(APP_ROOT, "app", "Main.qml"), "--", "--port", String(PORT), "--token", TOKEN];
+  ui = spawn(exe, args, {
     cwd: APP_ROOT,
     stdio: "ignore",
-    env: { ...process.env, QT_QUICK_CONTROLS_STYLE: "Basic" },
+    env: tauri ? process.env : { ...process.env, QT_QUICK_CONTROLS_STYLE: "Basic" },
   });
   const child = ui;
   child.on("error", (e) => { log(`window: ${e.message}`); if (ui === child) ui = null; });
@@ -1714,7 +1719,27 @@ const handler = createHandler({ store, service, token: TOKEN, extra });
 // which the window can only call "service is not running": send those as 400.
 const QT_UNREADABLE = new Set([407, 409, 410]);
 
+// The Tauri window is a web page on its own origin, so it asks across origins:
+// answer the preflight and name it in every reply. Only the window's origins
+// (and a local dev page) are let in; every call still needs the token.
+const WINDOW_ORIGINS = /^(https?:\/\/tauri\.localhost|tauri:\/\/localhost|http:\/\/(127\.0\.0\.1|localhost)(:\d+)?|null)$/;
+function cors(req, res) {
+  const origin = req.headers.origin;
+  if (!origin || !WINDOW_ORIGINS.test(origin)) return false;
+  res.setHeader("access-control-allow-origin", origin);
+  res.setHeader("vary", "origin");
+  if (req.method !== "OPTIONS") return false;
+  res.writeHead(204, {
+    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "access-control-allow-headers": req.headers["access-control-request-headers"] || "authorization, content-type",
+    "access-control-max-age": "600",
+  });
+  res.end();
+  return true;
+}
+
 createServer((req, res) => {
+  if (cors(req, res)) return;
   const writeHead = res.writeHead;
   res.writeHead = (status, ...rest) => writeHead.call(res, QT_UNREADABLE.has(status) ? 400 : status, ...rest);
   const url = new URL(req.url, "http://local");
