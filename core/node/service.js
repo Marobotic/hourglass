@@ -21,12 +21,12 @@ export class Service {
     return this.homeClock()?.zone || this.store.meta("tz") || systemZone();
   }
 
-  // Live clocks in display order (position, then id so every device agrees).
+  // Live clocks in display order (position, then the older first, then id: every device agrees).
   activeClocks() {
     return this.store
       .all("clocks")
       .filter((c) => !c.deleted)
-      .sort((a, b) => a.position - b.position || String(a.id).localeCompare(String(b.id)));
+      .sort((a, b) => a.position - b.position || a.updated_at - b.updated_at || String(a.id).localeCompare(String(b.id)));
   }
 
   // The one clock the app runs on: the first marked home. Devices that were
