@@ -384,7 +384,7 @@ struct NotesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    T("Notes", 22, bold: true)
+                    T("Your notes", 13, H.muted)
                     Spacer()
                     Button { searching.toggle(); if !searching { query = "" } } label: { Image(systemName: searching ? "xmark" : "magnifyingglass").foregroundStyle(H.muted).frame(width: 36, height: 36) }
                 }

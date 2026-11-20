@@ -248,7 +248,7 @@ struct DriveView: View {
                     Button { up(view) } label: { Image(systemName: "chevron.left").foregroundStyle(H.fg).frame(width: 40, height: 40) }
                     .dropDestination(for: String.self) { keys, _ in drop(keys, into: view.path.dropLast().last?.id, course: courseId) }
                 }
-                T(view.course?.name ?? view.folder?.name ?? "Drive", 22, bold: true, lines: 1)
+                T(view.folder?.name ?? view.course?.name ?? "All files", 15, folderId != nil || courseId != nil ? H.fg : H.muted, bold: folderId != nil || courseId != nil, lines: 1)
                 Spacer()
                 Button { ask("New folder") { n in if !n.isEmpty { store.addFolder(n, parent: folderId, course: courseId) } } } label: {
                     Image(systemName: "folder.badge.plus").foregroundStyle(H.muted).frame(width: 40, height: 40)
