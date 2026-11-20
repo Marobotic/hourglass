@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -147,18 +148,24 @@ private class RichVisual(private val styles: List<Run>) : VisualTransformation {
 fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFocused: () -> Unit, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     Box(modifier) {
-        BasicTextField(
-            rt.value,
-            { if (rt.onChange(it)) onEdited() },
-            Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocused() },
-            textStyle = TextStyle(color = HColors.fg, fontFamily = NoteFonts.of(null), fontSize = NoteFormat.DEFAULT_SIZE.sp, lineHeight = 22.sp),
-            cursorBrush = SolidColor(HColors.accent),
-            visualTransformation = RichVisual(rt.styles),
-            onTextLayout = { rt.layout = it },
-            decorationBox = { inner -> if (rt.text.isEmpty() && placeholder != null) androidx.compose.material3.Text(placeholder, color = HColors.faint, fontSize = 15.sp); inner() },
-        )
+        // The caret is the accent (Compose's own is 1dp in the text colour);
+        // selection is pinned to the app's accent too.
+        NoteTextSelection {
+            BasicTextField(
+                rt.value,
+                { if (rt.onChange(it)) onEdited() },
+                Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocused() },
+                textStyle = TextStyle(color = HColors.fg, fontFamily = NoteFonts.of(null), fontSize = NoteFormat.DEFAULT_SIZE.sp, lineHeight = 22.sp),
+                cursorBrush = SolidColor(HColors.accent),
+                visualTransformation = RichVisual(rt.styles),
+                onTextLayout = { rt.layout = it },
+                decorationBox = { inner -> if (rt.text.isEmpty() && placeholder != null) androidx.compose.material3.Text(placeholder, color = HColors.faint, fontSize = 15.sp); inner() },
+            )
+        }
         // The to-dos' boxes, over their hidden ☐/☑ (the themed box: an outline,
         // filled with the accent and a check once done), each its own tap target.
+        // The target is the box with 4dp of room, not 8: a wider one swallowed
+        // taps meant to put the caret at the start of the item's text.
         val layout = rt.layout
         if (layout != null && layout.layoutInput.text.text == rt.text) {
             for (at in rt.boxes()) {
@@ -166,7 +173,7 @@ fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFo
                 val done = rt.text[at].toString() == NoteFormat.CHECKED
                 val r = layout.getBoundingBox(at)
                 val side = with(density) { 16.dp.toPx() }
-                val pad = with(density) { 8.dp.toPx() }
+                val pad = with(density) { 4.dp.toPx() }
                 var where by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
                 Box(
                     Modifier
@@ -223,9 +230,14 @@ fun NoteFileBlock(line: NoteLine, repo: Repo, opener: FileOpener, onRemove: () -
 fun RichNoteBody(blocks: List<NoteBlock>, repo: Repo, opener: FileOpener, onEdited: () -> Unit, onFocused: (RichText) -> Unit, onRemoveFile: (Int) -> Unit, modifier: Modifier = Modifier) {
     Column(modifier) {
         blocks.forEachIndexed { n, b ->
-            when (b) {
-                is NoteBlock.Text -> RichTextField(b.rt, if (n == 0) "Write here. Select text to make it bold, change its font or size, or start a list." else null, onEdited, { onFocused(b.rt) }, Modifier.fillMaxWidth().padding(vertical = 2.dp))
-                is NoteBlock.File -> NoteFileBlock(b.line, repo, opener) { onRemoveFile(n) }
+            // Keyed by the block: taking a picture out merges the text around it,
+            // and the field being written in keeps its place (and its caret)
+            // instead of sliding onto a neighbour's slot.
+            key(if (b is NoteBlock.Text) b.rt else b) {
+                when (b) {
+                    is NoteBlock.Text -> RichTextField(b.rt, if (n == 0) "Write here. Select text to make it bold, change its font or size, or start a list." else null, onEdited, { onFocused(b.rt) }, Modifier.fillMaxWidth().padding(vertical = 2.dp))
+                    is NoteBlock.File -> NoteFileBlock(b.line, repo, opener) { onRemoveFile(n) }
+                }
             }
         }
     }

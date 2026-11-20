@@ -93,4 +93,37 @@ class RichTextTest {
         rt.onChange(TextFieldValue("a" + rt.text.substring(3), TextRange(1)))
         assertEquals("a**cd** ef", md(rt))
     }
+
+    // The themed box is drawn over the hidden ☐ and the space after it: only
+    // that slot is skipped, so moving left out of the item still lands before
+    // the box (and reaches the line above); a tap or a fresh note goes on into
+    // the item's text.
+    @Test fun theCaretSkipsTheBoxesSpace() {
+        val rt = load("- [ ] one")
+        assertEquals("☐ one", rt.text)
+        // The marker itself is fine: Left from the item's text lands there.
+        select(rt, 0, 0)
+        assertEquals(0, rt.value.selection.start)
+        select(rt, 2, 2)
+        select(rt, 1, 1)
+        assertEquals(0, rt.value.selection.start)
+        // Landing on the space from anywhere else moves on into the text.
+        val fresh = load("- [ ] one")
+        select(fresh, 1, 1)
+        assertEquals(2, fresh.value.selection.start)
+        // An indented to-do: the marker sits after the indent.
+        val nested = RichText("  ☐ one")
+        select(nested, 4, 4)
+        select(nested, 3, 3)
+        assertEquals(2, nested.value.selection.start)
+        val freshNested = RichText("  ☐ one")
+        select(freshNested, 3, 3)
+        assertEquals(4, freshNested.value.selection.start)
+        // A plain space is left alone, and a selection may still take it in.
+        val plain = load("a b")
+        select(plain, 1, 1)
+        assertEquals(1, plain.value.selection.start)
+        select(rt, 0, 3)
+        assertEquals(TextRange(0, 3), rt.value.selection)
+    }
 }
