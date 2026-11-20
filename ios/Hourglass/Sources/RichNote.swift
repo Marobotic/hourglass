@@ -270,8 +270,17 @@ final class RichNoteController: ObservableObject {
             // Do not restyle it without his OK.
             let l = CALayer()
             l.cornerRadius = 5
-            l.borderColor = UIColor(H.muted).cgColor
+            // No border on the box itself: a layer draws its border above its sublayers and would cover the tick.
+            // The ring is a sublayer below the tick, which is always the last (top) sublayer.
+            let ring = CALayer()
+            ring.name = "ring"
+            ring.frame = CGRect(x: 0, y: 0, width: 16, height: 16)
+            ring.cornerRadius = 5
+            ring.borderColor = UIColor(H.muted).cgColor
+            ring.borderWidth = 1.5
+            l.addSublayer(ring)
             let tick = CAShapeLayer()
+            tick.name = "tick"
             tick.frame = CGRect(x: 0, y: 0, width: 16, height: 16)
             tick.strokeColor = UIColor.white.cgColor
             tick.fillColor = UIColor.clear.cgColor
@@ -296,14 +305,18 @@ final class RichNoteController: ObservableObject {
             l.frame = CGRect(x: px(rect.minX), y: px(rect.midY - 8), width: 16, height: 16)
             let accent = UIColor(H.accent).cgColor
             // A redraw during the tick's own animation lets it finish.
-            if !(done && l.animation(forKey: "flood") != nil && at != tickedBox) {
+            let ring = l.sublayers?.first { $0.name == "ring" }
+            let tick = l.sublayers?.first { $0.name == "tick" } as? CAShapeLayer
+            if !(done && ring?.animation(forKey: "flood") != nil && at != tickedBox) {
                 l.removeAllAnimations()
-                l.sublayers?.first?.removeAllAnimations()
+                ring?.removeAllAnimations()
+                tick?.removeAllAnimations()
             }
             l.backgroundColor = done ? accent : UIColor.clear.cgColor
-            l.borderColor = done ? accent : UIColor(H.muted).cgColor
-            l.borderWidth = done ? 8 : 1.5
-            l.sublayers?.first?.isHidden = !done
+            ring?.borderColor = done ? accent : UIColor(H.muted).cgColor
+            ring?.borderWidth = done ? 8 : 1.5
+            tick?.strokeEnd = 1
+            tick?.isHidden = !done
             if done, at == tickedBox { flood(l) }
         }
         tickedBox = nil
@@ -313,15 +326,15 @@ final class RichNoteController: ObservableObject {
     /// A tick by the user: the red floods in from the ring to the centre, then the tick draws itself.
     private func flood(_ l: CALayer) {
         let ease = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
-        let ring = CABasicAnimation(keyPath: "borderWidth")
-        ring.fromValue = 1.5; ring.toValue = 8
-        ring.duration = 0.24; ring.timingFunction = ease
-        l.add(ring, forKey: "flood")
+        guard let ring = l.sublayers?.first(where: { $0.name == "ring" }), let tick = l.sublayers?.first(where: { $0.name == "tick" }) else { return }
+        let grow = CABasicAnimation(keyPath: "borderWidth")
+        grow.fromValue = 1.5; grow.toValue = 8
+        grow.duration = 0.24; grow.timingFunction = ease
+        ring.add(grow, forKey: "flood")
         let fill = CABasicAnimation(keyPath: "backgroundColor")
         fill.fromValue = UIColor.clear.cgColor; fill.toValue = UIColor.clear.cgColor
         fill.duration = 0.24
         l.add(fill, forKey: "fill")
-        guard let tick = l.sublayers?.first as? CAShapeLayer else { return }
         let draw = CABasicAnimation(keyPath: "strokeEnd")
         draw.fromValue = 0; draw.toValue = 1
         draw.duration = 0.22; draw.timingFunction = ease
@@ -555,10 +568,6 @@ final class RichNoteController: ObservableObject {
                 // Only a tap on the box itself, not anywhere on the line.
                 if let start = tv.position(from: tv.beginningOfDocument, offset: i), let end = tv.position(from: start, offset: 1),
                    let r = tv.textRange(from: start, to: end), !tv.firstRect(for: r).insetBy(dx: -10, dy: -8).contains(point) { continue }
-                if c == NoteFormat.box, let s0 = tv.position(from: tv.beginningOfDocument, offset: i), let e0 = tv.position(from: s0, offset: 1), let rg = tv.textRange(from: s0, to: e0) {
-                    let g = tv.convert(tv.firstRect(for: rg), to: nil)
-                    Motion.shared.burst(at: CGPoint(x: g.midX, y: g.midY))
-                }
                 replace(NSRange(location: i, length: 1), with: c == NoteFormat.box ? NoteFormat.checkedBox : NoteFormat.box)
                 tickedBox = c == NoteFormat.box ? i : nil
                 decorate()
