@@ -305,6 +305,14 @@ final class RichNoteController: ObservableObject {
         if k.kind == "todo" && lr.location + k.indent * 2 == c - 1 { tv.selectedRange = NSRange(location: c + 1, length: 0) }
     }
 
+    /// Keeps the caret on screen: scrolls so it sits above the keyboard, also on an empty line or after a picture.
+    func revealCaret() {
+        guard let tv = textView, tv.isFirstResponder, let end = tv.selectedTextRange?.end else { return }
+        let r = tv.caretRect(for: end)
+        guard !r.isInfinite, !r.isNull else { return }
+        tv.scrollRectToVisible(r.insetBy(dx: 0, dy: -24), animated: false)
+    }
+
     func readHere() {
         guard let tv = textView else { return }
         let r = tv.selectedRange
@@ -540,6 +548,8 @@ final class RichNoteController: ObservableObject {
         block.append(NSAttributedString(string: "\n", attributes: RichConvert.attributes(NoteRun(text: ""))))
         tv.textStorage.insert(block, at: at)
         tv.selectedRange = NSRange(location: at + block.length, length: 0)
+        tv.typingAttributes = RichConvert.attributes(NoteRun(text: ""))
+        revealCaret()
         onEdited()
     }
 }
@@ -555,6 +565,7 @@ struct RichNoteEditor: UIViewRepresentable {
         tv.backgroundColor = .clear
         tv.textColor = RichConvert.fg
         tv.tintColor = RichConvert.accent
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.keyboardShown), name: UIResponder.keyboardDidShowNotification, object: nil)
         tv.font = NoteFonts.ui(NoteRun(text: ""))
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 60, right: 0)
         tv.textContainer.lineFragmentPadding = 0
@@ -571,7 +582,7 @@ struct RichNoteEditor: UIViewRepresentable {
     }
 
     // A new width wraps the text again: the to-do boxes follow.
-    func updateUIView(_ tv: UITextView, context: Context) { Task { @MainActor in controller.decorate() } }
+    func updateUIView(_ tv: UITextView, context: Context) { tv.tintColor = RichConvert.accent; Task { @MainActor in controller.decorate() } }
 
     @MainActor
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
@@ -582,8 +593,10 @@ struct RichNoteEditor: UIViewRepresentable {
             if text == "\n" { return !c.enter(at: range) }
             return true
         }
-        func textViewDidChange(_ tv: UITextView) { c.decorate(); c.onEdited() }
-        func textViewDidChangeSelection(_ tv: UITextView) { c.keepOutOfBox(); c.readHere() }
+        func textViewDidChange(_ tv: UITextView) { c.decorate(); c.onEdited(); c.revealCaret() }
+        func textViewDidChangeSelection(_ tv: UITextView) { c.keepOutOfBox(); c.readHere(); c.revealCaret() }
+        @objc func keyboardShown() { c.revealCaret() }
+        deinit { NotificationCenter.default.removeObserver(self) }
 
         @objc func tap(_ g: UITapGestureRecognizer) {
             guard let tv = g.view as? UITextView else { return }
