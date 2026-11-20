@@ -215,6 +215,8 @@ final class RichNoteController: ObservableObject {
     // --- to-do boxes ----------------------------------------------------------------
 
     private var boxLayers: [CALayer] = []
+    /// The to-do box (its character offset) the user just ticked: the only one that animates.
+    private var tickedBox: Int?
 
     /// To-dos drawn as to-dos: each ☐/☑ hidden (with room after it) under a themed
     /// box, a done item's text dimmed and struck through. Run after every change.
@@ -261,17 +263,32 @@ final class RichNoteController: ObservableObject {
         guard let tv = textView else { return }
         while boxLayers.count > boxes.count { boxLayers.removeLast().removeFromSuperlayer() }
         while boxLayers.count < boxes.count {
+            // The to-do box is Maro's chosen design (2026-11-20, same as the desktop and Android): a 16 pt rounded
+            // square, cornerRadius 5; a 1.5 pt muted ring when open, filled with the accent red when done. A tap
+            // that ticks floods the red in from the ring over 0.24 s, then draws the white tick (0.17 s in, 0.22 s
+            // long). Loading, unticking and redrawing show the final state without animation.
+            // Do not restyle it without his OK.
             let l = CALayer()
-            l.cornerRadius = 3
-            l.borderColor = UIColor(H.muted).cgColor
+            l.cornerRadius = 5
+            // No border on the box itself: a layer draws its border above its sublayers and would cover the tick.
+            // The ring is a sublayer below the tick, which is always the last (top) sublayer.
+            let ring = CALayer()
+            ring.name = "ring"
+            ring.frame = CGRect(x: 0, y: 0, width: 16, height: 16)
+            ring.cornerRadius = 5
+            ring.borderColor = UIColor(H.muted).cgColor
+            ring.borderWidth = 1.5
+            l.addSublayer(ring)
             let tick = CAShapeLayer()
+            tick.name = "tick"
+            tick.frame = CGRect(x: 0, y: 0, width: 16, height: 16)
             tick.strokeColor = UIColor.white.cgColor
             tick.fillColor = UIColor.clear.cgColor
             tick.lineWidth = 2
             tick.lineCap = .round
             tick.lineJoin = .round
             let path = UIBezierPath()
-            path.move(to: CGPoint(x: 4, y: 8.5)); path.addLine(to: CGPoint(x: 7, y: 11.5)); path.addLine(to: CGPoint(x: 12.5, y: 5))
+            path.move(to: CGPoint(x: 4.5, y: 8.15)); path.addLine(to: CGPoint(x: 7, y: 10.75)); path.addLine(to: CGPoint(x: 11.5, y: 5.25))
             tick.path = path.cgPath
             l.addSublayer(tick)
             tv.layer.addSublayer(l)
@@ -283,13 +300,47 @@ final class RichNoteController: ObservableObject {
             guard let a = tv.position(from: tv.beginningOfDocument, offset: at), let b = tv.position(from: a, offset: 1), let r = tv.textRange(from: a, to: b) else { l.isHidden = true; continue }
             let rect = tv.firstRect(for: r)
             l.isHidden = rect.isNull || rect.isInfinite
-            l.frame = CGRect(x: rect.minX, y: rect.midY - 8, width: 16, height: 16)
-            l.backgroundColor = done ? UIColor(H.orange).cgColor : UIColor(H.bg).cgColor
-            l.borderColor = done ? UIColor(H.orange).cgColor : UIColor(H.muted).cgColor
-            l.borderWidth = 1.5
-            l.sublayers?.first?.isHidden = !done
+            let scale = tv.window?.screen.scale ?? tv.traitCollection.displayScale
+            let px = { (v: CGFloat) in (v * scale).rounded() / scale }
+            l.frame = CGRect(x: px(rect.minX), y: px(rect.midY - 8), width: 16, height: 16)
+            let accent = UIColor(H.accent).cgColor
+            // A redraw during the tick's own animation lets it finish.
+            let ring = l.sublayers?.first { $0.name == "ring" }
+            let tick = l.sublayers?.first { $0.name == "tick" } as? CAShapeLayer
+            if !(done && ring?.animation(forKey: "flood") != nil && at != tickedBox) {
+                l.removeAllAnimations()
+                ring?.removeAllAnimations()
+                tick?.removeAllAnimations()
+            }
+            l.backgroundColor = done ? accent : UIColor.clear.cgColor
+            ring?.borderColor = done ? accent : UIColor(H.muted).cgColor
+            ring?.borderWidth = done ? 8 : 1.5
+            tick?.strokeEnd = 1
+            tick?.isHidden = !done
+            if done, at == tickedBox { flood(l) }
         }
+        tickedBox = nil
         CATransaction.commit()
+    }
+
+    /// A tick by the user: the red floods in from the ring to the centre, then the tick draws itself.
+    private func flood(_ l: CALayer) {
+        let ease = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+        guard let ring = l.sublayers?.first(where: { $0.name == "ring" }), let tick = l.sublayers?.first(where: { $0.name == "tick" }) else { return }
+        let grow = CABasicAnimation(keyPath: "borderWidth")
+        grow.fromValue = 1.5; grow.toValue = 8
+        grow.duration = 0.24; grow.timingFunction = ease
+        ring.add(grow, forKey: "flood")
+        let fill = CABasicAnimation(keyPath: "backgroundColor")
+        fill.fromValue = UIColor.clear.cgColor; fill.toValue = UIColor.clear.cgColor
+        fill.duration = 0.24
+        l.add(fill, forKey: "fill")
+        let draw = CABasicAnimation(keyPath: "strokeEnd")
+        draw.fromValue = 0; draw.toValue = 1
+        draw.duration = 0.22; draw.timingFunction = ease
+        draw.beginTime = tick.convertTime(CACurrentMediaTime(), from: nil) + 0.17
+        draw.fillMode = .backwards
+        tick.add(draw, forKey: "draw")
     }
 
     /// The cursor never sits between a to-do's hidden box and its space: what was typed there would not show.
@@ -303,6 +354,14 @@ final class RichNoteController: ObservableObject {
         let lr = ns.lineRange(for: NSRange(location: c, length: 0))
         let k = NoteFormat.kindOf(ns.substring(with: lr))
         if k.kind == "todo" && lr.location + k.indent * 2 == c - 1 { tv.selectedRange = NSRange(location: c + 1, length: 0) }
+    }
+
+    /// Keeps the caret on screen: scrolls so it sits above the keyboard, also on an empty line or after a picture.
+    func revealCaret() {
+        guard let tv = textView, tv.isFirstResponder, let end = tv.selectedTextRange?.end else { return }
+        let r = tv.caretRect(for: end)
+        guard !r.isInfinite, !r.isNull else { return }
+        tv.scrollRectToVisible(r.insetBy(dx: 0, dy: -24), animated: false)
     }
 
     func readHere() {
@@ -509,11 +568,8 @@ final class RichNoteController: ObservableObject {
                 // Only a tap on the box itself, not anywhere on the line.
                 if let start = tv.position(from: tv.beginningOfDocument, offset: i), let end = tv.position(from: start, offset: 1),
                    let r = tv.textRange(from: start, to: end), !tv.firstRect(for: r).insetBy(dx: -10, dy: -8).contains(point) { continue }
-                if c == NoteFormat.box, let s0 = tv.position(from: tv.beginningOfDocument, offset: i), let e0 = tv.position(from: s0, offset: 1), let rg = tv.textRange(from: s0, to: e0) {
-                    let g = tv.convert(tv.firstRect(for: rg), to: nil)
-                    Motion.shared.burst(at: CGPoint(x: g.midX, y: g.midY))
-                }
                 replace(NSRange(location: i, length: 1), with: c == NoteFormat.box ? NoteFormat.checkedBox : NoteFormat.box)
+                tickedBox = c == NoteFormat.box ? i : nil
                 decorate()
                 onEdited()
                 return true
@@ -540,6 +596,8 @@ final class RichNoteController: ObservableObject {
         block.append(NSAttributedString(string: "\n", attributes: RichConvert.attributes(NoteRun(text: ""))))
         tv.textStorage.insert(block, at: at)
         tv.selectedRange = NSRange(location: at + block.length, length: 0)
+        tv.typingAttributes = RichConvert.attributes(NoteRun(text: ""))
+        revealCaret()
         onEdited()
     }
 }
@@ -555,6 +613,7 @@ struct RichNoteEditor: UIViewRepresentable {
         tv.backgroundColor = .clear
         tv.textColor = RichConvert.fg
         tv.tintColor = RichConvert.accent
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.keyboardShown), name: UIResponder.keyboardDidShowNotification, object: nil)
         tv.font = NoteFonts.ui(NoteRun(text: ""))
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 60, right: 0)
         tv.textContainer.lineFragmentPadding = 0
@@ -571,7 +630,7 @@ struct RichNoteEditor: UIViewRepresentable {
     }
 
     // A new width wraps the text again: the to-do boxes follow.
-    func updateUIView(_ tv: UITextView, context: Context) { Task { @MainActor in controller.decorate() } }
+    func updateUIView(_ tv: UITextView, context: Context) { tv.tintColor = RichConvert.accent; Task { @MainActor in controller.decorate() } }
 
     @MainActor
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
@@ -582,8 +641,10 @@ struct RichNoteEditor: UIViewRepresentable {
             if text == "\n" { return !c.enter(at: range) }
             return true
         }
-        func textViewDidChange(_ tv: UITextView) { c.decorate(); c.onEdited() }
-        func textViewDidChangeSelection(_ tv: UITextView) { c.keepOutOfBox(); c.readHere() }
+        func textViewDidChange(_ tv: UITextView) { c.decorate(); c.onEdited(); c.revealCaret() }
+        func textViewDidChangeSelection(_ tv: UITextView) { c.keepOutOfBox(); c.readHere(); c.revealCaret() }
+        @objc func keyboardShown() { c.revealCaret() }
+        deinit { NotificationCenter.default.removeObserver(self) }
 
         @objc func tap(_ g: UITapGestureRecognizer) {
             guard let tv = g.view as? UITextView else { return }

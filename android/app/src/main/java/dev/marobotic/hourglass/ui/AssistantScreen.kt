@@ -1,5 +1,7 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.material.icons.outlined.Add
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -136,7 +138,7 @@ private fun engineName(chat: JSONObject?): String {
 // steps can be opened under each answer. Common requests come back at once
 // (the server answers those itself). The paperclip attaches pictures and files.
 @Composable
-fun AssistantScreen(nav: Nav) {
+fun AssistantScreen(nav: Nav, inTab: Boolean = false) {
     val repo = nav.repo
     val opener = rememberFileOpener(repo)
     var chat by remember { mutableStateOf<JSONObject?>(null) }
@@ -399,19 +401,25 @@ fun AssistantScreen(nav: Nav) {
         )
     }
 
-    Column(Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().navigationBarsPadding().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton({ nav.pop() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = HColors.fg) }
-            T("Assistant", 18, bold = true)
-            Grow()
-            // Who answers: opens the AI settings.
-            Row(Modifier.clickable { settingsOpen = true }.padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                T(engineLabel(chat), 12, HColors.muted, maxLines = 1, modifier = Modifier.widthIn(max = 160.dp))
-                Icon(Icons.Outlined.ExpandMore, "Choose the AI", tint = HColors.muted, modifier = Modifier.size(16.dp))
+    Column(Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().then(if (inTab) Modifier else Modifier.navigationBarsPadding()).imePadding()) {
+        // Metro's chat head: the glyph, "Assistant", engine · model · effort (never just the model), a state chip.
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().height(56.dp).padding(start = if (inTab) 16.dp else 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (!inTab) IconButton({ nav.pop() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = HColors.fg) }
+                T("✦", 18, HColors.accentInk)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f).clickable { settingsOpen = true }) {
+                    T("Assistant", 15, bold = true)
+                    T(engineLabel(chat), 11, HColors.muted, maxLines = 1)
+                }
+                val st = when { !enabled -> "off"; serverBusy -> "working"; queue.isNotEmpty() -> "queued"; quota != null -> "limit"; else -> "idle" }
+                val stInk = when (st) { "working" -> HColors.accentInk; "queued", "limit" -> HColors.gold; else -> HColors.faint }
+                T(st, 11, stInk, modifier = Modifier.border(1.dp, if (st == "working") HColors.accent.copy(alpha = 0.6f) else HColors.border).padding(horizontal = 8.dp, vertical = 3.dp))
+                IconButton({ repo.assistant("POST", "/new") { _, _ -> pending = null; load() } }, enabled = shown.isNotEmpty() && !busy) {
+                    Icon(Icons.Outlined.Add, "New chat", tint = if (shown.isNotEmpty() && !busy) HColors.muted else HColors.faint)
+                }
             }
-            if (shown.isNotEmpty() && !busy) HButton("New", Modifier.padding(end = 8.dp)) {
-                repo.assistant("POST", "/new") { _, _ -> pending = null; load() }
-            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -425,7 +433,10 @@ fun AssistantScreen(nav: Nav) {
                     if (enabled) {
                         T("It can read and change your notes, schedule, alarms, timers and Drive.", 13, HColors.muted, align = androidx.compose.ui.text.style.TextAlign.Center)
                         Spacer(Modifier.height(4.dp))
-                        for (s in SUGGESTIONS) HButton(s, Modifier.fillMaxWidth()) { send(s) }
+                        for (pair in SUGGESTIONS.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            for (s in pair) Box(Modifier.weight(1f).heightIn(min = 52.dp).border(1.dp, HColors.border).clickable { send(s) }.padding(horizontal = 12.dp, vertical = 10.dp), contentAlignment = Alignment.CenterStart) { T(s, 13, maxLines = 2) }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
                     }
                 }
             } else LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), state = list, verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -449,7 +460,11 @@ fun AssistantScreen(nav: Nav) {
                 }
                 item(key = "working") { Working(busy, current, now, showSteps, statusWord) { showSteps = !showSteps } }
                 items(queue, key = { "q" + it.optString("id") }) { q ->
-                    QueuedRow(q.optString("text"), q.optInt("files")) {
+                    QueuedRow(q.optString("text"), q.optInt("files"), onSendNow = if (direct) ({
+                        repo.assistant("DELETE", "/queue/" + android.net.Uri.encode(q.optString("id"))) { _, _ ->
+                            repo.assistant("POST", "/message", JSONObject().put("text", q.optString("text")).put("steer", true)) { _, _ -> load() }
+                        }
+                    }) else null) {
                         repo.assistant("DELETE", "/queue/" + android.net.Uri.encode(q.optString("id"))) { _, _ -> load() }
                     }
                 }
@@ -471,23 +486,34 @@ fun AssistantScreen(nav: Nav) {
             for (a in attachments) FileChip(a.name, a.mime, if (a.error != null) a.error else if (a.id == null) "Uploading…" else null) { attachments = attachments.filter { it.key != a.key } }
         }
 
-        // The message box
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom) {
-            IconButton({ pickFiles.launch(arrayOf("image/*", "*/*")) }, enabled = enabled) { Icon(Icons.Outlined.AttachFile, "Attach pictures or files", tint = HColors.muted) }
-            IconButton({ loadDrive(null, null); driveOpen = true }, enabled = enabled) { Icon(Icons.Outlined.FolderOpen, "Attach from Drive", tint = HColors.muted) }
+        // The composer: one surface box with + (files, Drive), the text, and a 42 square send that becomes Stop.
+        var plusOpen by remember { mutableStateOf(false) }
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp).border(1.dp, HColors.border).background(HColors.surface).padding(6.dp), verticalAlignment = Alignment.Bottom) {
+            Box {
+                IconButton({ plusOpen = true }, enabled = enabled) { Icon(Icons.Outlined.Add, "Attach", tint = HColors.muted) }
+                DropdownMenu(plusOpen, { plusOpen = false }, containerColor = HColors.surface2, shape = RectangleShape) {
+                    DropdownMenuItem(text = { T("Pictures or files…", 13) }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null, tint = HColors.muted) }, onClick = { plusOpen = false; pickFiles.launch(arrayOf("image/*", "*/*")) })
+                    DropdownMenuItem(text = { T("From your Drive…", 13) }, leadingIcon = { Icon(Icons.Outlined.FolderOpen, null, tint = HColors.muted) }, onClick = { plusOpen = false; loadDrive(null, null); driveOpen = true })
+                }
+            }
             BasicTextField(
                 input, { input = it },
-                Modifier.weight(1f).heightIn(min = 44.dp, max = 140.dp).border(1.dp, HColors.border).background(HColors.surface).padding(horizontal = 12.dp, vertical = 11.dp),
+                Modifier.weight(1f).heightIn(min = 42.dp, max = 160.dp).padding(horizontal = 4.dp, vertical = 10.dp),
                 enabled = enabled,
                 textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontSize = 15.sp, lineHeight = 21.sp),
                 cursorBrush = SolidColor(HColors.accent),
-                decorationBox = { inner -> if (input.isEmpty()) T(if (serverBusy) "Queue another message…" else "Ask Hourglass…", 15, HColors.faint); inner() },
+                decorationBox = { inner -> if (input.isEmpty()) T(if (!enabled) "The assistant is off" else if (serverBusy) (if (direct) "Steer the running answer…" else "Queue a message for after this reply…") else "Ask Hourglass…", 15, HColors.faint); inner() },
             )
-            Spacer(Modifier.width(8.dp))
-            if (busy && input.isBlank() && attachments.none { it.id != null }) HButton("", icon = Icons.Outlined.Stop) { repo.assistant("POST", "/stop") { _, _ -> load() } }
-            else HButton("", primary = true, icon = Icons.AutoMirrored.Outlined.Send, enabled = enabled && !sending && (input.isNotBlank() || attachments.any { it.id != null }) && !uploading) { send(input) }
+            Spacer(Modifier.width(6.dp))
+            val stopping = busy && input.isBlank() && attachments.none { it.id != null }
+            val canSend = enabled && !sending && (input.isNotBlank() || attachments.any { it.id != null }) && !uploading
+            Box(
+                Modifier.size(42.dp).background(if (stopping) HColors.surface3 else HColors.accent.copy(alpha = if (canSend) 1f else 0.45f))
+                    .then(if (stopping) Modifier.border(1.dp, HColors.faint) else Modifier)
+                    .clickable(enabled = stopping || canSend) { if (stopping) repo.assistant("POST", "/stop") { _, _ -> load() } else send(input) },
+                contentAlignment = Alignment.Center,
+            ) { Icon(if (stopping) Icons.Outlined.Stop else Icons.AutoMirrored.Outlined.Send, if (stopping) "Stop" else "Send", tint = HColors.fg, modifier = Modifier.size(18.dp)) }
         }
-        if (mode == "dangerous") T("Dangerous: changes and deletions apply without asking", 11, HColors.accent, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp))
         AssistantComposerChips(engineLabel(chat), mode, onModel = { openModels() }, onMode = { next ->
             repo.assistantMode(next) { saved, err -> if (saved != null) { mode = saved; load() } else problem = err }
         }, context = context, onContext = { usageOpen = true })
@@ -539,10 +565,16 @@ internal fun AssistantSnapshotScreen(repo: dev.marobotic.hourglass.data.Repo, va
         else -> emptyList()
     }
     Column(Modifier.fillMaxSize().background(HColors.bg).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            T("Assistant", 18, bold = true)
-            Spacer(Modifier.weight(1f))
-            if (variant != "empty") T("New chat", 11, HColors.muted)
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                T("✦", 18, HColors.accentInk)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) { T("Assistant", 15, bold = true); T("Claude plan · Haiku 5.5 · medium", 11, HColors.muted, maxLines = 1) }
+                val st = if (variant == "streaming") "working" else "idle"
+                T(st, 11, if (st == "working") HColors.accentInk else HColors.faint, modifier = Modifier.border(1.dp, if (st == "working") HColors.accent.copy(alpha = 0.6f) else HColors.border).padding(horizontal = 8.dp, vertical = 3.dp))
+                IconButton({}) { Icon(Icons.Outlined.Add, "New chat", tint = HColors.muted) }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
         }
         if (variant == "empty") {
             Column(Modifier.weight(1f).fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -552,7 +584,7 @@ internal fun AssistantSnapshotScreen(repo: dev.marobotic.hourglass.data.Repo, va
                 T("It can read and change your notes, schedule, alarms, timers and Drive.", 13, HColors.muted, align = androidx.compose.ui.text.style.TextAlign.Center)
             }
         } else {
-            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 messages.forEach { m ->
                     Message(m, opener, now, stepsShown = false, canShowSteps = true, statusWord = "Simmering", onAction = { _, _ -> }, onToggleSteps = {})
                 }
@@ -560,8 +592,12 @@ internal fun AssistantSnapshotScreen(repo: dev.marobotic.hourglass.data.Repo, va
             }
         }
         if (variant == "dangerous") T("Dangerous: changes and deletions apply without asking", 11, HColors.accent, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
-        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).heightIn(min = 46.dp).border(1.dp, HColors.border).background(HColors.surface).padding(12.dp)) {
-            T("Ask Hourglass…", 14, HColors.faint)
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp).border(1.dp, HColors.border).background(HColors.surface).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton({}) { Icon(Icons.Outlined.Add, "Attach", tint = HColors.muted) }
+            T(if (variant == "streaming") "Queue a message for after this reply…" else "Ask Hourglass…", 15, HColors.faint, modifier = Modifier.weight(1f).padding(horizontal = 4.dp), maxLines = 1)
+            Box(Modifier.size(42.dp).background(if (variant == "streaming") HColors.surface3 else HColors.accent.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+                Icon(if (variant == "streaming") Icons.Outlined.Stop else Icons.AutoMirrored.Outlined.Send, null, tint = HColors.fg, modifier = Modifier.size(18.dp))
+            }
         }
         AssistantComposerChips("Claude plan · Haiku 5.5", if (variant == "dangerous") "dangerous" else "auto", onModel = {}, onMode = {})
     }
@@ -579,22 +615,10 @@ private fun Rise(animate: Boolean, modifier: Modifier = Modifier, content: @Comp
 @Composable
 private fun Working(busy: Boolean, current: JSONObject?, now: Long, showSteps: Boolean, statusWord: String, onToggle: () -> Unit) {
     AnimatedVisibility(busy, enter = fadeIn(tween(200)) + expandVertically(), exit = fadeOut(tween(150)) + shrinkVertically()) {
-        Column(Modifier.padding(start = 14.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                val t = rememberInfiniteTransition(label = "dots")
-                val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "status-spin")
-                Row(Modifier.height(14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.Bottom) {
-                    for (i in 0 until 3) {
-                        val y by t.animateFloat(0f, 0f, infiniteRepeatable(keyframes {
-                            durationMillis = 1200
-                            0f at i * 140
-                            -6f at i * 140 + 220
-                            0f at i * 140 + 480
-                        }, RepeatMode.Restart), label = "dot$i")
-                        Box(Modifier.offset(y = y.dp).size(7.dp).clip(CircleShape).background(listOf(HColors.accent, HColors.orange, HColors.gold)[i]))
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
+                Spark()
+                Spacer(Modifier.width(8.dp))
                 val tools = current?.optJSONArray("tools").list()
                 val running = tools.asReversed().firstOrNull { it.optString("status") == "running" }
                 val status = when {
@@ -603,10 +627,8 @@ private fun Working(busy: Boolean, current: JSONObject?, now: Long, showSteps: B
                     else -> "$statusWord…"
                 }
                 val elapsed = current?.optLong("time")?.takeIf { it > 0 }?.let { assistantElapsed(now - it) }.orEmpty()
-                Icon(Icons.Outlined.Sync, null, Modifier.size(14.dp).rotate(spin), tint = HColors.accent)
-                Spacer(Modifier.width(8.dp))
-                T(status, 13, HColors.accent)
-                if (elapsed.isNotBlank()) T(elapsed, 11, HColors.faint)
+                T(status, 13, HColors.accentInk)
+                if (elapsed.isNotBlank()) { Spacer(Modifier.width(8.dp)); T(elapsed, 12, HColors.faint) }
                 if (current != null) {
                     Spacer(Modifier.width(12.dp))
                     T((if (showSteps) "▴" else "▾") + " What it's doing", 12, HColors.faint, modifier = Modifier.clickable(onClick = onToggle))
@@ -626,14 +648,14 @@ private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Bo
             for (f in m.optJSONArray("files").list()) {
                 FileChip(f.optString("name"), f.optString("mime"), null, onClick = { opener.repo.store.get("files", f.optString("id"))?.let { opener.open(it) } })
             }
-            T(text, 15, modifier = Modifier.widthIn(max = 300.dp).border(1.dp, HColors.border).background(HColors.surface2).padding(horizontal = 14.dp, vertical = 10.dp))
+            T(text, 14, modifier = Modifier.fillMaxWidth(0.8f).wrapContentWidth(Alignment.End).border(1.dp, HColors.border).background(HColors.surface2).padding(horizontal = 14.dp, vertical = 10.dp))
         } }
         return
     }
     // The red bar on the left is drawn behind, not measured: a card with a lazy
     // or BoxWithConstraints layout (the day card) can't be measured intrinsically.
-    LongPressMenu(menu, Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().drawBehind { drawRect(HColors.accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }) {
-        Column(Modifier.padding(start = 15.dp, top = 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    LongPressMenu(menu, Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(top = 2.dp, bottom = 2.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // What it did, one line per tool: a spinner, then a tick that pops in.
             for (t in m.optJSONArray("tools").list()) ToolRow(t)
             // What it did, drawn.
@@ -659,7 +681,7 @@ private fun Message(m: JSONObject, opener: FileOpener, now: Long, stepsShown: Bo
                 val span = if (thinking.size > 1) thinking.last().optLong("at") - thinking.first().optLong("at") else 0L
                 val caption = pastAssistantStatus(statusWord) + if (span >= 1000) " for ${assistantElapsed(span)}" else ""
                 Row(Modifier.clickable(onClick = onToggleSteps).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    T(if (stepsShown) "Hide $caption" else "Show $caption", 11, HColors.faint)
+                    T((if (stepsShown) "▾ " else "▸ ") + caption, 12, HColors.muted)
                 }
                 AnimatedVisibility(stepsShown, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) { StepList(thinking) }
             }
@@ -692,22 +714,23 @@ private fun FileResultChip(file: JSONObject, opener: FileOpener) {
 @Composable
 private fun AssistantComposerChips(engine: String, mode: String, onModel: () -> Unit, onMode: (String) -> Unit, context: Double? = null, onContext: () -> Unit = {}) {
     var menu by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.border(1.dp, HColors.border).background(HColors.surface2).clickable(onClick = onModel).padding(horizontal = 10.dp, vertical = 7.dp)) {
-            T("$engine  ▾", 10, HColors.fg, maxLines = 1)
+    val modeInk = when (mode) { "dangerous" -> HColors.accentInk; "plan" -> HColors.teal; else -> HColors.muted }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).heightIn(min = 32.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        when (mode) {
+            "dangerous" -> T("Changes apply without asking", 11, HColors.accentInk, maxLines = 1, modifier = Modifier.weight(1f))
+            "plan" -> T("Reads and plans, changes nothing", 11, HColors.teal, maxLines = 1, modifier = Modifier.weight(1f))
+            else -> if (context != null && !context.isNaN()) Box(Modifier.weight(1f)) { ContextMeter(context, onContext) } else Spacer(Modifier.weight(1f))
         }
-        // Plan: it can look but not change anything.
-        Box(
-            Modifier.border(1.dp, if (mode == "plan") HColors.accent else HColors.border).background(if (mode == "plan") HColors.accent else HColors.surface2)
-                .clickable { onMode(if (mode == "plan") "auto" else "plan") }.padding(horizontal = 10.dp, vertical = 7.dp),
-        ) { T("Plan", 10, if (mode == "plan") HColors.bg else HColors.fg, bold = mode == "plan", maxLines = 1) }
-        if (context != null && !context.isNaN()) ContextMeter(context, onContext)
+        Row(Modifier.clickable(onClick = onModel).padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            T(engine.substringAfter(" · ", engine), 11, HColors.muted, maxLines = 1)
+            T(" ⌄", 12, HColors.faint)
+        }
+        Box(Modifier.width(1.dp).height(16.dp).background(HColors.border))
         Box {
-            Box(
-                Modifier.border(1.dp, if (mode == "dangerous") HColors.accent else HColors.border)
-                    .background(if (mode == "dangerous") HColors.accent else HColors.surface2)
-                    .clickable { menu = true }.padding(horizontal = 10.dp, vertical = 7.dp),
-            ) { T("${mode.replaceFirstChar { it.uppercase() }}  ▾", 10, if (mode == "dangerous") HColors.bg else HColors.fg, bold = mode == "dangerous", maxLines = 1) }
+            Row(Modifier.clickable { menu = true }.padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                T(mode.replaceFirstChar { it.uppercase() }, 11, modeInk, maxLines = 1)
+                T(" ⌄", 12, HColors.faint)
+            }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = HColors.surface, shape = RectangleShape) {
                 listOf("ask" to "Every change waits for approval", "auto" to "Only risky actions wait", "plan" to "Read only: nothing changes", "dangerous" to "Changes apply immediately").forEach { (value, detail) ->
                     DropdownMenuItem(
@@ -725,7 +748,7 @@ private fun AssistantComposerChips(engine: String, mode: String, onModel: () -> 
 @Composable
 private fun FileChip(name: String, mime: String, note: String?, onClick: (() -> Unit)? = null, onRemove: (() -> Unit)? = null) {
     Row(
-        Modifier.widthIn(max = 260.dp).border(1.dp, if (note != null && note != "Uploading…") HColors.accent else HColors.border).background(HColors.surface2)
+        Modifier.widthIn(max = 280.dp).border(1.dp, if (onRemove != null && note != null && note != "Uploading…") HColors.accent else HColors.border).background(HColors.surface2)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(start = 10.dp, end = if (onRemove != null) 0.dp else 10.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -733,7 +756,7 @@ private fun FileChip(name: String, mime: String, note: String?, onClick: (() -> 
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f, fill = false)) {
             T(name, 13, maxLines = 1)
-            if (note != null) T(note, 11, if (note == "Uploading…") HColors.muted else HColors.accent, maxLines = 1)
+            if (note != null) T(note, 11, if (onRemove != null && note != "Uploading…") HColors.accentInk else HColors.muted, maxLines = 1)
         }
         if (onRemove != null) IconButton(onRemove, Modifier.size(32.dp)) { Icon(Icons.Outlined.Close, "Remove", tint = HColors.muted, modifier = Modifier.size(14.dp)) }
     }

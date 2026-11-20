@@ -91,7 +91,7 @@ class RichText(text: String = "", styles: List<Run>? = null) {
         val old = value
         if (new.text == old.text) {
             if (pending != null && new.selection.start != old.selection.start) pending = null
-            value = new
+            value = offBox(new, old)
             return false
         }
         val a = old.text
@@ -104,9 +104,31 @@ class RichText(text: String = "", styles: List<Run>? = null) {
         val typed = pending ?: typingStyle(p)
         pending = null
         styles = styles.subList(0, minOf(p, styles.size)) + List(inserted) { typed } + styles.subList(minOf(a.length - s, styles.size), styles.size)
-        value = new
+        value = offBox(new, old)
         if (inserted == 1 && b[p] == '\n' && new.selection.collapsed && new.selection.start == p + 1) continueList(p)
         return true
+    }
+
+    // The space between a to-do's hidden ☐/☑ and its text is drawn over by the
+    // themed box: a caret there would sit under the box, and text typed there
+    // would be hidden. Only that one slot is skipped (as on the desktop): moving
+    // left from the item's text lands before the box, so Left still reaches the
+    // previous line, Enter still opens a line above and Backspace still merges.
+    // Coming from anywhere else (a tap, a fresh note, the left) the caret moves
+    // on into the item's text instead.
+    private fun offBox(v: TextFieldValue, old: TextFieldValue): TextFieldValue {
+        val sel = v.selection
+        if (!sel.collapsed) return v
+        val t = v.text
+        val c = sel.start
+        val ls = t.lastIndexOf('\n', c - 1) + 1
+        val le = t.indexOf('\n', c).let { if (it < 0) t.length else it }
+        val k = NoteFormat.kindOf(t.substring(ls, le))
+        if (k.kind != "todo") return v
+        val marker = ls + k.indent * 2
+        if (c != marker + 1) return v
+        val back = old.selection.collapsed && old.selection.start >= marker + 2
+        return v.copy(selection = TextRange(if (back) marker else marker + 2))
     }
 
     private fun lineStart(pos: Int) = text.lastIndexOf('\n', pos - 1) + 1
@@ -228,8 +250,8 @@ class RichText(text: String = "", styles: List<Run>? = null) {
     fun toggleBox(at: Int) {
         val c = text.getOrNull(at)?.toString() ?: return
         val to = when (c) { NoteFormat.BOX -> NoteFormat.CHECKED; NoteFormat.CHECKED -> NoteFormat.BOX; else -> return }
-        val sel = value.selection
-        value = TextFieldValue(text.substring(0, at) + to + text.substring(at + 1), sel)
+        val old = value
+        value = offBox(TextFieldValue(text.substring(0, at) + to + text.substring(at + 1), old.selection), old)
     }
 
     /** Split at the end of the cursor's line: this keeps the start, the result holds the rest (or null). */

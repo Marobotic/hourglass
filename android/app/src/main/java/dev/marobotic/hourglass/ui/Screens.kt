@@ -1,5 +1,8 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.animation.togetherWith
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.RectangleShape
 
@@ -124,49 +127,27 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
         repo.alarms().mapNotNull { a -> dev.marobotic.hourglass.core.Alarms.next(a, cs, es, clock, zone)?.let { a to it } }.minByOrNull { it.second }
     }
     val timer = remember(version) { repo.timers().firstOrNull { it.optString("state") != "idle" } }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+    // REDESIGN §5 Now: the date over the clock, the hero card, today's notes, what's coming, and the time row.
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item {
             Column {
-                T(Dates.long(today), 14, HColors.muted)
-                T(Dates.clock(clock, zone), 42, bold = true)
+                T(Dates.long(today), 15, HColors.muted)
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.animation.AnimatedContent(Dates.clock(clock, zone), label = "clock", transitionSpec = {
+                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)) + androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(160)) { -it / 3 }) togetherWith androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(80))
+                }) { T(it, 48, bold = true) }
             }
         }
-        item {
-            val live = current != null && clock >= current.startMs
-            HCard(Modifier.fillMaxWidth(), stripe = current?.let { hex(it.first.color) } ?: HColors.border) {
-                T(when { current == null -> "DAY OFF"; live -> "NOW"; current.first.date == today -> "NEXT"; else -> "NEXT · " + Dates.short(current.first.date).uppercase() },
-                    12, if (live) HColors.accent else HColors.muted, bold = true, spacing = 2.0)
-                Spacer(Modifier.height(8.dp))
-                T(current?.first?.title ?: "Heyyy, your day is off!", 26, bold = true)
-                if (current == null && repo.courses().isNotEmpty()) T("Nothing on today or in the next 12 hours.", 14, HColors.muted)
-                if (current != null) {
-                    Spacer(Modifier.height(6.dp))
-                    T(Dates.range(current.startTime, current.endTime) + (current.first.location?.let { "   $it" } ?: ""), 18, bold = true)
-                    current.first.teacher?.let { T(it.substringBefore(","), 14, HColors.muted) }
-                    Spacer(Modifier.height(4.dp))
-                    T(if (live) Dates.left((current.endMs - clock + 59_999) / 60_000) else "Starts " + Dates.relative((current.startMs - clock + 59_999) / 60_000), 14, if (live) HColors.accent else HColors.muted)
-                    if (current.first.courseId != null) {
-                        Spacer(Modifier.height(12.dp))
-                        HButton("Notes for this class", primary = true, icon = Icons.Outlined.EditNote) {
-                            // Opens this session's note when there is one, so a tap never makes a second.
-                            nav.sessionNote(current.first, dev.marobotic.hourglass.core.Now.sessionNotes(repo.notes(), current.first).session)
-                        }
-                    }
-                } else if (repo.courses().isEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    HButton("Add a course", primary = true, icon = Icons.Outlined.Add) { nav.sheets.course = true to null }
-                }
-            }
-        }
+        item { NowHero(nav, current, today, clock) }
         if (later.isNotEmpty()) item {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                T("COMING UP", 12, HColors.muted, bold = true, spacing = 2.0)
+                Section("Coming up", if (later.size > 1) "${later.size} more" else null)
                 for (b in later) TimelineRow(b.first.copy(endTime = b.endTime, endMs = b.endMs), clock) { nav.sheets.session = b.first }
             }
         }
-        item {
+        if (todayNotes.isNotEmpty() || current?.first?.courseId != null) item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                T("NOTES FOR TODAY", 12, HColors.muted, bold = true, spacing = 2.0)
+                Section(if (current != null && clock >= current.startMs && current.first.courseId != null) "Notes for this session" else "Notes for today", todayNotes.size.takeIf { it > 0 }?.toString())
                 if (todayNotes.isEmpty()) T("Nothing yet. Notes you take in class show up here.", 13, HColors.faint)
                 for (pair in todayNotes.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (n in pair) {
@@ -202,6 +183,58 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun NowHero(nav: Nav, current: dev.marobotic.hourglass.core.Block?, today: java.time.LocalDate, clock: Long) {
+    val repo = nav.repo
+    val block = current?.first
+    if (block == null) {
+        // Day off: one quiet card, never a big empty hero.
+        val noCourses = repo.courses().isEmpty()
+        HCard(Modifier.fillMaxWidth()) {
+            Chip("Day off", HColors.muted)
+            Spacer(Modifier.height(10.dp))
+            T(if (noCourses) "Add your classes to get started" else "Nothing on today", 22, bold = true)
+            Spacer(Modifier.height(4.dp))
+            T(if (noCourses) "Hourglass opens the right notes when a class starts." else "Nothing in the next 12 hours.", 14, HColors.muted)
+            if (noCourses) { Spacer(Modifier.height(16.dp)); HButton("Add a course", primary = true, icon = Icons.Outlined.Add) { nav.sheets.course = true to null } }
+        }
+        return
+    }
+    val endMs = current.endMs
+    val live = clock >= current.startMs && clock < endMs
+    val color = hex(block.color)
+    val wash by rememberInfiniteTransition(label = "live").animateFloat(0.09f, 0.03f, infiniteRepeatable(tween(1200, easing = HMotion.Ease), RepeatMode.Reverse), label = "wash")
+    val progress by androidx.compose.animation.core.animateFloatAsState(if (live) ((clock - current.startMs).toFloat() / maxOf(1L, endMs - current.startMs)).coerceIn(0f, 1f) else 0f, HMotion.meter(), label = "progress")
+    Row(Modifier.fillMaxWidth().background(HColors.surface).background(if (live) color.copy(alpha = wash) else Color.Transparent).border(1.dp, HColors.border).height(IntrinsicSize.Min)) {
+        Box(Modifier.width(4.dp).fillMaxHeight().background(color))
+        Column(Modifier.weight(1f)) {
+            Column(Modifier.padding(start = 18.dp, end = 16.dp, top = 18.dp, bottom = 18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (live) Chip("● Live", HColors.accentInk) else Chip(if (block.date == today) "Next" else "Next · " + Dates.short(block.date), HColors.muted)
+                    Spacer(Modifier.width(6.dp))
+                    Chip(kindLabel(block.kind), HColors.muted)
+                    Grow()
+                    T(if (live) Dates.left((endMs - clock + 59_999) / 60_000).removeSuffix(" left") else Dates.relative((current.startMs - clock + 59_999) / 60_000), 13, if (live) HColors.accentInk else HColors.muted, bold = live)
+                }
+                Spacer(Modifier.height(12.dp))
+                T(block.title, 24, bold = true)
+                Spacer(Modifier.height(4.dp))
+                T(listOfNotNull(Dates.range(current.startTime, current.endTime), block.location, block.teacher?.substringBefore(",")).joinToString(" · "), 14, HColors.muted)
+                if (block.courseId != null) {
+                    Spacer(Modifier.height(16.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val session = dev.marobotic.hourglass.core.Now.sessionNotes(repo.notes(), block).session
+                        // Opens this session's note when there is one, so a tap never makes a second.
+                        HButton(if (session.isNotEmpty()) "Notes for this class" else "Start notes", Modifier.weight(1f), primary = true, icon = Icons.Outlined.EditNote) { nav.sessionNote(block, session) }
+                        HButton("", icon = Icons.Outlined.MoreHoriz) { nav.sheets.session = block }
+                    }
+                }
+            }
+            if (live) Box(Modifier.fillMaxWidth().height(3.dp).background(HColors.surface3)) { Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(color)) }
         }
     }
 }
@@ -447,6 +480,7 @@ fun TimersScreen(nav: Nav, version: Int, clock: Long) {
 fun ClockScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
     val clocks = remember(version) { repo.clocks() }
+    val homeId = remember(version) { repo.homeClock()?.optString("id") }
     var query by rememberSaveable { mutableStateOf("") }
     val now = java.time.Instant.ofEpochMilli(clock)
     val home = repo.zone
@@ -481,7 +515,7 @@ fun ClockScreen(nav: Nav, version: Int, clock: Long) {
         items(clocks, key = { it.optString("id") }) { c ->
             val z = runCatching { java.time.ZoneId.of(c.optString("zone")) }.getOrNull() ?: return@items
             val t = now.atZone(z)
-            val isHome = z.id == home.id
+            val isHome = c.optString("id") == homeId
             val diff = z.rules.getOffset(now).totalSeconds / 60 - homeOff
             val day = when { t.toLocalDate() == homeDate -> "Today"; t.toLocalDate().isAfter(homeDate) -> "Tomorrow"; else -> "Yesterday" }
             HCard(Modifier.fillMaxWidth(), stripe = if (isHome) HColors.accent else null) {

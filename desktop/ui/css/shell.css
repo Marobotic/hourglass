@@ -1,0 +1,114 @@
+/* The window: sidebar, page header, page, and the whole-window states (REDESIGN §3, §5 Overlays). */
+#app { display: grid; grid-template-columns: var(--side) 1fr; height: 100vh; }
+
+/* ---- sidebar ---- */
+.side { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 16px 12px 14px; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; overflow: hidden; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; min-width: 0; }
+.brand .logo { flex: none; }
+.brand b { font-size: 17px; }
+.brand .ver { margin-left: auto; color: var(--faint); font-size: 12px; }
+.side .new { width: 100%; height: 36px; justify-content: flex-start; margin-bottom: 8px; }
+.side .new .kbd { margin-left: auto; }
+.navs { position: relative; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden; min-height: 0; margin: 0 -4px; padding: 0 4px; }
+.navs::-webkit-scrollbar { width: 0; }
+.group { padding: 14px 10px 6px; font: 700 11px var(--mono); letter-spacing: .14em; color: var(--faint); white-space: nowrap; }
+.nav { position: relative; display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; border: 0; background: transparent; color: var(--muted); font-size: 14px; text-align: left; cursor: pointer; white-space: nowrap; flex: none;
+  transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
+.nav:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
+.nav:hover .ic { transform: translateX(2px); }
+.nav .ic { font-size: 14px; transition: transform 160ms var(--spring); }
+.nav .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nav .kbd { opacity: 0; transition: opacity var(--quick) var(--ease); }
+.nav:hover .kbd, .nav.on .kbd { opacity: 1; }
+.nav.on { background: var(--surface2); color: var(--fg); }
+.nav.on:hover .ic { transform: none; }
+.nav .count { margin-left: auto; }
+.nav .count + .kbd { display: none; }
+/* The accent bar slides between rows (one element for the whole list). */
+.nav-bar { position: absolute; left: 4px; top: 0; width: 3px; height: 18px; background: var(--accent); transition: transform 240ms var(--spring), opacity var(--quick) var(--ease); pointer-events: none; z-index: 1; }
+.side-foot { display: flex; flex-direction: column; gap: 2px; padding-top: 10px; }
+.mini { margin: 0 0 8px; padding: 10px 12px 12px 16px; cursor: pointer; }
+.mini .t { font-size: 13px; font-weight: 700; margin: 6px 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini .s { font-size: 12px; color: var(--accent-ink); margin-bottom: 8px; }
+.update { margin: 0 0 8px; padding: 10px 12px; display: grid; gap: 6px; background: color-mix(in srgb, var(--teal) 12%, transparent); border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent); }
+.update .chip { justify-self: start; }
+.update p { margin: 0; font: 12px/1.4 var(--sans); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sync { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0; font-size: 12px; color: var(--muted); min-width: 0; white-space: nowrap; }
+.sync i { width: 7px; height: 7px; flex: none; background: var(--faint); }
+.sync i.synced { background: var(--teal); }
+.sync i.offline { background: var(--orange); }
+.sync span { color: var(--faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Narrow: icons only. */
+@media (max-width: 979px) {
+  .side { padding: 14px 8px; align-items: stretch; }
+  .brand { justify-content: center; padding: 2px 0 12px; }
+  .brand b, .brand .ver, .group, .nav .lbl, .nav .kbd, .side .new .lbl, .side .new .kbd, .sync b, .sync span, .mini, .update { display: none; }
+  .side .new { width: 40px; height: 40px; padding: 0; justify-content: center; align-self: center; }
+  .group + .nav { margin-top: 10px; }
+  .nav { justify-content: center; padding: 0; }
+  .nav .count { position: absolute; top: 3px; right: 6px; min-width: 14px; height: 14px; font-size: 9px; }
+  .sync { justify-content: center; padding: 8px 0 0; }
+}
+
+/* ---- main column ---- */
+.main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.head { height: 56px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 var(--pad); border-bottom: 1px solid var(--border); min-width: 0; }
+.head h1 { margin: 0; font-size: 17px; font-weight: 700; white-space: nowrap; }
+.head .ctx { color: var(--muted); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head .mid { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.head .acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.head .back { margin-left: -10px; }
+#page { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--pad); scroll-behavior: smooth; }
+.page.flush { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.page-col { max-width: 880px; display: grid; gap: var(--gap); }
+
+/* ---- whole-window states ---- */
+.starting { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; align-content: center; gap: 16px; background: var(--bg); }
+.starting .logo { animation: drift 1.8s ease-in-out infinite; }
+.starting p { margin: 0; color: var(--muted); font-size: 15px; }
+.starting .line { width: 180px; height: 3px; background: var(--surface3); overflow: hidden; }
+.starting .line i { display: block; width: 40%; height: 100%; background: var(--accent); animation: indeterminate 1.2s var(--ease) infinite; }
+.starting.leaving { animation: fade-out 200ms var(--ease-in) both; pointer-events: none; }
+
+.droptint { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 2px solid var(--accent); font-size: 20px; font-weight: 700; pointer-events: none; animation: fade-in 120ms var(--ease) both; }
+
+.ring { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgb(0 0 0 / .6); animation: fade-in 160ms var(--ease) both; }
+.ring-card { width: min(400px, calc(100vw - 48px)); display: grid; justify-items: center; gap: 12px; padding: 28px; background: var(--surface); border: 2px solid var(--accent); animation: sheet-in 260ms var(--spring) both; }
+.ring-card .logo { animation: shake 360ms ease-in-out infinite; margin-bottom: 4px; }
+.ring-card .kind { color: var(--accent-ink); font: 700 13px var(--mono); letter-spacing: .16em; }
+.ring-card .label { font-size: 22px; font-weight: 700; text-align: center; overflow-wrap: anywhere; }
+.ring-card .clock { font: 700 56px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.ring-card .btn { width: 100%; }
+.ring-card .snooze { margin-top: 8px; height: 48px; }
+.hold { position: relative; overflow: hidden; }
+.hold i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: color-mix(in srgb, var(--accent) 35%, transparent); pointer-events: none; }
+.hold.holding i { width: 100%; transition: width 2000ms linear; }
+.hold span { position: relative; }
+
+.reminders { position: fixed; right: 18px; bottom: 18px; z-index: 75; display: grid; gap: 10px; }
+.reminder { width: 360px; padding: 12px; display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--gold); box-shadow: var(--shadow); animation: toast-in 240ms var(--spring) both; }
+.reminder .row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.reminder .ic { color: var(--gold); }
+.reminder .acts { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* ---- command palette ---- */
+.palette { position: fixed; inset: 0; z-index: 65; display: grid; justify-items: center; align-items: start; padding-top: 12vh; background: color-mix(in srgb, black 45%, transparent); animation: fade-in 120ms var(--ease) both; }
+.palette-box { width: min(600px, calc(100vw - 48px)); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); animation: sheet-in 200ms var(--ease) both; }
+.palette-box input { width: 100%; height: 52px; padding: 0 18px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); font: 16px var(--mono); outline: none; }
+.palette-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
+.palette-list button { display: flex; align-items: center; gap: 12px; width: 100%; height: 38px; padding: 0 12px; border: 0; background: transparent; color: var(--fg); font-size: 14px; text-align: left; cursor: pointer; }
+.palette-list button .ic { color: var(--muted); }
+.palette-list button .hint { margin-left: auto; color: var(--faint); font-size: 12px; }
+.palette-list button.kb { background: var(--surface2); }
+.palette-list button.kb .ic { color: var(--accent-ink); }
+.palette-list .grp { padding: 10px 12px 4px; font: 700 11px var(--mono); letter-spacing: .14em; color: var(--faint); }
+
+/* ---- the pixel hourglass ---- */
+.logo { display: block; image-rendering: pixelated; shape-rendering: crispEdges; }
+.logo .grain { animation: grain 1.4s var(--ease-in) infinite; opacity: 0; }
+@keyframes grain { 0%, 45% { opacity: 0; transform: translateY(0); } 50% { opacity: 1; } 88% { opacity: 1; transform: translateY(3px); } 100% { opacity: 0; transform: translateY(3px); } }
+
+/* Burst of pixels for finishing things. */
+.burst { position: fixed; z-index: 150; width: 5px; height: 5px; pointer-events: none; }

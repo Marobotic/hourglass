@@ -25,20 +25,20 @@ struct NowView: View {
             let alarm = store.alarms.compactMap { a in Alarms.next(a, store.db.courses, store.db.events, clock).map { (a, $0) } }.min { $0.1 < $1.1 }
             let timer = store.timers.first { $0.state != "idle" }
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        T(Dates.long(today), 14, H.muted)
-                        T(Dates.clock(clock), 42, bold: true)
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        T(Dates.long(today), 15, H.muted)
+                        Text(Dates.clock(clock)).font(H.mono(48, bold: true)).foregroundStyle(H.fg).contentTransition(.numericText()).animation(HMotion.on(HMotion.quick), value: Dates.clock(clock))
                     }
-                    hero(current, today, clock)
+                    NowHero(b: current, today: today, clock: clock, path: $path)
                     if !later.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("COMING UP").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted)
+                            SectionLabel(text: "Coming up", detail: later.count > 1 ? "\(later.count) more" : nil)
                             ForEach(later) { b in TimelineRow(o: b.first, clock: clock, end: b.end).onTapGesture { sheets.session = b.first } }
                         }
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("NOTES FOR TODAY").font(H.mono(12, bold: true)).tracking(2).foregroundStyle(H.muted)
+                        SectionLabel(text: current.map { clock >= $0.startMs && $0.first.course_id != nil } == true ? "Notes for this session" : "Notes for today", detail: todays.isEmpty ? nil : "\(todays.count)")
                         if todays.isEmpty { T("Nothing yet. Notes you take in class show up here.", 13, H.faint) }
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], alignment: .leading, spacing: 8) {
                             ForEach(todays) { n in noteCard(n, today).lively("note:\(n.id)", "\(n.updated_at)") }
@@ -57,7 +57,7 @@ struct NowView: View {
                         HStack(spacing: 8) { Image(systemName: "timer").foregroundStyle(H.accent); T(Dates.countdown(remain) + "  " + t.label, 14) }
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 96)
             }
             .background(H.bg)
         }
@@ -114,6 +114,83 @@ struct NowView: View {
             } else if store.courses.isEmpty {
                 HButton("Add a course", icon: "plus", primary: true) { sheets.course = CourseDraft() }.padding(.top, 12)
             }
+        }
+    }
+}
+
+// The hero (REDESIGN §5 Now): a course stripe, a breathing wash while live, chips, time left, the actions and a
+// progress line along the bottom. Day off is one quiet card, never a big empty hero.
+struct NowHero: View {
+    @EnvironmentObject var store: Store
+    @EnvironmentObject var sheets: Sheets
+    let b: Block?
+    let today: String
+    let clock: Int64
+    @Binding var path: [Route]
+    @State private var breathe = false
+
+    var body: some View {
+        if let b { live(b) } else { dayOff }
+    }
+
+    private var dayOff: some View {
+        let none: Bool = store.courses.isEmpty
+        return Card {
+            Chip(text: "Day off", tint: H.muted)
+            T(none ? "Add your classes to get started" : "Nothing on today", 22, bold: true).padding(.top, 10)
+            T(none ? "Hourglass opens the right notes when a class starts." : "Nothing in the next 12 hours.", 14, H.muted).padding(.top, 4)
+            if none { HButton("Add a course", icon: "plus", primary: true) { sheets.course = CourseDraft() }.padding(.top, 16) }
+        }
+    }
+
+    private func live(_ b: Block) -> some View {
+        let isLive: Bool = clock >= b.startMs && clock < b.endMs
+        let color: Color = Color(hex: b.first.color)
+        let frac: Double = isLive ? min(1, max(0, Double(clock - b.startMs) / Double(max(1, b.endMs - b.startMs)))) : 0
+        let left: String = isLive ? Dates.left((b.endMs - clock + 59_999) / 60_000).replacingOccurrences(of: " left", with: "") : Dates.relative((b.startMs - clock + 59_999) / 60_000)
+        let meta: String = [Dates.range(b.start, b.end), b.first.location, b.first.teacher.map { String($0.split(separator: ",").first ?? "") }].compactMap { $0 }.joined(separator: " · ")
+        return HStack(spacing: 0) {
+            Rectangle().fill(color).frame(width: 4)
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 6) {
+                        Chip(text: isLive ? "● Live" : (b.first.date == today ? "Next" : "Next · " + Dates.short(b.first.date)), tint: isLive ? H.accentInk : H.muted)
+                        Chip(text: kindLabel(b.first.kind), tint: H.muted)
+                        Spacer(minLength: 0)
+                        T(left, 13, isLive ? H.accentInk : H.muted, bold: isLive)
+                    }
+                    T(b.first.title, 24, bold: true).padding(.top, 12)
+                    T(meta, 14, H.muted).padding(.top, 4)
+                    if b.first.course_id != nil { actions(b).padding(.top, 16) }
+                }
+                .padding(.leading, 18).padding(.trailing, 16).padding(.vertical, 18)
+                if isLive {
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(H.surface3)
+                            Rectangle().fill(color).frame(width: g.size.width * frac).animation(HMotion.on(HMotion.meter), value: frac)
+                        }
+                    }
+                    .frame(height: 3)
+                }
+            }
+        }
+        .background(H.surface)
+        .background(isLive ? color.opacity(breathe ? 0.03 : 0.09) : .clear)
+        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .onAppear { if HMotion.allowed { withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { breathe = true } } }
+    }
+
+    private func actions(_ b: Block) -> some View {
+        let session: [Note] = Now.sessionNotes(store.notes, b.first).session
+        return HStack(spacing: 8) {
+            // This session's note when there is one, so a tap never makes a second.
+            HButton(session.isEmpty ? "Start notes" : "Notes for this class", icon: "square.and.pencil", primary: true) {
+                if let n = session.first { path.append(.note(n.id)) }
+                else { path.append(.note(store.addNote(course: b.first.course_id, date: b.first.session, event: b.first.event_id).id)) }
+            }
+            .frame(maxWidth: .infinity)
+            HButton("", icon: "ellipsis") { sheets.session = b.first }
         }
     }
 }
@@ -307,7 +384,7 @@ struct NotesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    T("Notes", 22, bold: true)
+                    T("Your notes", 13, H.muted)
                     Spacer()
                     Button { searching.toggle(); if !searching { query = "" } } label: { Image(systemName: searching ? "xmark" : "magnifyingglass").foregroundStyle(H.muted).frame(width: 36, height: 36) }
                 }
@@ -817,7 +894,7 @@ struct ClockView: View {
                     }
                     ForEach(store.clocks) { c in
                         if let z = TimeZone(identifier: c.zone) {
-                            let isHome = z.identifier == home.identifier
+                            let isHome = c.id == store.homeClock?.id
                             let diff = (z.secondsFromGMT(for: now) - home.secondsFromGMT(for: now)) / 60
                             Card(stripe: isHome ? H.accent : nil) {
                                 HStack {

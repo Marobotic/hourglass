@@ -59,14 +59,14 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM hourglass-shell.exe"; Flags:
 Filename: "{app}\windows\bin\hourglass-shell.exe"; Parameters: "unregister --all"; Flags: runhidden waituntilterminated; StatusMsg: "Disconnecting synced folders..."; Check: FileExists(ExpandConstant('{app}\windows\bin\hourglass-shell.exe'))
 
 [Icons]
-Name: "{userprograms}\Hourglass"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\windows\Hourglass.vbs"""; WorkingDir: "{app}\windows"; IconFilename: "{app}\windows\hourglass.ico"; Comment: "Calendar, notes, alarms and timers"
+Name: "{userprograms}\Hourglass"; Filename: "{app}\windows\window\Hourglass.exe"; WorkingDir: "{app}\windows"; IconFilename: "{app}\windows\hourglass.ico"; Comment: "Calendar, notes, alarms and timers"
 ; The background service at sign-in: alarms and timers ring with the window closed.
 Name: "{userstartup}\Hourglass service"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\windows\bin\hourglassd.vbs"""; WorkingDir: "{app}\windows"; IconFilename: "{app}\windows\hourglass.ico"
 
 [Run]
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\windows\Hourglass.vbs"""; Description: "Open Hourglass"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\windows\window\Hourglass.exe"; Description: "Open Hourglass"; Flags: postinstall nowait skipifsilent
 ; A silent update from inside the app: start it again.
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\windows\Hourglass.vbs"""; Flags: nowait; Check: Relaunch
+Filename: "{app}\windows\window\Hourglass.exe"; Flags: nowait; Check: Relaunch
 
 [Code]
 const

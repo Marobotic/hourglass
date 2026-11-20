@@ -1,5 +1,8 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -96,14 +99,11 @@ internal fun ToolRow(tool: JSONObject) {
     LaunchedEffect(done) { if (done) pop.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessMedium)) }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.then(if (hasDetail) Modifier.clickable { open = !open } else Modifier).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                when (status) { "completed" -> Icons.Outlined.Check; "error" -> Icons.Outlined.Close; else -> Icons.Outlined.Sync },
-                null,
-                Modifier.size(14.dp).scale(pop.value).rotate(if (done) 0f else spin.value),
-                tint = when (status) { "completed" -> HColors.teal; "error" -> HColors.accent; else -> HColors.muted },
-            )
+            val pulse = if (done) 1f else rememberInfiniteTransition(label = "dot").animateFloat(1f, 0.35f, infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "a").value
+            T(when (status) { "completed" -> "✓"; "error" -> "✕"; else -> "●" }, 13, when (status) { "completed" -> HColors.teal; "error" -> HColors.accentInk; else -> HColors.accentInk },
+                modifier = Modifier.width(14.dp).scale(pop.value).alpha(pulse))
             Spacer(Modifier.width(8.dp))
-            T(tool.text("label").ifBlank { tool.text("tool") }, 13, if (status == "error") HColors.accent else HColors.muted, modifier = Modifier.weight(1f, fill = false), maxLines = 1)
+            T(tool.text("label").ifBlank { tool.text("tool") }, 13, if (status == "error") HColors.accentInk else HColors.fg, modifier = Modifier.weight(1f, fill = false), maxLines = 1)
             if (!tool.isNull("duration_ms") && tool.has("duration_ms")) { Spacer(Modifier.width(8.dp)); T(ChatStream.duration(tool.optLong("duration_ms")), 11, HColors.faint) }
             if (diff != null && diff.optInt("added") + diff.optInt("removed") > 0) {
                 Spacer(Modifier.width(8.dp))
@@ -151,19 +151,30 @@ private fun ToolBlock(title: String, body: String) {
 
 // A message that waits for the one before it: greyed, with a way to take it back.
 @Composable
-internal fun QueuedRow(text: String, files: Int, onCancel: () -> Unit) {
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        T(text.ifBlank { "(attachments)" } + if (files > 0) "  · $files file" + (if (files > 1) "s" else "") else "", 15, HColors.muted,
-            modifier = Modifier.widthIn(max = 300.dp).border(1.dp, HColors.border).background(HColors.surface).padding(horizontal = 14.dp, vertical = 10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            T("Queued", 11, HColors.faint)
-            Row(Modifier.clickable(onClick = onCancel).padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Close, "Cancel", Modifier.size(12.dp), tint = HColors.accent)
-                Spacer(Modifier.width(4.dp))
-                T("Cancel", 11, HColors.accent)
+internal fun QueuedRow(text: String, files: Int, onSendNow: (() -> Unit)? = null, onCancel: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        T(text.ifBlank { "(attachments)" } + if (files > 0) "  · $files file" + (if (files > 1) "s" else "") else "", 14, HColors.muted,
+            modifier = Modifier.fillMaxWidth(0.8f).wrapContentWidth(Alignment.End).border(1.dp, HColors.border).background(HColors.surface).padding(horizontal = 14.dp, vertical = 10.dp))
+        // Metro's tag: gold "Queued · after this reply", Send now (engines that take a steer), and a cancel.
+        Row(Modifier.border(1.dp, HColors.border).padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            T("Queued · after this reply", 11, HColors.gold)
+            if (onSendNow != null) {
+                Spacer(Modifier.width(8.dp))
+                T("Send now", 11, HColors.fg, modifier = Modifier.border(1.dp, HColors.accent.copy(alpha = 0.6f)).background(HColors.accent.copy(alpha = 0.14f)).clickable(onClick = onSendNow).padding(horizontal = 8.dp, vertical = 2.dp))
             }
+            Box(Modifier.size(28.dp).clickable(onClick = onCancel), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Close, "Cancel", Modifier.size(12.dp), tint = HColors.muted) }
         }
     }
+}
+
+// Metro's spark: the glyph steps through its frames and shimmers while a turn runs.
+@Composable
+internal fun Spark() {
+    val t = rememberInfiniteTransition(label = "spark")
+    val frame by t.animateFloat(0f, 7f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "f")
+    val glow by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "g")
+    val frames = listOf("·", "✢", "✳", "✶", "✻", "✽", "✻")
+    T(frames[frame.toInt().coerceIn(0, 6)], 13, androidx.compose.ui.graphics.lerp(HColors.accentInk, HColors.fg, glow * 0.45f), bold = true, modifier = Modifier.width(14.dp))
 }
 
 // "Limit reached, continues at 14:05": one quiet line, no alarm.

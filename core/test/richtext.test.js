@@ -1,9 +1,9 @@
-// The desktop editor's HTML bridge (windows/app/Hourglass/richtext.mjs): a
+// The desktop editor's HTML bridge (linux/app/Hourglass/richtext.mjs): a
 // note through the editor's HTML and back is the same note. The Qt side (what
 // a TextEdit writes back) is checked by tools/richtext-probe.qml.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toHtml, fromHtml, runsOf } from "../../windows/app/Hourglass/richtext.mjs";
+import { toHtml, fromHtml, runsOf } from "../../linux/app/Hourglass/richtext.mjs";
 
 const ctx = { fileUrl: (id) => `http://127.0.0.1:8931/files/${id}?k=x`, imageWidth: 400 };
 const round = (md) => { const { html, names } = toHtml(md, ctx); return fromHtml(html, names); };

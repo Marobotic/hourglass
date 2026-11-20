@@ -148,3 +148,21 @@ fun BurstLayer() {
         }
     }
 }
+
+// The one motion set (docs/REDESIGN.md §4), the same numbers as the desktop's motion.css and iOS's Motion.swift.
+// Compose honours the system's animator scale, so "remove animations" turns every one of these off.
+object HMotion {
+    val Ease = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
+    val EaseIn = androidx.compose.animation.core.CubicBezierEasing(0.4f, 0f, 1f, 1f)
+    val Spring = androidx.compose.animation.core.CubicBezierEasing(0.34f, 1.4f, 0.64f, 1f)
+    fun page() = androidx.compose.animation.core.tween<Float>(260, easing = Ease)
+    fun pageOffset() = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(260, easing = Ease)
+    fun indicator() = androidx.compose.animation.core.tween<androidx.compose.ui.unit.Dp>(240, easing = Spring)
+    fun quickColor() = androidx.compose.animation.core.tween<androidx.compose.ui.graphics.Color>(120, easing = Ease)
+    fun press() = androidx.compose.animation.core.tween<Float>(80, easing = Ease)
+    fun sheet() = androidx.compose.animation.core.tween<Float>(220, easing = Ease)
+    fun exit() = androidx.compose.animation.core.tween<Float>(120, easing = EaseIn)
+    fun sheetOffset() = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(220, easing = Ease)
+    fun exitOffset() = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(120, easing = EaseIn)
+    fun meter() = androidx.compose.animation.core.tween<Float>(600, easing = Ease)
+}

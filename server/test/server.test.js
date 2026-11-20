@@ -267,6 +267,23 @@ test("world clock: auto-detects timezone and sets first world clock as home", ()
   assert.equal(list[0].home, true);
 });
 
+test("world clock: homes merged by sync become one, a city added twice is kept once", () => {
+  const s = new Store(":memory:");
+  const svc = new Service(s, { clock: () => Date.now() });
+  // What two offline devices leave behind after syncing: each marked its own home.
+  const ny = s.upsert("clocks", { zone: "America/New_York", label: "New York", position: 0, home: 1 });
+  const cairo = s.upsert("clocks", { zone: "Africa/Cairo", label: "Cairo", position: 1, home: 1 });
+  s.upsert("clocks", { zone: "America/New_York", label: "New York", position: 2, home: 1 });
+  s.upsert("clocks", { zone: "Australia/Broken_Hill", label: "Broken Hill", position: 3, home: 0 });
+  const list = svc.listClocks();
+  assert.deepEqual(list.map((c) => [c.label, c.home]), [["New York", true], ["Cairo", false], ["Broken Hill", false]]);
+  assert.equal(svc.tz, "America/New_York");
+  assert.equal(s.get("clocks", cairo.id).home, 0); // the repair is stored, so it syncs to the other devices
+  svc.setHomeZone({ clock_id: cairo.id });
+  assert.deepEqual(svc.listClocks().filter((c) => c.home).map((c) => c.id), [cairo.id]);
+  assert.equal(s.get("clocks", ny.id).home, 0);
+});
+
 test("sync: pushed rows get their rev back, so the next edit is not a conflict", async () => {
   const id = crypto.randomUUID();
   const row = { id, title: "Draft", body: "one", updated_at: Date.now() };

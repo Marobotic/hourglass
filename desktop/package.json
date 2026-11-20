@@ -1,0 +1,17 @@
+{
+  "name": "hourglass-desktop",
+  "version": "0.3.4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:ui": "node build.mjs",
+    "dev:ui": "node build.mjs --dev",
+    "fake": "node ui/dev/fake-sidecar.mjs",
+    "tauri": "tauri",
+    "test": "node --test ui/"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
+    "esbuild": "^0.25.0"
+  }
+}

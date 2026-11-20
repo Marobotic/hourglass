@@ -1,7 +1,11 @@
 package dev.marobotic.hourglass.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AttachFile
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Icon
@@ -27,15 +30,25 @@ import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -52,11 +65,14 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.lerp
 import dev.marobotic.hourglass.R
 import dev.marobotic.hourglass.core.NoteFormat
 import dev.marobotic.hourglass.core.NoteLine
 import dev.marobotic.hourglass.core.Run
 import dev.marobotic.hourglass.data.Repo
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 // The note fonts the app carries (assets/fonts), by the name a note uses.
@@ -147,18 +163,25 @@ private class RichVisual(private val styles: List<Run>) : VisualTransformation {
 fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFocused: () -> Unit, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     Box(modifier) {
-        BasicTextField(
-            rt.value,
-            { if (rt.onChange(it)) onEdited() },
-            Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocused() },
-            textStyle = TextStyle(color = HColors.fg, fontFamily = NoteFonts.of(null), fontSize = NoteFormat.DEFAULT_SIZE.sp, lineHeight = 22.sp),
-            cursorBrush = SolidColor(HColors.accent),
-            visualTransformation = RichVisual(rt.styles),
-            onTextLayout = { rt.layout = it },
-            decorationBox = { inner -> if (rt.text.isEmpty() && placeholder != null) androidx.compose.material3.Text(placeholder, color = HColors.faint, fontSize = 15.sp); inner() },
-        )
-        // The to-dos' boxes, over their hidden ☐/☑ (the themed box: an outline,
-        // filled with the accent and a check once done), each its own tap target.
+        // The caret is the accent (Compose's own is 1dp in the text colour);
+        // selection is pinned to the app's accent too.
+        NoteTextSelection {
+            BasicTextField(
+                rt.value,
+                { if (rt.onChange(it)) onEdited() },
+                Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocused() },
+                textStyle = TextStyle(color = HColors.fg, fontFamily = NoteFonts.of(null), fontSize = NoteFormat.DEFAULT_SIZE.sp, lineHeight = 22.sp),
+                cursorBrush = SolidColor(HColors.accent),
+                visualTransformation = RichVisual(rt.styles),
+                onTextLayout = { rt.layout = it },
+                decorationBox = { inner -> if (rt.text.isEmpty() && placeholder != null) androidx.compose.material3.Text(placeholder, color = HColors.faint, fontSize = 15.sp); inner() },
+            )
+        }
+        // The to-dos' boxes, over their hidden ☐/☑ (the themed box: a ring,
+        // flooded with the accent and a ticking check once done), each its own
+        // tap target. The target is the box with 4dp of room, not 8: a wider
+        // one swallowed taps meant to put the caret at the start of the item's
+        // text.
         val layout = rt.layout
         if (layout != null && layout.layoutInput.text.text == rt.text) {
             for (at in rt.boxes()) {
@@ -166,27 +189,92 @@ fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFo
                 val done = rt.text[at].toString() == NoteFormat.CHECKED
                 val r = layout.getBoundingBox(at)
                 val side = with(density) { 16.dp.toPx() }
-                val pad = with(density) { 8.dp.toPx() }
-                var where by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-                Box(
-                    Modifier
-                        .offset { IntOffset((r.left - pad).roundToInt(), (r.top + (r.height - side) / 2 - pad).roundToInt()) }
-                        .size(with(density) { (side + pad * 2).toDp() })
-                        .onGloballyPositioned { where = it }
-                        .clickable { if (!done) Motion.burstAt(where); rt.toggleBox(at); onEdited() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val boxShape = RoundedCornerShape(3.dp)
-                    Box(
-                        Modifier
-                            .size(16.dp)
-                            .background(if (done) HColors.orange else HColors.bg, boxShape)
-                            .border(1.5.dp, if (done) HColors.orange else HColors.muted, boxShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (done) Icon(Icons.Outlined.Check, null, tint = Color.White, modifier = Modifier.size(12.dp))
-                    }
+                val pad = with(density) { 4.dp.toPx() }
+                // Centre the box on the text you can see. getBoundingBox is the whole
+                // line (whose extra 22sp leading sits below the text), so use the
+                // line's baseline and the x-height of the item's first character
+                // instead; an empty item falls back to the line's middle.
+                val first = at + 2
+                val char = rt.text.getOrNull(first)
+                val line = layout.getLineForOffset(at)
+                val centreY = if (char != null && !char.isWhitespace()) {
+                    val em = with(density) { (rt.styles.getOrNull(first)?.size ?: NoteFormat.DEFAULT_SIZE).toFloat().sp.toPx() }
+                    layout.getLineBaseline(line) - em * 0.26f
+                } else {
+                    (layout.getLineTop(line) + layout.getLineBottom(line)) / 2
                 }
+                TodoBox(
+                    done,
+                    Modifier.offset { IntOffset((r.left - pad).roundToInt(), (centreY - side / 2 - pad).roundToInt()) },
+                ) { rt.toggleBox(at); onEdited() }
+            }
+        }
+    }
+}
+
+// The tick's fade-in curve: CSS's ease-out, the same as the chosen design's
+// stroke-dashoffset transition.
+private val EaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f)
+
+/**
+ * Maro's chosen to-do box (2026-11-20): a 16dp rounded square, a 1.5dp muted ring while
+ * open, the accent red flooding in from the ring to the middle, then the white tick
+ * drawing itself. The same mark as the desktop and iOS: do not restyle it without his OK.
+ * Only a tap animates; loading a note and unticking show the final state at once.
+ */
+@Composable
+private fun TodoBox(done: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    // How far the red has flooded in (0 open, 1 filled) and how much of the tick
+    // is drawn (0..1). Both start at their final value: a note never flashes.
+    val flood = remember { Animatable(if (done) 1f else 0f) }
+    val tick = remember { Animatable(if (done) 1f else 0f) }
+    var byUser by remember { mutableStateOf(false) }
+    LaunchedEffect(done) {
+        if (done && byUser) {
+            // The fill floods in over 240ms; the tick starts 170ms in, so it draws
+            // as the last of the red settles, and takes 220ms.
+            launch { flood.animateTo(1f, tween(240, easing = FastOutSlowInEasing)) }
+            delay(170)
+            tick.animateTo(1f, tween(220, easing = EaseOut))
+        } else {
+            flood.snapTo(if (done) 1f else 0f)
+            tick.snapTo(if (done) 1f else 0f)
+        }
+        byUser = false
+    }
+    Box(
+        modifier.size(24.dp).clickable { if (!done) byUser = true; onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        // Clipped to the box's own 5dp corners, so a fill that reaches the edges
+        // keeps them.
+        Canvas(Modifier.size(16.dp).clip(RoundedCornerShape(5.dp))) {
+            val corner = 5.dp.toPx()
+            val ring = 1.5.dp.toPx()
+            // The ring is one inset stroke whose colour and width both move with the
+            // tick: muted at 1.5dp while open, the accent at 8dp (the box's middle)
+            // once done, so the red floods in from the ring.
+            val spread = lerp(ring, size.minDimension / 2, flood.value)
+            drawRoundRect(
+                androidx.compose.ui.graphics.lerp(HColors.muted, HColors.accent, flood.value),
+                topLeft = Offset(spread / 2, spread / 2),
+                size = Size(size.width - spread, size.height - spread),
+                cornerRadius = CornerRadius((corner - spread / 2).coerceAtLeast(0f)),
+                style = Stroke(spread),
+            )
+            if (tick.value > 0f) {
+                // The tick, in a 16x16 box: its bounding box (stroke included) is
+                // centred on (8, 8). Drawn along the path, as far as it has got.
+                val u = size.minDimension / 16f
+                val check = Path().apply {
+                    moveTo(4.5f * u, 8.15f * u)
+                    lineTo(7f * u, 10.75f * u)
+                    lineTo(11.5f * u, 5.25f * u)
+                }
+                val measure = PathMeasure().apply { setPath(check, false) }
+                val drawn = Path()
+                measure.getSegment(0f, measure.length * tick.value, drawn, true)
+                drawPath(drawn, Color.White, style = Stroke(width = 2f * u, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }
     }
@@ -223,9 +311,14 @@ fun NoteFileBlock(line: NoteLine, repo: Repo, opener: FileOpener, onRemove: () -
 fun RichNoteBody(blocks: List<NoteBlock>, repo: Repo, opener: FileOpener, onEdited: () -> Unit, onFocused: (RichText) -> Unit, onRemoveFile: (Int) -> Unit, modifier: Modifier = Modifier) {
     Column(modifier) {
         blocks.forEachIndexed { n, b ->
-            when (b) {
-                is NoteBlock.Text -> RichTextField(b.rt, if (n == 0) "Write here. Select text to make it bold, change its font or size, or start a list." else null, onEdited, { onFocused(b.rt) }, Modifier.fillMaxWidth().padding(vertical = 2.dp))
-                is NoteBlock.File -> NoteFileBlock(b.line, repo, opener) { onRemoveFile(n) }
+            // Keyed by the block: taking a picture out merges the text around it,
+            // and the field being written in keeps its place (and its caret)
+            // instead of sliding onto a neighbour's slot.
+            key(if (b is NoteBlock.Text) b.rt else b) {
+                when (b) {
+                    is NoteBlock.Text -> RichTextField(b.rt, if (n == 0) "Write here. Select text to make it bold, change its font or size, or start a list." else null, onEdited, { onFocused(b.rt) }, Modifier.fillMaxWidth().padding(vertical = 2.dp))
+                    is NoteBlock.File -> NoteFileBlock(b.line, repo, opener) { onRemoveFile(n) }
+                }
             }
         }
     }

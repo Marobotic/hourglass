@@ -12,11 +12,11 @@ function New-Link($path, $target, $arguments) {
   $l.Save()
 }
 # Name the window and the service "Hourglass" in Task Manager.
-if (-not (Test-Path "$root\qt\bin\Hourglass.exe") -or -not (Test-Path "$root\node\hourglassd.exe")) {
+if (-not (Test-Path "$root\window\Hourglass.exe") -or -not (Test-Path "$root\node\hourglassd.exe")) {
   try { & "$root\tools\brand.ps1" } catch { Write-Host "Could not name the processes (they will show as QML Runtime / Node.js): $_" }
 }
 $menu = [Environment]::GetFolderPath('Programs')
-New-Link "$menu\Hourglass.lnk" "wscript.exe" "`"$root\Hourglass.vbs`""
+New-Link "$menu\Hourglass.lnk" "$root\window\Hourglass.exe" ""
 & "$root\share\hourglass-service.ps1"
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$root\bin*") {

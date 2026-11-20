@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hourglass 0.3 mockup</title>
+<style>
+@font-face { font-family: "JB"; src: url(fonts/JetBrainsMono-Regular.ttf); font-weight: 400; }
+@font-face { font-family: "JB"; src: url(fonts/JetBrainsMono-Bold.ttf); font-weight: 700; }
+@font-face { font-family: "Sans"; src: url(fonts/Inter-Regular.ttf); font-weight: 400; }
+@font-face { font-family: "Sans"; src: url(fonts/Inter-Bold.ttf); font-weight: 700; }
+
+/* ---- tokens (REDESIGN.md §2) ---- */
+:root {
+  --bg: #121212; --fg: #f5f5f5;
+  --surface: color-mix(in srgb, var(--fg) 4.5%, var(--bg));
+  --surface2: color-mix(in srgb, var(--fg) 8.5%, var(--bg));
+  --surface3: color-mix(in srgb, var(--fg) 12%, var(--bg));
+  --border: color-mix(in srgb, var(--fg) 14%, var(--bg));
+  --faint: color-mix(in srgb, var(--fg) 36%, var(--bg));
+  --muted: color-mix(in srgb, var(--fg) 58%, var(--bg));
+  --accent: #B14242; --accent-ink: #db8585; --on-accent: #fff;
+  --gold: #F0BE66; --teal: #4A8B8B; --orange: #D66E36;
+  --mono: "JB", ui-monospace, monospace; --sans: "Sans", "Noto Sans", system-ui, sans-serif;
+  --quick: 120ms; --ease: cubic-bezier(.2,0,0,1); --spring: cubic-bezier(.34,1.4,.64,1);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 40px; background: #0a0a0a; color: var(--fg); font: 14px/1.45 var(--mono); display: grid; gap: 48px; justify-items: start; }
+h1.board { font: 700 13px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 0 0 -32px; }
+button { font: inherit; color: inherit; }
+
+/* ---- kit ---- */
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border: 1px solid var(--border); background: transparent; font-size: 13px; cursor: pointer; transition: background var(--quick) var(--ease), transform 80ms var(--ease); }
+.btn:hover { background: var(--surface2); }
+.btn:active { transform: scale(.975); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+.btn.subtle { border-color: transparent; color: var(--muted); }
+.btn.sq { width: 34px; padding: 0; justify-content: center; }
+.chip { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; font: 700 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; background: color-mix(in srgb, var(--c, var(--muted)) 16%, transparent); color: var(--c, var(--muted)); }
+.chip.live { --c: var(--accent-ink); }
+.section { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font: 700 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.section small { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--faint); font-size: 12px; }
+.section::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.card { background: var(--surface); border: 1px solid var(--border); position: relative; }
+.kbd { color: var(--faint); font-size: 11px; }
+.meter { height: 3px; background: var(--surface3); }
+.meter i { display: block; height: 100%; background: var(--accent); }
+
+/* ---- desktop frame ---- */
+.desk { width: 1440px; height: 900px; display: grid; grid-template-columns: 248px 1fr; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
+.side { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; }
+.brand img { width: 26px; height: 26px; image-rendering: pixelated; }
+.brand b { font-size: 17px; }
+.brand span { margin-left: auto; color: var(--faint); font-size: 12px; }
+.new { justify-content: space-between; width: 100%; height: 36px; margin-bottom: 10px; }
+.new .kbd { color: color-mix(in srgb, var(--on-accent) 65%, transparent); }
+.group { padding: 14px 10px 6px; font: 700 11px var(--mono); letter-spacing: .14em; color: var(--faint); }
+.nav { position: relative; display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; color: var(--muted); font-size: 14px; cursor: pointer; transition: background var(--quick) var(--ease), color var(--quick) var(--ease); }
+.nav:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
+.nav .ic { width: 16px; text-align: center; }
+.nav .kbd { margin-left: auto; opacity: 0; }
+.nav:hover .kbd, .nav.on .kbd { opacity: 1; }
+.nav.on { background: var(--surface2); color: var(--fg); }
+.nav.on::before { content: ""; position: absolute; left: 0; top: 9px; width: 3px; height: 18px; background: var(--accent); }
+.nav .count { margin-left: auto; min-width: 18px; height: 18px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font: 700 11px var(--mono); }
+.spacer { flex: 1; }
+.mini { padding: 10px 12px 12px 16px; margin-bottom: 8px; }
+.mini::before, .hero::before { content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 4px; background: var(--course, var(--accent)); }
+.mini .t { font-size: 13px; font-weight: 700; margin: 6px 0 2px; }
+.mini .s { font-size: 12px; color: var(--accent-ink); margin-bottom: 8px; }
+.sync { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0; font-size: 12px; color: var(--muted); }
+.sync i { width: 7px; height: 7px; background: var(--teal); }
+.sync span { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.head { height: 56px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 32px; border-bottom: 1px solid var(--border); }
+.head b { font-size: 17px; }
+.head .ctx { color: var(--muted); font-size: 13px; }
+.head .grow { flex: 1; }
+.page { flex: 1; overflow: hidden; padding: 32px 40px; }
+.col { max-width: 880px; display: grid; gap: 28px; }
+
+.date { color: var(--muted); font-size: 15px; }
+.clock { font: 700 56px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; margin-top: 6px; }
+.clock small { font-size: 22px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+
+.hero { padding: 22px 24px 0 28px; overflow: hidden; }
+.hero.live { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 9%, var(--surface)), var(--surface) 60%); animation: breathe 2.4s ease-in-out infinite; }
+@keyframes breathe { 50% { background-color: color-mix(in srgb, var(--accent) 4%, var(--surface)); } }
+.hero .row1 { display: flex; align-items: center; gap: 8px; }
+.hero .row1 .left { margin-left: auto; color: var(--accent-ink); font-size: 14px; font-weight: 700; }
+.hero h2 { font: 700 28px/1.2 var(--mono); margin: 12px 0 6px; }
+.hero .meta { color: var(--muted); font-size: 14px; }
+.hero .acts { display: flex; gap: 8px; margin: 20px 0 22px; }
+.hero .meter { margin: 0 -24px 0 -28px; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.note { padding: 14px 16px; display: grid; gap: 6px; cursor: pointer; transition: background var(--quick) var(--ease), border-color var(--quick) var(--ease); }
+.note:hover { background: var(--surface2); border-color: var(--faint); }
+.note b { font-size: 15px; display: flex; gap: 8px; align-items: center; }
+.note b .pin { color: var(--gold); }
+.note p { margin: 0; font: 13.5px/1.5 var(--sans); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.note small { color: var(--faint); font-size: 12px; }
+.note small em { font-style: normal; color: var(--accent-ink); }
+.newtile { border: 1px dashed var(--border); display: grid; place-items: center; color: var(--muted); font-size: 13px; min-height: 104px; }
+
+.tl { display: grid; }
+.tl .r { display: grid; grid-template-columns: 76px 12px 1fr auto; align-items: center; gap: 12px; height: 44px; border-bottom: 1px solid var(--border); }
+.tl .r:last-child { border-bottom: 0; }
+.tl .tm { font-variant-numeric: tabular-nums; color: var(--muted); }
+.tl .dot { width: 8px; height: 8px; background: var(--c); }
+.tl .rm { color: var(--faint); font-size: 13px; }
+.mini-rows { display: flex; gap: 12px; }
+.mini-rows .card { flex: 1; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
+.mini-rows .big { font: 700 22px var(--mono); font-variant-numeric: tabular-nums; }
+.mini-rows .lbl { color: var(--muted); font-size: 13px; }
+.mini-rows .ic { color: var(--accent-ink); }
+
+/* ---- chat (Metro) ---- */
+.chat { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.chat-head { height: 56px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--border); }
+.chat-head .who b { display: block; font-size: 15px; }
+.chat-head .who small { color: var(--muted); font-size: 12px; }
+.chat-head .glyph { color: var(--accent-ink); font-size: 20px; }
+.chat-head .grow { flex: 1; }
+.chat-head .nums { color: var(--faint); font-size: 13px; }
+.state { padding: 3px 10px; border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border)); color: var(--accent-ink); font-size: 12px; }
+.msgs { flex: 1; overflow: hidden; padding: 24px 0; display: flex; flex-direction: column; gap: 16px; }
+.msgs > * { width: min(860px, calc(100% - 64px)); margin: 0 auto; }
+.msg.user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.bubble { max-width: 80%; padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border); font-size: 14px; }
+.qtag { padding: 2px 8px; border: 1px solid var(--border); color: var(--gold); font-size: 11px; display: inline-flex; gap: 8px; align-items: center; }
+.qtag button { padding: 1px 8px; border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border)); background: color-mix(in srgb, var(--accent) 14%, transparent); font-size: 11px; cursor: pointer; }
+.tool { font: 13px/1.5 var(--mono); color: var(--fg); display: grid; gap: 2px; }
+.tool .ln { display: flex; gap: 10px; }
+.tool .d { width: 12px; text-align: center; }
+.tool .ok { color: var(--teal); } .tool .run { color: var(--accent-ink); }
+.tool .sum { color: var(--muted); }
+.tool .det { color: var(--faint); padding-left: 22px; }
+.think { color: var(--muted); font-size: 13px; }
+.reply { font: 15px/1.6 var(--sans); }
+.reply p { margin: 0 0 10px; }
+.reply b { font-weight: 700; }
+.msgs > .rcard { margin-left: max(32px, calc((100% - 860px) / 2)); width: auto; }
+.rcard { display: flex; align-items: center; gap: 14px; padding: 12px 16px 12px 18px; max-width: 420px; }
+.rcard::before { content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 4px; background: var(--accent); }
+.rcard .big { font: 700 22px var(--mono); }
+.rcard .lbl { color: var(--muted); font-size: 13px; flex: 1; }
+.acts-row { display: flex; gap: 4px; color: var(--faint); font-size: 12px; }
+.acts-row span { padding: 3px 8px; }
+.statusline { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-ink); }
+.statusline .spark { display: inline-block; width: 14px; text-align: center; animation: shimmer 2s ease-in-out infinite; }
+.statusline .spark::before { content: "✻"; animation: frames 1.2s steps(1,end) infinite; }
+@keyframes frames { 0% { content: "·"; } 14% { content: "✢"; } 28% { content: "✳"; } 42% { content: "✶"; } 57% { content: "✻"; } 71% { content: "✽"; } 85% { content: "✻"; } }
+@keyframes shimmer { 50% { color: color-mix(in srgb, var(--accent) 45%, #fff); } }
+.statusline small { color: var(--faint); font-size: 12px; }
+.composer-wrap { width: min(860px, calc(100% - 64px)); margin: 0 auto 14px; flex: none; }
+.composer { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); background: var(--surface); }
+.composer .plus { width: 34px; height: 34px; display: grid; place-items: center; color: var(--muted); font-size: 18px; }
+.composer .ta { flex: 1; color: var(--faint); font-size: 15px; }
+.sendbtn { width: 42px; height: 42px; display: grid; place-items: center; background: var(--surface3); border: 1px solid var(--border); font-size: 13px; }
+.sendbtn.go { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 18px; }
+.composer-foot { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding-top: 6px; color: var(--faint); font-size: 11px; }
+.composer-foot .tb { display: flex; gap: 8px; color: var(--muted); }
+.composer-foot .tb span + span { padding-left: 8px; border-left: 1px solid var(--border); }
+
+/* ---- phone ---- */
+.phones { display: flex; gap: 40px; }
+.phone { width: 390px; height: 844px; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--border); overflow: hidden; position: relative; }
+.status { height: 44px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 0 24px; font-size: 13px; font-weight: 700; }
+.phead { height: 56px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.phead img { width: 24px; height: 24px; image-rendering: pixelated; }
+.phead b { font-size: 17px; }
+.phead .grow { flex: 1; }
+.phead .ic { width: 40px; height: 40px; display: grid; place-items: center; color: var(--muted); font-size: 17px; }
+.pbody { flex: 1; overflow: hidden; padding: 20px 16px; display: grid; gap: 24px; align-content: start; }
+.phone .clock { font-size: 48px; }
+.phone .hero { padding: 18px 18px 0 22px; }
+.phone .hero h2 { font-size: 24px; }
+.phone .hero .acts { margin: 16px 0 18px; }
+.phone .hero .acts .btn { height: 44px; }
+.phone .hero .meter { margin: 0 -18px 0 -22px; }
+.tabs { height: 84px; flex: none; display: grid; grid-template-columns: repeat(5, 1fr); background: var(--surface); border-top: 1px solid var(--border); padding-bottom: 20px; }
+.tab { position: relative; display: grid; place-items: center; align-content: center; gap: 4px; color: var(--muted); font-size: 11px; }
+.tab .ic { font-size: 18px; }
+.tab.on { color: var(--fg); }
+.tab.on::before { content: ""; position: absolute; top: -1px; left: calc(50% - 12px); width: 24px; height: 2px; background: var(--accent); }
+.tab .badge { position: absolute; top: 8px; left: calc(50% + 6px); width: 8px; height: 8px; background: var(--accent); }
+.fab { position: absolute; right: 16px; bottom: 100px; width: 52px; height: 52px; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 24px; box-shadow: 0 10px 28px rgb(0 0 0 / .45); }
+.phone .msgs > * { width: calc(100% - 32px); }
+.phone .msgs > .rcard { margin-left: 16px; width: auto; }
+.phone .composer-wrap { width: calc(100% - 32px); margin-bottom: 8px; }
+.phone .chat-head { padding: 0 16px; }
+</style>
+</head>
+<body>
+
+<h1 class="board">Desktop · Now</h1>
+<div class="desk">
+  <aside class="side">
+    <div class="brand"><img src="../../assets/hourglass.svg" alt=""><b>Hourglass</b><span>0.3.0</span></div>
+    <button class="btn primary new">＋ New <span class="kbd">Ctrl N</span></button>
+    <div class="group">TODAY</div>
+    <div class="nav on"><span class="ic">◷</span>Now<span class="kbd">1</span></div>
+    <div class="nav"><span class="ic">▦</span>Schedule<span class="kbd">2</span></div>
+    <div class="nav"><span class="ic">☑</span>Attendance<span class="kbd">3</span></div>
+    <div class="group">WRITE</div>
+    <div class="nav"><span class="ic">✎</span>Notes<span class="kbd">4</span></div>
+    <div class="nav"><span class="ic">▤</span>Drive<span class="kbd">5</span></div>
+    <div class="group">TIME</div>
+    <div class="nav"><span class="ic">◔</span>Alarms<span class="kbd">6</span></div>
+    <div class="nav"><span class="ic">⧖</span>Timers<span class="kbd">7</span></div>
+    <div class="nav"><span class="ic">◍</span>World clock<span class="kbd">8</span></div>
+    <div class="group">ASK</div>
+    <div class="nav"><span class="ic">✦</span>Assistant<span class="count">1</span></div>
+    <div class="spacer"></div>
+    <div class="card mini"><span class="chip live">● Live</span><div class="t">Algorithms</div><div class="s">23 min left</div><div class="meter"><i style="width:72%"></i></div></div>
+    <div class="nav"><span class="ic">⚙</span>Settings<span class="kbd">0</span></div>
+    <div class="sync"><i></i>Synced<span>· mi@marobotic.dev</span></div>
+  </aside>
+  <main class="main">
+    <div class="head"><b>Now</b><span class="ctx">Algorithms · live until 10:00</span><span class="grow"></span><button class="btn">✎ Note for this class</button><button class="btn subtle">Ctrl K</button></div>
+    <div class="page"><div class="col">
+      <div><div class="date">Tuesday, 6 October</div><div class="clock">09:37<small>:12</small></div></div>
+      <div class="card hero live" style="--course:#B14242">
+        <div class="row1"><span class="chip live">● Live</span><span class="chip">Lecture</span><span class="left">23 min left</span></div>
+        <h2>Algorithms</h2>
+        <div class="meta">08:00 – 10:00 · Room 4.12 · Dr. Okafor</div>
+        <div class="acts"><button class="btn primary">✎ Notes for this class</button><button class="btn">☑ Mark attended</button><button class="btn sq">⋯</button></div>
+        <div class="meter"><i style="width:72%"></i></div>
+      </div>
+      <div>
+        <div class="section">Notes for this session <small>2</small></div>
+        <div class="grid2">
+          <div class="card note"><b>Dynamic programming</b><p>Memoisation vs tabulation. Knapsack table: rows are items, columns are capacity; fill bottom-up and read the answer from the corner.</p><small><em>Algorithms</em> · Today</small></div>
+          <div class="card note"><b><span class="pin">▲</span>Exam formula sheet</b><p>Master theorem cases, amortised analysis, the three graph traversals and when each one wins.</p><small><em>Algorithms</em> · Pinned</small></div>
+        </div>
+      </div>
+      <div>
+        <div class="section">Coming up <small>3 more today</small></div>
+        <div class="tl">
+          <div class="r"><span class="tm">11:00</span><i class="dot" style="--c:#4A8B8B"></i><span>Linear Algebra · Tutorial</span><span class="rm">B204</span></div>
+          <div class="r"><span class="tm">13:30</span><i class="dot" style="--c:#7E6BAF"></i><span>Printmaking Techniques</span><span class="rm">NB631</span></div>
+          <div class="r"><span class="tm">16:00</span><i class="dot" style="--c:#F0BE66"></i><span>Study group</span><span class="rm">Library</span></div>
+        </div>
+      </div>
+      <div class="mini-rows">
+        <div class="card"><span class="ic">⧖</span><span class="big">18:42</span><span class="lbl">Problem set 3</span></div>
+        <div class="card"><span class="ic">◔</span><span class="big">07:15</span><span class="lbl">Wake up · Mon–Fri</span></div>
+      </div>
+    </div></div>
+  </main>
+</div>
+
+<h1 class="board">Desktop · Assistant (Metro's AI window)</h1>
+<div class="desk">
+  <aside class="side">
+    <div class="brand"><img src="../../assets/hourglass.svg" alt=""><b>Hourglass</b><span>0.3.0</span></div>
+    <button class="btn primary new">＋ New <span class="kbd">Ctrl N</span></button>
+    <div class="group">TODAY</div>
+    <div class="nav"><span class="ic">◷</span>Now<span class="kbd">1</span></div>
+    <div class="nav"><span class="ic">▦</span>Schedule<span class="kbd">2</span></div>
+    <div class="nav"><span class="ic">☑</span>Attendance<span class="kbd">3</span></div>
+    <div class="group">WRITE</div>
+    <div class="nav"><span class="ic">✎</span>Notes<span class="kbd">4</span></div>
+    <div class="nav"><span class="ic">▤</span>Drive<span class="kbd">5</span></div>
+    <div class="group">TIME</div>
+    <div class="nav"><span class="ic">◔</span>Alarms<span class="kbd">6</span></div>
+    <div class="nav"><span class="ic">⧖</span>Timers<span class="kbd">7</span></div>
+    <div class="nav"><span class="ic">◍</span>World clock<span class="kbd">8</span></div>
+    <div class="group">ASK</div>
+    <div class="nav on"><span class="ic">✦</span>Assistant<span class="kbd">9</span></div>
+    <div class="spacer"></div>
+    <div class="nav"><span class="ic">⚙</span>Settings<span class="kbd">0</span></div>
+    <div class="sync"><i></i>Synced<span>· mi@marobotic.dev</span></div>
+  </aside>
+  <main class="main"><div class="chat">
+    <div class="chat-head"><span class="glyph">✦</span><div class="who"><b>Assistant</b><small>Anthropic · Haiku 5.5 · medium</small></div><span class="grow"></span><span class="nums">12k tokens · 34% usage</span><span class="state">working</span><button class="btn sq subtle">⋯</button></div>
+    <div class="msgs">
+      <div class="msg user"><div class="bubble">Wake me at 7:30 on weekdays, and move my Thursday lab to 2 PM</div></div>
+      <div class="tool"><div class="ln"><span class="d ok">✓</span><span>Set an alarm <span class="sum">07:30 · Mon–Fri</span></span></div></div>
+      <div class="tool"><div class="ln"><span class="d ok">✓</span><span>Read your schedule <span class="sum">this week</span></span></div><div class="det">└ 9 sessions, 1 lab on Thursday</div></div>
+      <div class="think">▸ Thought for 4 s</div>
+      <div class="reply"><p>Done. Your alarm rings at <b>7:30 every weekday</b>.</p></div>
+      <div class="card rcard"><span class="big">07:30</span><span class="lbl">Wake up · Mon–Fri</span><button class="btn">Open</button></div>
+      <div class="acts-row"><span>⎘ Copy</span><span>❝ Quote</span><span>↻ Retry</span><span>↶ Undo</span></div>
+      <div class="tool"><div class="ln"><span class="d run">●</span><span>Move an event <span class="sum">Physics lab · Thu → 14:00</span></span></div></div>
+      <div class="msg user"><div class="bubble">and remind me 15 minutes before it</div><span class="qtag">Queued · after this reply <button>Send now</button></span></div>
+      <div class="statusline"><span class="spark"></span>Moving an event… <small>12 s · 1.2k tokens</small></div>
+    </div>
+    <div class="composer-wrap">
+      <div class="composer"><span class="plus">＋</span><span class="ta">Ask Hourglass…</span><span class="sendbtn">■</span></div>
+      <div class="composer-foot"><span>Anthropic · your key</span><span class="tb"><span>Haiku 5.5 · Medium ⌄</span><span>Auto ⌄</span></span></div>
+    </div>
+  </div></main>
+</div>
+
+<h1 class="board">Phone · Now and Ask (Android and iOS identical)</h1>
+<div class="phones">
+  <div class="phone">
+    <div class="status"><span>9:37</span><span>▂▄▆ ▮</span></div>
+    <div class="phead"><img src="../../assets/hourglass.svg" alt=""><b>Hourglass</b><span class="grow"></span><span class="ic">⚙</span></div>
+    <div class="pbody">
+      <div><div class="date">Tuesday, 6 October</div><div class="clock">09:37<small>:12</small></div></div>
+      <div class="card hero live">
+        <div class="row1"><span class="chip live">● Live</span><span class="chip">Lecture</span><span class="left">23 min</span></div>
+        <h2>Algorithms</h2>
+        <div class="meta">08:00 – 10:00 · Room 4.12</div>
+        <div class="acts"><button class="btn primary">✎ Notes for this class</button><button class="btn sq">⋯</button></div>
+        <div class="meter"><i style="width:72%"></i></div>
+      </div>
+      <div>
+        <div class="section">Notes <small>2</small></div>
+        <div class="card note"><b>Dynamic programming</b><p>Memoisation vs tabulation. Knapsack table: rows are items, columns are capacity.</p><small><em>Algorithms</em> · Today</small></div>
+      </div>
+      <div>
+        <div class="section">Coming up</div>
+        <div class="tl">
+          <div class="r"><span class="tm">11:00</span><i class="dot" style="--c:#4A8B8B"></i><span>Linear Algebra</span><span class="rm">B204</span></div>
+          <div class="r"><span class="tm">13:30</span><i class="dot" style="--c:#7E6BAF"></i><span>Printmaking</span><span class="rm">NB631</span></div>
+        </div>
+      </div>
+    </div>
+    <span class="fab">＋</span>
+    <nav class="tabs"><span class="tab on"><span class="ic">◷</span>Now</span><span class="tab"><span class="ic">▦</span>Schedule</span><span class="tab"><span class="ic">✎</span>Notes</span><span class="tab"><span class="ic">◔</span>Time</span><span class="tab"><span class="ic">✦</span>Ask<i class="badge"></i></span></nav>
+  </div>
+
+  <div class="phone">
+    <div class="status"><span>9:37</span><span>▂▄▆ ▮</span></div>
+    <div class="chat">
+      <div class="chat-head"><span class="glyph">✦</span><div class="who"><b>Assistant</b><small>Haiku 5.5 · medium</small></div><span class="grow"></span><span class="state">working</span></div>
+      <div class="msgs">
+        <div class="msg user"><div class="bubble">Wake me at 7:30 on weekdays</div></div>
+        <div class="tool"><div class="ln"><span class="d ok">✓</span><span>Set an alarm <span class="sum">07:30 · Mon–Fri</span></span></div></div>
+        <div class="reply"><p>Done. Your alarm rings at <b>7:30 every weekday</b>.</p></div>
+        <div class="card rcard"><span class="big">07:30</span><span class="lbl">Mon–Fri</span><button class="btn">Open</button></div>
+        <div class="msg user"><div class="bubble">and start a 25 minute timer</div></div>
+        <div class="tool"><div class="ln"><span class="d run">●</span><span>Start a timer <span class="sum">25 min</span></span></div></div>
+        <div class="statusline"><span class="spark"></span>Starting a timer… <small>4 s</small></div>
+      </div>
+      <div class="composer-wrap">
+        <div class="composer"><span class="plus">＋</span><span class="ta">Ask Hourglass…</span><span class="sendbtn">■</span></div>
+        <div class="composer-foot"><span></span><span class="tb"><span>Haiku 5.5 · Medium ⌄</span><span>Auto ⌄</span></span></div>
+      </div>
+    </div>
+    <nav class="tabs"><span class="tab"><span class="ic">◷</span>Now</span><span class="tab"><span class="ic">▦</span>Schedule</span><span class="tab"><span class="ic">✎</span>Notes</span><span class="tab"><span class="ic">◔</span>Time</span><span class="tab on"><span class="ic">✦</span>Ask</span></nav>
+  </div>
+</div>
+</body>
+</html>

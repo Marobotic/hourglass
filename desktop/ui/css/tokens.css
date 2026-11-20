@@ -1,0 +1,61 @@
+/* Hourglass tokens (docs/REDESIGN.md §2). The seven palette colours can be replaced at run time from the
+   service's theme (Omarchy on Linux); everything else is mixed from them, so a re-theme follows. */
+@font-face { font-family: "JetBrainsMono Nerd Font"; src: url(../fonts/JetBrainsMonoNerdFont-Regular.ttf); font-weight: 400; font-display: block; }
+@font-face { font-family: "JetBrainsMono Nerd Font"; src: url(../fonts/JetBrainsMonoNerdFont-Bold.ttf); font-weight: 700; font-display: block; }
+@font-face { font-family: "Inter"; src: url(../fonts/Inter-Regular.ttf); font-weight: 400; }
+@font-face { font-family: "Inter"; src: url(../fonts/Inter-Bold.ttf); font-weight: 700; }
+@font-face { font-family: "Lora"; src: url(../fonts/Lora-Regular.ttf); font-weight: 400; }
+@font-face { font-family: "Lora"; src: url(../fonts/Lora-Bold.ttf); font-weight: 700; }
+@font-face { font-family: "Playfair Display"; src: url(../fonts/PlayfairDisplay-Regular.ttf); font-weight: 400; }
+@font-face { font-family: "Playfair Display"; src: url(../fonts/PlayfairDisplay-Bold.ttf); font-weight: 700; }
+@font-face { font-family: "Caveat"; src: url(../fonts/Caveat-Regular.ttf); font-weight: 400; }
+@font-face { font-family: "Caveat"; src: url(../fonts/Caveat-Bold.ttf); font-weight: 700; }
+@font-face { font-family: "JetBrains Mono"; src: url(../fonts/JetBrainsMono-Regular.ttf); font-weight: 400; }
+@font-face { font-family: "JetBrains Mono"; src: url(../fonts/JetBrainsMono-Bold.ttf); font-weight: 700; }
+
+:root {
+  color-scheme: dark;
+  --bg: #121212;
+  --fg: #f5f5f5;
+  --accent: #B14242;
+  --orange: #D66E36;
+  --gold: #F0BE66;
+  --teal: #4A8B8B;
+  --grey: #949494;
+
+  --surface: color-mix(in srgb, var(--fg) 4.5%, var(--bg));
+  --surface2: color-mix(in srgb, var(--fg) 8.5%, var(--bg));
+  --surface3: color-mix(in srgb, var(--fg) 12%, var(--bg));
+  --border: color-mix(in srgb, var(--fg) 14%, var(--bg));
+  --faint: color-mix(in srgb, var(--fg) 36%, var(--bg));
+  --muted: color-mix(in srgb, var(--fg) 58%, var(--bg));
+  /* Red text on a dark page: lighter, so small text stays readable. Fills keep the identity red. */
+  --accent-ink: color-mix(in srgb, var(--accent) 62%, white);
+  --on-accent: #fff;
+  --red: var(--accent-ink);
+
+  --mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
+  --sans: "Noto Sans", "Inter", system-ui, sans-serif;
+
+  --quick: 120ms;
+  --ease: cubic-bezier(.2, 0, 0, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --spring: cubic-bezier(.34, 1.4, .64, 1);
+  --t-press: 80ms;
+  --t-exit: 120ms;
+  --shadow: 0 14px 36px rgb(0 0 0 / .4);
+
+  --pad: 32px;
+  --gap: 28px;
+  --side: 248px;
+}
+html.light {
+  color-scheme: light;
+  --surface: color-mix(in srgb, var(--fg) 3.5%, var(--bg));
+  --surface2: color-mix(in srgb, var(--fg) 7%, var(--bg));
+  --border: color-mix(in srgb, var(--fg) 16%, var(--bg));
+  --accent-ink: var(--accent);
+  --shadow: 0 14px 36px rgb(0 0 0 / .14);
+}
+@media (min-width: 1280px) { :root { --pad: 40px; } }
+@media (max-width: 979px) { :root { --side: 64px; } }

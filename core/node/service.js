@@ -18,7 +18,21 @@ export class Service {
   // The home clock (synced) sets the app's time zone everywhere; before one
   // exists, the device setting or the system zone.
   get tz() {
-    return this.store.all("clocks").find((c) => c.home && !c.deleted)?.zone || this.store.meta("tz") || systemZone();
+    return this.homeClock()?.zone || this.store.meta("tz") || systemZone();
+  }
+
+  // Live clocks in display order (position, then the older first, then id: every device agrees).
+  activeClocks() {
+    return this.store
+      .all("clocks")
+      .filter((c) => !c.deleted)
+      .sort((a, b) => a.position - b.position || a.updated_at - b.updated_at || String(a.id).localeCompare(String(b.id)));
+  }
+
+  // The one clock the app runs on: the first marked home. Devices that were
+  // offline can each mark one, and sync keeps both; this pick is the same on all.
+  homeClock() {
+    return this.activeClocks().find((c) => c.home) || null;
   }
 
   today() {
@@ -741,13 +755,24 @@ export class Service {
 
   // Ensure the account has at least one world clock marked as home.
   // Defaults to the given zone, or the configured tz / systemZone().
+  // Also repairs what sync merged: extra homes are cleared and a city added on
+  // two devices is kept once (the home one, else the first).
   ensureHomeClock(zone = this.store.meta("tz") || systemZone()) {
-    const active = this.store.all("clocks").filter((c) => !c.deleted);
+    const active = this.activeClocks();
     if (active.length > 0) {
-      if (!active.some((c) => c.home)) {
-        this.store.upsert("clocks", { id: active[0].id, home: 1 });
+      const home = this.homeClock() || active[0];
+      const kept = new Set([home.zone]);
+      for (const c of active) {
+        if (c.id === home.id) {
+          if (!c.home) this.store.upsert("clocks", { id: c.id, home: 1 });
+        } else if (kept.has(c.zone)) {
+          this.store.remove("clocks", c.id);
+        } else {
+          kept.add(c.zone);
+          if (c.home) this.store.upsert("clocks", { id: c.id, home: 0 });
+        }
       }
-      return active.find((c) => c.home) || active[0];
+      return this.homeClock();
     }
     try {
       const z = resolveZone(zone || this.store.meta("tz") || systemZone());
@@ -766,15 +791,12 @@ export class Service {
   // Clocks in display order with their current time, day and difference
   // from the home zone (the one Hourglass runs on).
   listClocks() {
-    this.ensureHomeClock();
+    const homeId = this.ensureHomeClock()?.id;
     const now = this.clock();
     const home = this.tz;
     const homeOff = this.offsetMin(home, now);
     const homeDate = localParts(now, home).date;
-    return this.store
-      .all("clocks")
-      .filter((c) => !c.deleted)
-      .sort((a, b) => a.position - b.position || a.updated_at - b.updated_at)
+    return this.activeClocks()
       .map((c) => {
         const p = localParts(now, c.zone);
         const off = this.offsetMin(c.zone, now);
@@ -782,7 +804,7 @@ export class Service {
         return {
           ...c,
           label: c.label || cityOf(c.zone),
-          home: !!c.home || c.zone === home,
+          home: c.id === homeId,
           offset_min: off,
           diff_min: diff,
           date: p.date,

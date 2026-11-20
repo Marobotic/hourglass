@@ -185,12 +185,14 @@ fun NoteScreen(nav: Nav, id: String, version: Int) {
             }
             Spacer(Modifier.height(8.dp))
             DateField(live.str("session_date"), { save(); repo.updateNote(id, mapOf("session_date" to it)) }, "DATE", Modifier.fillMaxWidth(), clearable = true)
-            BasicTextField(
-                title, { title = it; dirty = true }, Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 26.sp),
-                cursorBrush = SolidColor(HColors.accent), singleLine = true,
-                decorationBox = { inner -> if (title.isEmpty()) T("Title", 26, HColors.faint, bold = true); inner() },
-            )
+            NoteTextSelection {
+                BasicTextField(
+                    title, { title = it; dirty = true }, Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    textStyle = TextStyle(color = HColors.fg, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 26.sp),
+                    cursorBrush = SolidColor(HColors.accent), singleLine = true,
+                    decorationBox = { inner -> if (title.isEmpty()) T("Title", 26, HColors.faint, bold = true); inner() },
+                )
+            }
             Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))
             NoteToolbar(focused, tick, { edited() }, onPicture = { pickPictures.launch("image/*") }, onFile = { pickFiles.launch(arrayOf("*/*")) })
             Box(Modifier.fillMaxWidth().height(1.dp).background(HColors.border))

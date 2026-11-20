@@ -16,8 +16,9 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the model, sync and UX rules.
 |---|---|---|
 | `core/` | Shared rules in JS: dates, recurrence, "now", alarms, model. Plus the SQLite store and service used by server and Linux | 11 tests |
 | `server/` | Node server: REST, sync, iCal feed, MCP endpoint, OpenAPI for Custom GPTs | 8 tests |
-| `linux/` | QML app + Node sidecar (local replica, alarms, sync). Follows the Omarchy theme | Installed |
-| `windows/` | Same QML app + Node sidecar. `app/`, `sidecar/`, `tools/` are byte-identical copies of the Linux ones | Builds |
+| `desktop/` | The window (0.3): Tauri 2 + HTML/JS, one app for Windows and Linux. The assistant is Metro's AI window | Builds on Windows |
+| `linux/` | Node sidecar (local replica, alarms, sync) and the launcher. `app/` is the old QML window, used until the Tauri one is built on Linux | Installed |
+| `windows/` | Node sidecar + launcher + installer; the window is `desktop/` built into `windows\window\Hourglass.exe` | Builds |
 | `android/` | Kotlin + Compose. Offline store, sync, exact alarms with a full-screen ring | Builds; 6 Kotlin core tests; Paparazzi screenshots in `app/src/test/snapshots` |
 | `ios/` | SwiftUI, XcodeGen, built by GitHub Actions | Needs a CI run |
 | `skill/hourglass/` | Agent skill: the model, the tools, examples | Linked for Claude, Codex, agents |
@@ -46,14 +47,16 @@ and serves the same REST and MCP API as the server. Data lives in
 
 ```powershell
 cd windows
-# add node\node.exe and qt\qml.exe to this folder (or have node/qml on PATH)
+# add node\node.exe here, and build the window into window\Hourglass.exe:
+#   cd ..\desktop; npm ci; node build.mjs; cargo build --release --manifest-path src-tauri\Cargo.toml
 .\Install.ps1       # Start menu entry, bin\ on PATH, service at sign-in
 # then: hourglass / hourglass-cli now
 ```
 
-Same keys, same sidecar port, same sync as Linux. The UI is the same QML
-(`windows\app` is a byte-identical copy of `linux\app`), and alarms ring via
-Windows notifications with `node:sqlite` storage handled by the sidecar.
+Same keys, same sidecar port, same sync as Linux. The window is the Tauri app in
+`desktop/` (see desktop/README.md), and alarms ring via Windows notifications with
+`node:sqlite` storage handled by the sidecar. `tools\build-windows-local.ps1` builds
+the installer.
 
 ## Server
 

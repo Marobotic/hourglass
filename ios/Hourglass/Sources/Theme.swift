@@ -1,15 +1,19 @@
 import SwiftUI
 
-// Hourglass palette, from the dotrb Omarchy theme.
+// Hourglass tokens (docs/REDESIGN.md §2): the same numbers as the desktop window and Android. The surfaces are the
+// desktop's mixes of bg and fg (surface 4.5 %, surface2 8.5 %, surface3 12 %, border 14 %, faint 36 %, muted 58 %).
 enum H {
     static let bg = Color(hex: "#121212")
-    static let surface = Color(hex: "#1B1B1B")
-    static let surface2 = Color(hex: "#242424")
-    static let border = Color(hex: "#2E2E2E")
+    static let surface = Color(hex: "#1C1C1C")
+    static let surface2 = Color(hex: "#252525")
+    static let surface3 = Color(hex: "#2D2D2D")
+    static let border = Color(hex: "#323232")
     static let fg = Color(hex: "#F5F5F5")
-    static let muted = Color(hex: "#A3A3A3")
-    static let faint = Color(hex: "#6B6B6B")
+    static let muted = Color(hex: "#969696")
+    static let faint = Color(hex: "#646464")
     static let accent = Color(hex: "#B14242")
+    // Red text on a dark screen: lighter, so small text stays readable. Fills keep the identity red.
+    static let accentInk = Color(hex: "#DB8585")
     static let orange = Color(hex: "#D66E36")
     static let gold = Color(hex: "#F0BE66")
     static let teal = Color(hex: "#4A8B8B")
@@ -68,7 +72,7 @@ struct HButton: View {
         self.title = title; self.icon = icon; self.primary = primary; self.danger = danger; self.enabled = enabled; self.action = action
     }
     var body: some View {
-        let ink: Color = primary ? .white : danger ? H.accent : H.fg
+        let ink: Color = primary ? .white : danger ? H.accentInk : H.fg
         Button(action: action) {
             HStack(spacing: 8) {
                 if let icon { Image(systemName: icon).font(.system(size: 15, weight: .medium)) }
@@ -90,7 +94,7 @@ struct Chip: View {
     let tint: Color
     var body: some View {
         Text(text.uppercased()).font(H.mono(10, bold: true)).tracking(0.8).foregroundStyle(tint)
-            .padding(.horizontal, 7).padding(.vertical, 3).background(tint.opacity(0.18)).clipShape(Rectangle())
+            .padding(.horizontal, 7).padding(.vertical, 3).background(tint.opacity(0.16)).clipShape(Rectangle())
     }
 }
 
@@ -104,6 +108,31 @@ struct SectionLabel: View {
             Rectangle().fill(H.border).frame(height: 1)
         }
         .padding(.top, 8).padding(.bottom, 2)
+    }
+}
+
+// The page header every screen draws (REDESIGN §3 Phones): 56 tall, the title (or the logo on Now), actions on the
+// right, a hairline under it. Same component on Android (PageHeader in Theme.kt).
+struct PageHeader<Actions: View>: View {
+    let title: String
+    var logo = false
+    var back: (() -> Void)? = nil
+    @ViewBuilder var actions: () -> Actions
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                if let back {
+                    Button(action: back) { Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium)).foregroundStyle(H.fg).frame(width: 44, height: 44) }
+                }
+                if logo { PixelLogo(cell: 2.6, alive: true) }
+                T(title, 17, bold: true, lines: 1)
+                Spacer(minLength: 0)
+                actions()
+            }
+            .padding(.leading, back == nil ? 16 : 4).padding(.trailing, 4)
+            .frame(height: 56)
+            Rectangle().fill(H.border).frame(height: 1)
+        }
     }
 }
 

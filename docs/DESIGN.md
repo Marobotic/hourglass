@@ -23,7 +23,8 @@ already open.
 |---|---|---|
 | `core/` | JavaScript, no deps | Recurrence, "now" resolution, validation. Shared by server and Linux |
 | `server/` | Node 22+, `node:sqlite`, MCP SDK | Source of truth, sync, REST, MCP, iCal |
-| `linux/` | QML window + Node sidecar | Sidecar holds the local replica, fires alarms, syncs |
+| `desktop/` | Tauri 2 + HTML/JS window (Windows, Linux) | Every page, and Metro's AI window for the assistant. See docs/REDESIGN.md |
+| `linux/`, `windows/` | Node sidecar + launcher (+ installer on Windows) | Sidecar holds the local replica, fires alarms, syncs; it starts the window |
 | `android/` | Kotlin, Jetpack Compose | AlarmManager exact alarms, full-screen alarm UI |
 | `ios/` | SwiftUI, XcodeGen, built on GitHub Actions | AlarmKit, App Intents |
 | `skill/` | `SKILL.md` | Teaches any agent the model and the tools |
