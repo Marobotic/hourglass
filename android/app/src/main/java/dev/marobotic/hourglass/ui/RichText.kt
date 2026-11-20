@@ -91,7 +91,7 @@ class RichText(text: String = "", styles: List<Run>? = null) {
         val old = value
         if (new.text == old.text) {
             if (pending != null && new.selection.start != old.selection.start) pending = null
-            value = new
+            value = offBox(new)
             return false
         }
         val a = old.text
@@ -104,9 +104,26 @@ class RichText(text: String = "", styles: List<Run>? = null) {
         val typed = pending ?: typingStyle(p)
         pending = null
         styles = styles.subList(0, minOf(p, styles.size)) + List(inserted) { typed } + styles.subList(minOf(a.length - s, styles.size), styles.size)
-        value = new
+        value = offBox(new)
         if (inserted == 1 && b[p] == '\n' && new.selection.collapsed && new.selection.start == p + 1) continueList(p)
         return true
+    }
+
+    // The to-do's hidden ☐/☑ and the space after it are drawn over by the themed
+    // box: a caret there would sit under it, and text typed there would be
+    // hidden. The earliest the caret can sit - and be seen - is the item's own
+    // text (the desktop editor keeps clear of the box the same way).
+    private fun offBox(v: TextFieldValue): TextFieldValue {
+        val sel = v.selection
+        if (!sel.collapsed) return v
+        val t = v.text
+        val c = sel.start
+        val ls = t.lastIndexOf('\n', c - 1) + 1
+        val le = t.indexOf('\n', c).let { if (it < 0) t.length else it }
+        val k = NoteFormat.kindOf(t.substring(ls, le))
+        if (k.kind != "todo") return v
+        val marker = ls + k.indent * 2
+        return if (c == marker || c == marker + 1) v.copy(selection = TextRange(marker + 2)) else v
     }
 
     private fun lineStart(pos: Int) = text.lastIndexOf('\n', pos - 1) + 1
@@ -229,7 +246,7 @@ class RichText(text: String = "", styles: List<Run>? = null) {
         val c = text.getOrNull(at)?.toString() ?: return
         val to = when (c) { NoteFormat.BOX -> NoteFormat.CHECKED; NoteFormat.CHECKED -> NoteFormat.BOX; else -> return }
         val sel = value.selection
-        value = TextFieldValue(text.substring(0, at) + to + text.substring(at + 1), sel)
+        value = offBox(TextFieldValue(text.substring(0, at) + to + text.substring(at + 1), sel))
     }
 
     /** Split at the end of the cursor's line: this keeps the start, the result holds the rest (or null). */

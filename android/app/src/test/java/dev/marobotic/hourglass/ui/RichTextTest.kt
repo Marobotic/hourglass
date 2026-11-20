@@ -93,4 +93,25 @@ class RichTextTest {
         rt.onChange(TextFieldValue("a" + rt.text.substring(3), TextRange(1)))
         assertEquals("a**cd** ef", md(rt))
     }
+
+    // The themed box is drawn over the hidden ☐ and the space after it: a caret
+    // there would be under the box, so it moves on to the item's own text.
+    @Test fun theCaretSkipsTheBoxesSpace() {
+        val rt = load("- [ ] one")
+        assertEquals("☐ one", rt.text)
+        select(rt, 0, 0)
+        assertEquals(2, rt.value.selection.start)
+        select(rt, 1, 1)
+        assertEquals(2, rt.value.selection.start)
+        // An indented to-do starts after its indent.
+        val nested = RichText("  ☐ one")
+        select(nested, 3, 3)
+        assertEquals(4, nested.value.selection.start)
+        // A plain space is left alone, and a selection may still take it in.
+        val plain = load("a b")
+        select(plain, 1, 1)
+        assertEquals(1, plain.value.selection.start)
+        select(rt, 0, 3)
+        assertEquals(TextRange(0, 3), rt.value.selection)
+    }
 }

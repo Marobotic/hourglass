@@ -11,6 +11,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +46,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,6 +87,19 @@ object HColors {
     val orange = Color(0xFFD66E36)
     val gold = Color(0xFFF0BE66)
     val teal = Color(0xFF4A8B8B)
+}
+
+// Text picked in a note (and every field like it): an accent wash behind it and
+// accent handles, the same as the desktop editor, whatever theme default is in
+// reach.
+val HTextSelection = TextSelectionColors(
+    handleColor = HColors.accent,
+    backgroundColor = HColors.accent.copy(alpha = 0.45f),
+)
+
+@Composable
+fun NoteTextSelection(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalTextSelectionColors provides HTextSelection, content = content)
 }
 
 val Mono = FontFamily(Font(R.font.jetbrains_mono_regular, FontWeight.Normal), Font(R.font.jetbrains_mono_bold, FontWeight.Bold))
