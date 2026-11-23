@@ -77,7 +77,7 @@ private struct CourseAttendance: View {
             .padding(.top, 10)
             if open > 0 {
                 HButton("Mark the \(open) unmarked as attended") {
-                    for s in sessions where s.mark == nil && !s.future { store.setMark(s.occ, "attended") }
+                    store.setMarks(sessions.filter { $0.mark == nil && !$0.future }.map(\.occ), "attended")
                 }
                 .padding(.top, 10)
             }

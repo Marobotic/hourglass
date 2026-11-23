@@ -41,6 +41,10 @@ class Store(private val file: File) {
     private val _version = MutableStateFlow(0)
     val version: StateFlow<Int> = _version
     var onLocalChange: (() -> Unit)? = null
+    // Marks only: no alarm/reminder rebuild, just the sync.
+    var onQuietChange: (() -> Unit)? = null
+    private val writer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "store-writer").apply { isDaemon = true } }
+    private var writeQueued = false
 
     init {
         load()
@@ -60,8 +64,19 @@ class Store(private val file: File) {
         }
     }
 
+    // The tables are already updated in memory, so the screen can redraw at once;
+    // the file is written a moment later, off the calling (main) thread.
     @Synchronized
     private fun save() {
+        _version.value++
+        if (writeQueued) return
+        writeQueued = true
+        writer.schedule({ flush() }, 250, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    @Synchronized
+    private fun write() {
+        writeQueued = false
         val t = JSONObject()
         for (name in TABLES) t.put(name, JSONArray(tables.getValue(name).values.toList()))
         val tmp = File(file.parentFile, file.name + ".tmp")
@@ -70,7 +85,6 @@ class Store(private val file: File) {
             file.delete()
             tmp.renameTo(file)
         }
-        _version.value++
     }
 
     @Synchronized fun meta(key: String): String? = if (meta.has(key) && !meta.isNull(key)) meta.optString(key) else null
@@ -82,7 +96,7 @@ class Store(private val file: File) {
 
     // Create or patch. Returns the saved row.
     @Synchronized
-    fun upsert(table: String, patch: Map<String, Any?>, id: String? = null): JSONObject {
+    fun upsert(table: String, patch: Map<String, Any?>, id: String? = null, quiet: Boolean = false): JSONObject {
         val existing = id?.let { tables.getValue(table)[it] }
         val row = existing?.let { JSONObject(it.toString()) } ?: JSONObject().apply {
             put("id", id ?: UUID.randomUUID().toString())
@@ -95,16 +109,16 @@ class Store(private val file: File) {
         if (!row.has("rev")) row.put("rev", 0)
         tables.getValue(table)[row.id] = row
         save()
-        onLocalChange?.invoke()
+        if (quiet) onQuietChange?.invoke() else onLocalChange?.invoke()
         return JSONObject(row.toString())
     }
 
     @Synchronized
-    fun remove(table: String, id: String) {
+    fun remove(table: String, id: String, quiet: Boolean = false) {
         val existing = tables.getValue(table)[id] ?: return
         existing.put("deleted", 1).put("dirty", 1).put("updated_at", maxOf(System.currentTimeMillis(), existing.updatedAt + 1))
         save()
-        onLocalChange?.invoke()
+        if (quiet) onQuietChange?.invoke() else onLocalChange?.invoke()
     }
 
     // --- sync ---
@@ -140,5 +154,5 @@ class Store(private val file: File) {
         save()
     }
 
-    @Synchronized fun flush() = save()
+    @Synchronized fun flush() = write()
 }

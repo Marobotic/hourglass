@@ -116,6 +116,16 @@ final class Store: ObservableObject {
     // Every course's sessions, from its first to the end of term (the last
     // "until", at most six months out): one per day with its mark, upcoming
     // flagged. Same rule as the desktop's Attendance page.
+    // The recurrence expansion is the costly part and does not depend on the marks,
+    // so it is cached until a course or event changes; a tap only re-reads the marks.
+    private var attBase: (key: Int, from: String, to: String, occs: [Occ])?
+    private var attKey: Int {
+        var h = Hasher()
+        for c in db.courses { h.combine(c.id); h.combine(c.updated_at); h.combine(c.deleted) }
+        for e in db.events { h.combine(e.id); h.combine(e.updated_at); h.combine(e.deleted) }
+        h.combine(Dates.today()); h.combine(Dates.zone.identifier)
+        return h.finalize()
+    }
     func attendanceSessions(_ now: Int64 = nowMs()) -> [(Course, [Session])] {
         let mine = events.filter { $0.course_id != nil }
         guard !mine.isEmpty else { return courses.map { ($0, []) } }
@@ -125,9 +135,15 @@ final class Store: ObservableObject {
         var to = min(last, Dates.add(today, 183))
         if to < today { to = today }
         var by: [String: [String: Session]] = [:]
-        for o in occurrences(from, to) {
+        let key = attKey
+        if attBase?.key != key || attBase?.from != from || attBase?.to != to {
+            attBase = (key, from, to, Recurrence.expand(db.events, Dictionary(uniqueKeysWithValues: db.courses.map { ($0.id, $0) }), from, to))
+        }
+        let marks = markMap
+        for var o in attBase?.occs ?? [] {
             guard let cid = o.course_id else { continue }
             let day = o.session.isEmpty ? o.date : o.session
+            o.mark = marks[markId(o.course_id, o.event_id, day)]
             if by[cid]?[day] == nil { by[cid, default: [:]][day] = Session(date: day, mark: o.mark, future: o.start_ms > now, occ: o) }
         }
         return courses.map { c in (c, (by[c.id] ?? [:]).values.sorted { $0.date < $1.date }) }
@@ -483,14 +499,16 @@ final class Store: ObservableObject {
         save(n)
     }
     // Attended / absent / off for one day of a course; nil clears it.
-    func setMark(_ o: Occ, _ status: String?) {
+    func setMark(_ o: Occ, _ status: String?) { applyMark(o, status); changed(light: true) }
+    // Several days at once (one write, one sync).
+    func setMarks(_ occs: [Occ], _ status: String?) { for o in occs { applyMark(o, status) }; changed(light: true) }
+    private func applyMark(_ o: Occ, _ status: String?) {
         let day = o.session.isEmpty ? o.date : o.session
         let id = markId(o.course_id, o.event_id, day)
         var m = db.marks.first { $0.id == id } ?? Mark(id: id, course_id: o.course_id, event_id: o.course_id == nil ? o.event_id : nil, date: day)
         if let status { m.status = status; m.deleted = 0 } else { m.deleted = 1 }
         m.updated_at = stamp(m.updated_at); m.dirty = 1
         if let i = db.marks.firstIndex(where: { $0.id == id }) { db.marks[i] = m } else { db.marks.append(m) }
-        changed()
     }
     func attendance(_ course: String) -> [String: Int] {
         var out: [String: Int] = [:]
@@ -768,10 +786,29 @@ final class Store: ObservableObject {
         return String(format: "Untitled %02ld", i)
     }
 
-    private func changed() {
-        applyZone()
-        if let data = try? JSONEncoder().encode(db) { try? data.write(to: file, options: .atomic) }
-        Notifications.reschedule(self)
+    // Disk writes run off the main thread, in order, so a tap never waits on them.
+    private let ioQueue = DispatchQueue(label: "hourglass.store.write", qos: .utility)
+    private func persist() {
+        let snap = db, url = file
+        ioQueue.async {
+            guard let data = try? JSONEncoder().encode(snap) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+    private var rescheduleTask: Task<Void, Never>?
+
+    // light: only marks changed. They touch no zone, alarm or reminder, so the
+    // notification rebuild is skipped; everything else rebuilds it, after the UI has updated.
+    private func changed(light: Bool = false) {
+        persist()
+        if !light {
+            applyZone()
+            rescheduleTask?.cancel()
+            rescheduleTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if !Task.isCancelled { Notifications.reschedule(self) }
+            }
+        }
         // Debounce only the wait: a push already on its way is never cancelled,
         // or its new rev is lost and the next save looks like an edit conflict.
         syncTask?.cancel()

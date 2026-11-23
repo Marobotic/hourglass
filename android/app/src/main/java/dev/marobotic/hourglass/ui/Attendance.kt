@@ -83,7 +83,7 @@ private fun CourseAttendance(repo: Repo, course: org.json.JSONObject, sessions: 
         }
         if (open > 0) {
             Spacer(Modifier.height(10.dp))
-            HButton("Mark the $open unmarked as attended") { for (s in sessions) if (s.mark == null && !s.future) repo.setMark(s.occ, "attended") }
+            HButton("Mark the $open unmarked as attended") { repo.setMarks(sessions.filter { it.mark == null && !it.future }.map { it.occ }, "attended") }
         }
     }
 }

@@ -127,6 +127,11 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         // New tables since the last run: pull everything again once, or rows
         // the old build skipped would stay missing.
         if (store.meta("schema") != SCHEMA) { store.setMeta("cursor", 0); store.setMeta("schema", SCHEMA) }
+        store.onQuietChange = {
+            dev.marobotic.hourglass.ui.Motion.touchLocal()
+            pending?.cancel()
+            pending = scope.launch { delay(1500); syncOnce() }
+        }
         store.onLocalChange = {
             dev.marobotic.hourglass.ui.Motion.touchLocal()
             Scheduler.reschedule(ctx, this)
@@ -189,9 +194,10 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     // status null clears the mark.
     fun setMark(o: Occ, status: String?) {
         val id = dev.marobotic.hourglass.core.markId(o.courseId, o.eventId, o.session)
-        if (status == null) store.remove("marks", id)
-        else store.upsert("marks", mapOf("course_id" to o.courseId, "event_id" to if (o.courseId == null) o.eventId else null, "date" to o.session.toString(), "status" to status), id)
+        if (status == null) store.remove("marks", id, quiet = true)
+        else store.upsert("marks", mapOf("course_id" to o.courseId, "event_id" to if (o.courseId == null) o.eventId else null, "date" to o.session.toString(), "status" to status), id, quiet = true)
     }
+    fun setMarks(occs: List<Occ>, status: String?) { for (o in occs) setMark(o, status) }
 
     fun attendance(courseId: String): Map<String, Int> =
         store.all("marks").filter { it.str("course_id") == courseId }.groupingBy { it.optString("status") }.eachCount()
@@ -415,6 +421,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
     // ones flagged. Same rule as the desktop's Attendance page.
     data class Session(val date: LocalDate, val eventId: String, val mark: String?, val future: Boolean, val occ: Occ)
 
+    private var attBase: Pair<Int, List<Occ>>? = null
     fun attendanceSessions(now: Long = System.currentTimeMillis()): List<Pair<JSONObject, List<Session>>> {
         val mine = events().filter { it.str("course_id") != null }
         if (mine.isEmpty()) return courses().map { it to emptyList() }
@@ -427,7 +434,13 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         val from = starts.minOrNull() ?: today
         val to = minOf(ends.maxOrNull() ?: today, today.plusDays(183)).let { if (it.isBefore(today)) today else it }
         val by = LinkedHashMap<String, LinkedHashMap<LocalDate, Session>>()
-        for (o in occurrences(from, to)) {
+        // Expanding the recurrences is the slow part and ignores the marks: cache it until a
+        // course or event changes, and only re-read the marks on a tap.
+        val key = listOf(store.all("courses"), events()).flatten().fold(17L) { h, r -> h * 31 + r.id.hashCode() * 7L + r.optLong("updated_at") }.hashCode() * 31 + (from.hashCode() + to.hashCode() * 31)
+        val base = attBase?.takeIf { it.first == key } ?: Pair(key, Recurrence.expand(events(), store.all("courses").associateBy { it.id }, from, to, zone, emptyMap())).also { attBase = it }
+        val marks = marks()
+        for (o0 in base.second) {
+            val o = o0.copy(mark = marks[dev.marobotic.hourglass.core.markId(o0.courseId, o0.eventId, o0.session)])
             val cid = o.courseId ?: continue
             val days = by.getOrPut(cid) { LinkedHashMap() }
             if (!days.containsKey(o.session)) days[o.session] = Session(o.session, o.eventId, o.mark, o.startMs > now, o)

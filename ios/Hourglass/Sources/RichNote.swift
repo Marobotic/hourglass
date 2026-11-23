@@ -226,6 +226,7 @@ final class RichNoteController: ObservableObject {
         let ns = s.string as NSString
         var looks: [(NSRange, String)] = []
         var boxes: [(Int, Bool)] = []
+        var paras: [(NSRange, Int)] = [] // a to-do line and where its box sits
         var start = 0
         while start <= ns.length {
             let nl = ns.range(of: "\n", range: NSRange(location: start, length: ns.length - start)).location
@@ -233,6 +234,7 @@ final class RichNoteController: ObservableObject {
             let k = NoteFormat.kindOf(ns.substring(with: NSRange(location: start, length: end - start)))
             if k.kind == "todo" {
                 let g = start + k.indent * 2
+                paras.append((NSRange(location: start, length: end - start), g))
                 looks.append((NSRange(location: g, length: 1), "box"))
                 boxes.append((g, k.checked))
                 if k.checked && end > g + 1 { looks.append((NSRange(location: g + 1, length: end - g - 1), "done")) }
@@ -249,8 +251,25 @@ final class RichNoteController: ObservableObject {
         for r in old {
             s.enumerateAttribute(.hgStyle, in: r) { v, rr, _ in s.setAttributes(RichConvert.attributes((v as? RunStyle)?.run ?? NoteRun(text: "")), range: rr) }
         }
+        // The box is a 16 pt layer drawn over the hidden ☐; the text must start 8 pt after it whatever the
+        // glyph's own width, and a wrapped line must hang under the text, not under the box.
+        let boxGap: CGFloat = 24
+        for (r, g) in paras {
+            guard g < s.length else { continue }
+            let font = (s.attribute(.font, at: g, effectiveRange: nil) as? UIFont) ?? NoteFonts.ui(NoteRun(text: ""))
+            let lead = g > r.location ? (ns.substring(with: NSRange(location: r.location, length: g - r.location)) as NSString).size(withAttributes: [.font: font]).width : 0
+            let p = NSMutableParagraphStyle()
+            p.lineSpacing = 3
+            p.headIndent = lead + boxGap
+            s.addAttributes([.paragraphStyle: p, .hgLook: "para"], range: r)
+        }
         for (r, look) in looks {
-            if look == "box" { s.addAttributes([.foregroundColor: UIColor.clear, .kern: 6, .hgLook: look], range: r) }
+            if look == "box" {
+                let font = (s.attribute(.font, at: r.location, effectiveRange: nil) as? UIFont) ?? NoteFonts.ui(NoteRun(text: ""))
+                let glyph = (ns.substring(with: r) as NSString).size(withAttributes: [.font: font]).width
+                let space = (" " as NSString).size(withAttributes: [.font: font]).width
+                s.addAttributes([.foregroundColor: UIColor.clear, .kern: max(0, boxGap - glyph - space), .hgLook: look], range: r)
+            }
             else { s.addAttributes([.foregroundColor: UIColor(H.muted), .strikethroughStyle: NSUnderlineStyle.single.rawValue, .hgLook: look], range: r) }
         }
         s.endEditing()

@@ -5,6 +5,8 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -116,7 +118,11 @@ fun markdownOf(blocks: List<NoteBlock>): String = NoteFormat.serialize(blocks.fl
 })
 
 // Each character drawn in its own style; the text itself is untouched.
-private class RichVisual(private val styles: List<Run>) : VisualTransformation {
+// boxPx: widths in px of ☐ / ☑ / a space and the room (box + gap) the text must start after, so the
+// item's text always clears the 16dp box drawn over the hidden glyph whatever font the glyph falls back to.
+private class BoxMetrics(val open: Float, val done: Float, val space: Float, val room: Float, val toSp: (Float) -> androidx.compose.ui.unit.TextUnit)
+
+private class RichVisual(private val styles: List<Run>, private val box: BoxMetrics? = null) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
         val b = AnnotatedString.Builder(text.text)
         var start = 0
@@ -137,7 +143,11 @@ private class RichVisual(private val styles: List<Run>) : VisualTransformation {
             val k = NoteFormat.kindOf(text.text.substring(ls, le))
             if (k.kind == "todo") {
                 val g = ls + k.indent * 2
-                b.addStyle(SpanStyle(color = Color.Transparent, letterSpacing = 6.sp), g, g + 1)
+                val m = box
+                val spacing = if (m == null) 6.sp else m.toSp(maxOf(0f, m.room - (if (k.checked) m.done else m.open) - m.space))
+                b.addStyle(SpanStyle(color = Color.Transparent, letterSpacing = spacing), g, g + 1)
+                // A wrapped line hangs under the item's text, not under the box.
+                if (m != null) b.addStyle(ParagraphStyle(textIndent = TextIndent(0.sp, m.toSp(k.indent * 2 * m.space + m.room))), ls, le)
                 if (k.checked && g + 1 < le) b.addStyle(SpanStyle(color = HColors.muted, textDecoration = TextDecoration.LineThrough), g + 1, le)
             }
             ls = le + 1
@@ -154,14 +164,20 @@ private class RichVisual(private val styles: List<Run>) : VisualTransformation {
         color = if (r.href != null) HColors.accent else androidx.compose.ui.graphics.Color.Unspecified,
     )
 
-    override fun equals(other: Any?) = other is RichVisual && other.styles === styles
-    override fun hashCode() = System.identityHashCode(styles)
+    override fun equals(other: Any?) = other is RichVisual && other.styles === styles && other.box === box
+    override fun hashCode() = System.identityHashCode(styles) * 31 + System.identityHashCode(box)
 }
 
 /** One stretch of text: typed like any text field, drawn with its styles; a tap on a to-do's box ticks it. */
 @Composable
 fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFocused: () -> Unit, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val box = remember(density, measurer) {
+        val st = TextStyle(fontFamily = NoteFonts.of(null), fontSize = NoteFormat.DEFAULT_SIZE.sp)
+        fun w(t: String) = measurer.measure(t + "|", st).size.width - measurer.measure("|", st).size.width.toFloat()
+        BoxMetrics(w(NoteFormat.BOX), w(NoteFormat.CHECKED), w(" "), with(density) { 24.dp.toPx() }) { px -> with(density) { px.toSp() } }
+    }
     Box(modifier) {
         // The caret is the accent (Compose's own is 1dp in the text colour);
         // selection is pinned to the app's accent too.
@@ -172,7 +188,7 @@ fun RichTextField(rt: RichText, placeholder: String?, onEdited: () -> Unit, onFo
                 Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocused() },
                 textStyle = TextStyle(color = HColors.fg, fontFamily = NoteFonts.of(null), fontSize = NoteFormat.DEFAULT_SIZE.sp, lineHeight = 22.sp),
                 cursorBrush = SolidColor(HColors.accent),
-                visualTransformation = RichVisual(rt.styles),
+                visualTransformation = RichVisual(rt.styles, box),
                 onTextLayout = { rt.layout = it },
                 decorationBox = { inner -> if (rt.text.isEmpty() && placeholder != null) androidx.compose.material3.Text(placeholder, color = HColors.faint, fontSize = 15.sp); inner() },
             )
