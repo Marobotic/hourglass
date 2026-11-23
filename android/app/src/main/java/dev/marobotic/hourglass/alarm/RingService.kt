@@ -187,7 +187,7 @@ class RingService : Service() {
                 // here already: no auto-snooze, whatever the server says.
                 val local = if (ringAt != 0L) RingSync.stoppedFor(repo, r.third, ringAt) else null
                 val state = when {
-                    local != null -> dev.marobotic.hourglass.data.Repo.RingStateResult.Stopped("dismissed", local)
+                    local != null -> dev.marobotic.hourglass.data.Repo.RingStateResult.Stopped("dismissed", "this phone ($local)")
                     ringAt != 0L -> repo.ringState(r.third, ringAt, timeoutMs = 2000)
                     else -> dev.marobotic.hourglass.data.Repo.RingStateResult.Active
                 }
