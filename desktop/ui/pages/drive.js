@@ -531,7 +531,7 @@ export default {
       const click = () => (isF ? go(f.id, course) : media ? preview(f) : openFile(f));
       const synced = isF && isFolderSynced(f.id);
       const shared = !!shares[f.id];
-      const marks = [synced ? h('i', { class: 'ic mark-sync', 'data-tip': 'Synced to a folder on this PC', text: '\u{f021}' }) : null, shared ? h('i', { class: 'ic mark-share', 'data-tip': 'Shared by link', text: '\u{f0c1}' }) : null];
+      const marks = [synced ? h('span', { class: 'mark-sync', 'data-tip': 'Synced to a folder on this PC' }, icon('sync')) : null, shared ? h('span', { class: 'mark-share', 'data-tip': 'Shared by link' }, icon('link')) : null];
       const more = kit.btn('', (e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu(it, r.left, r.bottom + 4); }, { kind: 'subtle', compact: true, icon: 'more', title: 'More', cls: 'more' });
       const visual = isF ? h('span', { class: 'fi folder-ic' }, icon('folder')) : (isImage(f) || isVideo(f)) && thumb(f) ? h('img', { class: 'fi thumb', src: thumb(f), loading: 'lazy', alt: '', onerror: (e) => e.currentTarget.replaceWith(h('span', { class: 'fi' }, icon(fileIcon(f)))) }) : h('span', { class: 'fi' }, icon(fileIcon(f)));
       const meta = isF ? U.plural(f.items || 0, 'item') : size(f.size);

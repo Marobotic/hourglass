@@ -1,28 +1,44 @@
-/* One motion set for every platform (REDESIGN §4), from Metro's motion.css. Nothing moves at rest except live
-   things; all of it stops under reduce-motion and while the window is hidden (.motion-paused). */
+/* One motion language (docs/redesign5/motion.html): things arrive with the fast-out curve (--ease), nothing bounces,
+   and red only glows on what is live or ringing. Nothing moves at rest except live things. All of it stops under
+   reduce-motion and while the window is hidden (.motion-paused). */
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes fade-out { to { opacity: 0; } }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(14px) scale(.985); } }
 @keyframes sheet-out { to { opacity: 0; transform: translateY(8px) scale(.99); } }
-@keyframes menu-in { from { opacity: 0; transform: scale(.94); } }
+@keyframes menu-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(12px) scale(.96); } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(6px); } }
-@keyframes view-in { from { opacity: 0; transform: translateY(8px); } }
+/* Screen transition: the new page comes 32 px in from the right and fades in (280 ms). */
+@keyframes view-in { from { opacity: 0; transform: translateX(32px); } }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 @keyframes row-in { from { opacity: 0; transform: translateY(10px) scale(.99); } }
 @keyframes row-in-right { from { opacity: 0; transform: translateX(18px); } }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes breathe { 0%, 100% { background-color: var(--live-a); } 50% { background-color: var(--live-b); } }
-@keyframes roll { from { opacity: .2; transform: translateY(-.35em); } }
+@keyframes pulse { 50% { opacity: .35; } }
+@keyframes roll { from { opacity: 0; transform: translateY(-.45em); } }
+@keyframes roll-up { from { opacity: 0; transform: translateY(.6em); } }
 @keyframes glow { 0% { box-shadow: 0 0 0 2px var(--gold), inset 0 0 0 999px color-mix(in srgb, var(--gold) 12%, transparent); } 100% { box-shadow: 0 0 0 2px transparent, inset 0 0 0 999px transparent; } }
-@keyframes shake { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
 @keyframes drift { 50% { transform: translateY(-5px); } }
 @keyframes indeterminate { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+/* The live progress head breathes. */
+@keyframes head-glow { 50% { opacity: .55; } }
+/* Attendance: a freshly marked box pops. */
+@keyframes pop { 0% { transform: scale(.8); } 45% { transform: scale(1.25); } 100% { transform: none; } }
+/* The assistant's working dots and the streaming caret. */
+@keyframes dots { 0%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+@keyframes blink { 50% { opacity: 0; } }
+/* The ring: square ripples, the bell rocks, the time breathes red, the hold button shimmers. */
+@keyframes rip { from { transform: scale(1); opacity: .9; } to { transform: scale(2.8); opacity: 0; } }
+@keyframes rock { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }
+@keyframes breathe-text { 0%, 100% { text-shadow: 0 0 0 transparent; } 50% { text-shadow: 0 0 28px var(--glow); } }
+@keyframes shim { 0%, 30% { transform: translateX(-60px); } 70%, 100% { transform: translateX(var(--shim-w, 400px)); } }
+/* A timer reaching zero: one red bloom. */
+@keyframes bloom { 0% { opacity: 0; } 25% { opacity: 1; } 70% { opacity: .3; } 100% { opacity: 0; } }
 
 /* Pages arrive instead of snapping in. */
-.view-enter { animation: view-in 260ms var(--ease) both; }
+.view-enter { animation: view-in var(--t-screen) var(--ease) both; }
 /* Rows on first show rise one after the other (the first ten). */
-.stagger > * { animation: rise 220ms var(--ease) both; }
+.stagger > * { animation: rise var(--t-sheet) var(--ease) both; }
 .stagger > :nth-child(2) { animation-delay: 20ms; } .stagger > :nth-child(3) { animation-delay: 40ms; }
 .stagger > :nth-child(4) { animation-delay: 60ms; } .stagger > :nth-child(5) { animation-delay: 80ms; }
 .stagger > :nth-child(6) { animation-delay: 100ms; } .stagger > :nth-child(7) { animation-delay: 120ms; }
@@ -33,10 +49,10 @@
 .glow { animation: glow 2300ms var(--ease) both; }
 /* A changing number rolls in. */
 .roll { display: inline-block; animation: roll 160ms var(--ease) both; }
-/* Live things breathe. */
-.breathe { --live-a: color-mix(in srgb, var(--accent) 9%, var(--surface)); --live-b: color-mix(in srgb, var(--accent) 3%, var(--surface)); animation: breathe 2.4s ease-in-out infinite; }
+.roll-up { display: inline-block; animation: roll-up 220ms var(--ease) both; }
 
 .motion-paused *, .motion-paused *::before, .motion-paused *::after { animation-play-state: paused !important; transition: none !important; }
+/* Reduce motion (the OS setting): nothing animates, nothing transitions. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; animation-delay: 0ms !important; transition-duration: 1ms !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

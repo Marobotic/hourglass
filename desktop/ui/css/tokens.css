@@ -1,7 +1,15 @@
-/* Hourglass tokens (docs/REDESIGN.md §2). The seven palette colours can be replaced at run time from the
-   service's theme (Omarchy on Linux); everything else is mixed from them, so a re-theme follows. */
+/* Hourglass tokens: the one source for colour, surfaces, elevation, glow, type, spacing and motion
+   (docs/redesign5, round 5). The palette colours can be replaced at run time from the service's theme (Omarchy
+   on Linux); every surface, line and ink is mixed from them, so a re-theme follows. Marochy: square corners
+   (menus 4 px), 1 px lines, JetBrains Mono for the UI, Noto Sans for prose, red as the only accent. */
 @font-face { font-family: "JetBrainsMono Nerd Font"; src: url(../fonts/JetBrainsMonoNerdFont-Regular.ttf); font-weight: 400; font-display: block; }
+@font-face { font-family: "JetBrainsMono Nerd Font"; src: url(../fonts/JetBrainsMonoNerdFont-Medium.ttf); font-weight: 500; font-display: block; }
 @font-face { font-family: "JetBrainsMono Nerd Font"; src: url(../fonts/JetBrainsMonoNerdFont-Bold.ttf); font-weight: 700; font-display: block; }
+@font-face { font-family: "JetBrainsMono Nerd Font"; src: url(../fonts/JetBrainsMonoNerdFont-ExtraBold.ttf); font-weight: 800; font-display: block; }
+@font-face { font-family: "Hourglass Noto Sans"; src: url(../fonts/NotoSans-Regular.ttf); font-weight: 400; font-display: block; }
+@font-face { font-family: "Hourglass Noto Sans"; src: url(../fonts/NotoSans-Medium.ttf); font-weight: 500; font-display: block; }
+@font-face { font-family: "Hourglass Noto Sans"; src: url(../fonts/NotoSans-Bold.ttf); font-weight: 700; font-display: block; }
+/* The note editor's own fonts (noteformat FONTS). */
 @font-face { font-family: "Inter"; src: url(../fonts/Inter-Regular.ttf); font-weight: 400; }
 @font-face { font-family: "Inter"; src: url(../fonts/Inter-Bold.ttf); font-weight: 700; }
 @font-face { font-family: "Lora"; src: url(../fonts/Lora-Regular.ttf); font-weight: 400; }
@@ -15,47 +23,88 @@
 
 :root {
   color-scheme: dark;
+  /* ---- palette (replaced by the theme) ---- */
   --bg: #121212;
   --fg: #f5f5f5;
   --accent: #B14242;
   --orange: #D66E36;
   --gold: #F0BE66;
   --teal: #4A8B8B;
+  --green: #5B8C4A;
   --grey: #949494;
 
-  --surface: color-mix(in srgb, var(--fg) 4.5%, var(--bg));
-  --surface2: color-mix(in srgb, var(--fg) 8.5%, var(--bg));
-  --surface3: color-mix(in srgb, var(--fg) 12%, var(--bg));
-  --border: color-mix(in srgb, var(--fg) 14%, var(--bg));
+  /* ---- surfaces, stacked bg < surface < surface2 < surface3 < surface4 (round 5 s1..s4) ---- */
+  --surface: color-mix(in srgb, var(--fg) 2.6%, var(--bg));
+  --surface2: color-mix(in srgb, var(--fg) 5.3%, var(--bg));
+  --surface3: color-mix(in srgb, var(--fg) 8.8%, var(--bg));
+  --surface4: color-mix(in srgb, var(--fg) 12.3%, var(--bg));
+  --side-bg: linear-gradient(180deg, color-mix(in srgb, var(--fg) 1.7%, var(--bg)), color-mix(in srgb, var(--fg) .4%, var(--bg)));
+  --border: color-mix(in srgb, var(--fg) 10.6%, var(--bg));
+  --border2: color-mix(in srgb, var(--fg) 16.7%, var(--bg));
+  /* ---- ink ---- */
   --faint: color-mix(in srgb, var(--fg) 36%, var(--bg));
   --muted: color-mix(in srgb, var(--fg) 58%, var(--bg));
+  --soft: color-mix(in srgb, var(--fg) 78%, var(--bg));
   /* Red text on a dark page: lighter, so small text stays readable. Fills keep the identity red. */
-  --accent-ink: color-mix(in srgb, var(--accent) 62%, white);
+  --accent-ink: color-mix(in srgb, var(--accent) 35%, #ffb4b4);
+  --accent-hi: color-mix(in srgb, var(--accent) 88%, white);
+  --teal-ink: color-mix(in srgb, var(--teal) 55%, #a8eaea);
   --on-accent: #fff;
   --red: var(--accent-ink);
 
+  /* ---- elevation: a 1 px top highlight on raised surfaces, soft shadows under floating ones ---- */
+  --hi: inset 0 1px 0 rgb(255 255 255 / .045);
+  --lift: inset 0 1px 0 rgb(255 255 255 / .05), 0 12px 32px -16px rgb(0 0 0 / .75);
+  --float: inset 0 1px 0 rgb(255 255 255 / .06), 0 24px 48px -20px rgb(0 0 0 / .85), 0 2px 6px rgb(0 0 0 / .35);
+  --shadow: var(--float);
+  /* ---- glow: red only glows on what is live or ringing ---- */
+  --glow: color-mix(in srgb, var(--accent) 90%, transparent);
+  --glow-soft: color-mix(in srgb, var(--accent) 60%, transparent);
+  --glow-faint: color-mix(in srgb, var(--accent) 38%, transparent);
+
+  /* ---- type ---- */
   --mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
-  --sans: "Noto Sans", "Inter", system-ui, sans-serif;
+  --sans: "Hourglass Noto Sans", "Noto Sans", "Inter", system-ui, sans-serif;
+  --fs-caption: 11px;   /* tags, kbd, axis labels */
+  --fs-small: 12px;     /* meta lines, section labels */
+  --fs-body: 14px;      /* the UI */
+  --fs-title: 15px;     /* card and row titles */
+  --fs-head: 24px;      /* page title */
 
-  --quick: 120ms;
-  --ease: cubic-bezier(.2, 0, 0, 1);
+  /* ---- space: a strict 4/8 grid ---- */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px;
+  --pad: 40px;          /* page sides */
+  --gap: 32px;          /* between page sections */
+  --side: 272px;        /* sidebar */
+  --rail: 480px;        /* a page's right column, when there is room */
+
+  /* ---- motion: things arrive with a fast-out curve; nothing bounces ---- */
+  --ease: cubic-bezier(.2, .8, .2, 1);
   --ease-in: cubic-bezier(.4, 0, 1, 1);
-  --spring: cubic-bezier(.34, 1.4, .64, 1);
-  --t-press: 80ms;
-  --t-exit: 120ms;
-  --shadow: 0 14px 36px rgb(0 0 0 / .4);
-
-  --pad: 32px;
-  --gap: 28px;
-  --side: 248px;
+  --ease-io: cubic-bezier(.4, 0, .2, 1);
+  --quick: 120ms;       /* hover colour */
+  --t-press: 80ms;      /* press scale */
+  --t-exit: 120ms;      /* anything leaving */
+  --t-sheet: 220ms;     /* sheet, toast, toggle */
+  --t-tab: 260ms;       /* nav / tab indicator */
+  --t-screen: 280ms;    /* page switch */
 }
 html.light {
   color-scheme: light;
   --surface: color-mix(in srgb, var(--fg) 3.5%, var(--bg));
-  --surface2: color-mix(in srgb, var(--fg) 7%, var(--bg));
-  --border: color-mix(in srgb, var(--fg) 16%, var(--bg));
+  --surface2: color-mix(in srgb, var(--fg) 6%, var(--bg));
+  --surface3: color-mix(in srgb, var(--fg) 9%, var(--bg));
+  --surface4: color-mix(in srgb, var(--fg) 13%, var(--bg));
+  --side-bg: color-mix(in srgb, var(--fg) 2.5%, var(--bg));
+  --border: color-mix(in srgb, var(--fg) 14%, var(--bg));
+  --border2: color-mix(in srgb, var(--fg) 22%, var(--bg));
   --accent-ink: var(--accent);
-  --shadow: 0 14px 36px rgb(0 0 0 / .14);
+  --teal-ink: color-mix(in srgb, var(--teal) 80%, black);
+  --hi: inset 0 1px 0 rgb(255 255 255 / .5);
+  --lift: 0 10px 28px -16px rgb(0 0 0 / .25);
+  --float: 0 18px 40px -18px rgb(0 0 0 / .3), 0 2px 6px rgb(0 0 0 / .08);
 }
-@media (min-width: 1280px) { :root { --pad: 40px; } }
-@media (max-width: 979px) { :root { --side: 64px; } }
+@media (max-width: 1439px) { :root { --side: 248px; --rail: 400px; } }
+@media (max-width: 1279px) { :root { --pad: 32px; --gap: 28px; } }
+@media (max-width: 979px) { :root { --side: 64px; --pad: 24px; --gap: 24px; } }
+@media (max-width: 599px) { :root { --side: 56px; --pad: 16px; --gap: 20px; } }

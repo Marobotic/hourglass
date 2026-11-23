@@ -2,7 +2,7 @@
 // is a block (paragraph, heading, bullet, numbered, to-do, picture, file) of styled runs, read back into lines and
 // written with noteformat.mjs, the reference every platform shares.
 import * as NF from './noteformat.mjs';
-import { h } from './dom.js';
+import { h, icon } from './dom.js';
 
 export function createEditor({ onChange, onOpenFile, fileUrl, onToggleTodo }) {
   const root = h('div', { class: 'note-body selectable', contenteditable: 'true', spellcheck: 'true', role: 'textbox', 'aria-multiline': 'true' });
@@ -34,7 +34,7 @@ export function createEditor({ onChange, onOpenFile, fileUrl, onToggleTodo }) {
     if (l.kind === 'image' || l.kind === 'file') {
       const el = h('div', { class: 'ln media', contenteditable: 'false', 'data-k': l.kind, 'data-id': l.file.id || null, 'data-url': l.file.url || null, 'data-name': l.file.name || '' });
       if (l.kind === 'image') el.append(h('img', { src: l.file.id ? fileUrl(l.file.id) : l.file.url, alt: l.file.name, draggable: 'false' }));
-      else el.append(h('span', { class: 'file-chip' }, h('i', { class: 'ic', text: '\u{f0c6}' }), l.file.name || 'File'));
+      else el.append(h('span', { class: 'file-chip' }, icon('clip'), l.file.name || 'File'));
       return el;
     }
     const el = h('div', { class: 'ln', 'data-k': l.kind });

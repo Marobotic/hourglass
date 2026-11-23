@@ -11,7 +11,8 @@ import './native.js';
 
 const TAURI = globalThis.__TAURI__;
 const invoke = (cmd, args) => TAURI?.core?.invoke(cmd, args);
-const VERSION = globalThis.HOURGLASS_VERSION || '0.3.4';
+// The window's own version (package.json, set by build.mjs); the service may be older or newer.
+const VERSION = globalThis.HOURGLASS_VERSION || '0.4.0';
 
 // ---- shared state -------------------------------------------------------------------------------------
 const listeners = new Map(); // event -> Set(fn); events: tick, state, data, page
@@ -36,13 +37,15 @@ const ctx = {
   api, state, on, emit, U, kit,
   go, toast: kit.toast,
   // The page header every page draws (REDESIGN §3): title, a muted context line or controls, actions.
-  head({ title, ctx: line, mid, acts = [], back } = {}) {
+  // Every header ends with Search or ask (the command palette, Ctrl K).
+  head({ title, ctx: line, mid, acts = [], back, ask = true } = {}) {
     return h('div', { class: 'head' },
-      back ? kit.btn('', back, { kind: 'subtle', icon: 'back', title: 'Back', cls: 'back' }) : null,
+      back ? kit.btn('Back', back, { kind: 'subtle', icon: 'back', title: 'Back (Esc)', cls: 'back' }) : null,
       h('h1', { text: title }),
-      line ? h('span', { class: 'ctx', text: line }) : null,
+      line != null ? h('span', { class: 'ctx', text: line }) : null,
       mid ? h('div', { class: 'mid' }, mid) : null,
-      h('div', { class: 'acts' }, acts));
+      h('div', { class: 'acts' }, acts),
+      ask ? h('button', { class: 'ask', type: 'button', title: 'Search or ask Hourglass (Ctrl K)', onclick: () => openPalette() }, icon('search'), h('span', { class: 'lbl', text: 'Search or ask Hourglass' }), h('kbd', { text: 'Ctrl K' })) : null);
   },
   courseById: (id) => state.courses.find((c) => c.id === id) || null,
   courseColor: (id) => ctx.courseById(id)?.color || 'var(--teal)',
@@ -126,11 +129,13 @@ function wake() {
 }
 
 async function refresh() {
-  const [now, courses] = await Promise.all([
+  const [now, courses, notes] = await Promise.all([
     api.get('/api/now', { quiet: true }).catch(() => null),
     api.get('/api/courses/summary', { quiet: true }).catch(() => null),
+    api.get('/api/notes', { quiet: true }).catch(() => null),
   ]);
   if (courses) state.courses = courses;
+  if (notes) { state.notes = notes; state.noteCount = notes.length; }
   if (now) {
     state.now = now;
     if (!state.loaded) { state.loaded = true; hideStarting(); }
@@ -271,49 +276,69 @@ async function devOpen() {
   else if (what === 'new') newMenu(side.querySelector('.new'));
 }
 
-function navRow(p) {
-  const def = PAGES[p.id];
-  const b = h('button', { class: 'nav', 'data-page': p.id, 'data-tip': innerWidth < 980 ? def.title : null, onclick: () => go(p.id) },
-    icon(def.icon), h('span', { class: 'lbl', text: def.title }), def.key ? h('span', { class: 'kbd', text: def.key }) : null);
-  return b;
+// A sidebar row. Sub rows (a group's pages) carry their icon too: the narrow sidebar shows only icons.
+function navRow(id, { sub = false, label, iconName, onclick } = {}) {
+  const def = PAGES[id] || {};
+  const name = label || def.title;
+  return h('button', { class: `nav ${sub ? 'sub' : ''}`, 'data-page': id, 'data-tip': innerWidth < 980 ? name : null, onclick: onclick || (() => go(id)) },
+    icon(iconName || def.icon), h('span', { class: 'lbl', text: name }), def.key ? h('span', { class: 'kbd', text: def.key }) : null);
 }
+// Which top row a page sits under.
+const groupOf = (page) => {
+  const key = page === 'note' ? 'notes' : page;
+  return NAV.find((g) => g.id === key || g.subs?.includes(key))?.id || key;
+};
+const scheduleLabel = () => ({ day: 'Day', week: 'Week', month: 'Month' })[localStorage.getItem('hg.scheduleMode') || 'week'] || 'Week';
 
-function renderSide() {
+function renderSide(animate = false) {
   if (!side) return;
   const a = state.app, n = state.now;
   const navs = h('div', { class: 'navs' });
-  navBar = h('i', { class: 'nav-bar', style: { transition: 'none' } });
+  navBar = h('i', { class: 'nav-bar' });
   navs.append(navBar);
+  const open = groupOf(state.page);
+  // Counts: something ringing (Alarms, Timers), reminders waiting, the assistant working.
+  const counts = { alarms: (a.ringing || []).filter((r) => r.kind !== 'timer').length, timers: (a.ringing || []).filter((r) => r.kind === 'timer').length, reminders: (a.reminders || []).length };
+  const countChip = (c) => (c ? h('span', { class: 'count', text: String(c) }) : null);
   for (const g of NAV) {
-    navs.append(h('div', { class: 'group', text: g.group }));
-    for (const p of g.pages) navs.append(navRow({ id: p }));
-  }
-  // Counts: something ringing (Alarms), reminders waiting, the assistant working.
-  const counts = { alarms: (a.ringing || []).filter((r) => r.kind !== 'timer').length, timers: (a.ringing || []).filter((r) => r.kind === 'timer').length, reminders: (a.reminders || []).length, assistant: state.assistantBusy ? 1 : 0 };
-  for (const [id, c] of Object.entries(counts)) {
-    const row = navs.querySelector(`[data-page="${id}"]`);
-    if (row && c) row.insertBefore(h('span', { class: 'count', text: String(c) }), row.querySelector('.kbd'));
+    if (g.gap) { navs.append(h('i', { class: 'nav-gap' })); continue; }
+    const row = g.page === false
+      ? navRow(g.id, { label: g.title, iconName: g.icon, onclick: () => go(lastIn(g)) })
+      : navRow(g.id);
+    const expanded = open === g.id && g.subs;
+    const groupCount = g.subs ? g.subs.reduce((t, s) => t + (counts[s] || 0), 0) : counts[g.id] || 0;
+    if (!expanded && groupCount) row.insertBefore(countChip(groupCount), row.querySelector('.kbd'));
+    if (g.id === 'notes' && state.noteCount) row.insertBefore(h('span', { class: 'cnt tnum', text: String(state.noteCount) }), row.querySelector('.kbd'));
+    if (g.id === 'assistant' && state.assistantBusy) row.insertBefore(h('span', { class: 'cnt ink', text: 'working' }), row.querySelector('.kbd'));
+    navs.append(row);
+    if (expanded) for (const s of g.subs) {
+      const r = navRow(s, { sub: true, label: s === 'schedule' ? scheduleLabel() : null, iconName: s === 'schedule' ? 'calendar' : null });
+      if (counts[s]) r.insertBefore(countChip(counts[s]), r.querySelector('.kbd'));
+      navs.append(r);
+    }
   }
 
   const live = n?.active && n.active.state === 'live' ? n.active : null;
   const foot = h('div', { class: 'side-foot' },
     live ? miniCard(live) : null,
     a.update ? updateCard(a.update) : null,
-    navRow({ id: 'settings' }),
+    navRow('settings'),
     syncLine());
 
   side.replaceChildren(
-    h('div', { class: 'brand' }, logo(3, { alive: true }), h('b', { text: 'Hourglass' }), h('span', { class: 'ver', text: a.version || VERSION })),
+    h('div', { class: 'brand' }, logo(2.6, { alive: true }), h('b', { text: 'Hourglass' }), h('span', { class: 'ver', text: VERSION })),
     kit.btn('New', (e) => newMenu(e.currentTarget), { kind: 'primary', icon: 'plus', kbd: 'Ctrl N', cls: 'new', title: 'New' }),
     navs, h('span', { class: 'grow' }), foot);
-  placeNavBar();
+  placeNavBar(animate);
   renderSideTick();
 }
+// The Time row opens the time page you were last on.
+const lastIn = (g) => { const p = localStorage.getItem('hg.last.' + g.id); return g.subs.includes(p) ? p : g.subs[0]; };
 
 function miniCard(live) {
-  const el = h('div', { class: 'card mini stripe', style: { '--c': live.color || 'var(--accent)' }, onclick: () => go('now') },
-    kit.chip('● Live', { cls: 'live' }), h('div', { class: 't', text: live.title }), h('div', { class: 's mini-left' }), kit.meter(0, { cls: 'thin' }));
-  return el;
+  return h('div', { class: 'card mini', onclick: () => go('now') },
+    h('div', { class: 'top' }, kit.chip('Live', { cls: 'live' }), h('span', { class: 'until', text: 'until ' + U.t(live.end_time) })),
+    h('div', { class: 't', text: live.title }), h('div', { class: 's mini-left' }), kit.progress({ thin: true }));
 }
 function renderSideTick() {
   const live = state.now?.active;
@@ -321,7 +346,7 @@ function renderSideTick() {
   if (!live || !left) return;
   const start = live.start_ms ?? live.starts_at, end = live.end_ms ?? live.ends_at;
   if (end) left.textContent = U.left(Math.max(0, Math.ceil((end - state.clock) / 60000)));
-  if (start && end) { const m = side.querySelector('.mini .meter'); if (m) requestAnimationFrame(() => m.set((state.clock - start) / Math.max(1, end - start))); }
+  if (start && end) side.querySelector('.mini .prog')?.set((state.clock - start) / Math.max(1, end - start));
 }
 
 function updateCard(u) {
@@ -340,21 +365,32 @@ function syncLine() {
   const st = state.app.sync?.state || 'local';
   const email = state.app.account?.email;
   return h('div', { class: 'sync', 'data-tip': innerWidth < 980 ? syncWord(st) : null },
-    h('i', { class: st }), h('b', { text: syncWord(st), style: { fontWeight: 400 } }), email ? h('span', { text: '· ' + email }) : null);
+    h('i', { class: st }), h('b', { text: syncWord(st), style: { fontWeight: 500 } }), email ? h('span', { text: '· ' + email }) : null);
 }
 const syncWord = (st) => (st === 'synced' ? 'Synced' : st === 'offline' ? 'Offline, saved here' : st === 'syncing' ? 'Syncing…' : 'On this computer');
 
-// The accent bar slides to the current row.
-function placeNavBar() {
+// The accent bar travels to the current top row (260 ms): it stretches toward the new row first, then its tail
+// catches up. A freshly drawn sidebar places it without moving.
+let barAt = null;
+function placeNavBar(animate = true) {
   if (!navBar) return;
-  const key = state.page === 'note' ? 'notes' : state.page;
-  const row = side.querySelector(`.nav[data-page="${key}"]`);
-  side.querySelectorAll('.nav').forEach((n) => n.classList.toggle('on', n === row));
-  if (!row || !navBar.parentElement.contains(row)) { navBar.style.opacity = '0'; return; }
+  const key = groupOf(state.page);
+  const row = side.querySelector(`.nav:not(.sub)[data-page="${key}"]`);
+  const subKey = state.page === 'note' ? 'notes' : state.page;
+  side.querySelectorAll('.nav').forEach((n) => n.classList.toggle('on', n === row || (n.classList.contains('sub') && n.dataset.page === subKey)));
+  if (!row || !navBar.parentElement.contains(row)) { navBar.style.opacity = '0'; barAt = null; return; }
   navBar.style.opacity = '1';
-  navBar.style.transform = `translateY(${row.offsetTop + 9}px)`;
-  // A freshly drawn sidebar places the bar without sliding; page changes slide it.
-  if (navBar.style.transition === 'none') requestAnimationFrame(() => requestAnimationFrame(() => { if (navBar) navBar.style.transition = ''; }));
+  const to = row.offsetTop + 8;
+  navBar.style.transform = `translateY(${to}px)`;
+  const from = barAt;
+  barAt = to;
+  if (!animate || from == null || from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const top = Math.min(from, to), span = Math.abs(to - from) + 24;
+  navBar.animate([
+    { transform: `translateY(${from}px)`, height: '24px' },
+    { transform: `translateY(${top}px)`, height: `${span}px`, offset: 0.45, easing: 'cubic-bezier(.2,.8,.2,1)' },
+    { transform: `translateY(${to}px)`, height: '24px' },
+  ], { duration: 260, easing: 'cubic-bezier(.4,0,.2,1)' });
 }
 
 // ---- router -------------------------------------------------------------------------------------------
@@ -370,6 +406,10 @@ function mount(page, arg) {
   ctx.dropHandler = null;
   try { prev?.unmount?.(); } catch (e) { console.error(e); }
   if (page === 'note' && state.page !== 'note') sessionStorage.setItem('hg.prevPage', state.page);
+  // Where Back (and Esc) on a secondary page like Settings returns to.
+  if (page !== state.page) state.prevPage = state.page;
+  const group = NAV.find((g) => g.subs?.includes(page));
+  if (group) localStorage.setItem('hg.last.' + group.id, page);
   state.page = page;
   state.arg = arg;
   const root = h('div', { class: 'view view-enter', 'data-page': page, style: { display: 'flex', flexDirection: 'column', flex: '1', minHeight: '0' } });
@@ -380,7 +420,7 @@ function mount(page, arg) {
     console.error(e);
     root.append(h('div', { class: 'empty' }, h('h2', { text: 'This page hit a problem' }), h('p', { class: 'selectable', text: String(e?.message || e) })));
   }
-  placeNavBar();
+  renderSide(true);
   scheduleTick();
   emit('page', page);
 }
@@ -447,9 +487,9 @@ let paletteNotes = null;
 function closePalette() { $('.palette')?.remove(); }
 async function openPalette() {
   if ($('.palette')) return;
-  const input = h('input', { placeholder: 'Go to a page, a course, a note, or ask Hourglass…', spellcheck: 'false' });
+  const input = h('input', { placeholder: 'Search or ask Hourglass…', spellcheck: 'false' });
   const list = h('div', { class: 'palette-list' });
-  const box = h('div', { class: 'palette', onmousedown: (e) => { if (e.target === box) closePalette(); } }, h('div', { class: 'palette-box' }, input, list));
+  const box = h('div', { class: 'palette', onmousedown: (e) => { if (e.target === box) closePalette(); } }, h('div', { class: 'palette-box' }, h('div', { class: 'palette-top' }, icon('search'), input, h('kbd', { text: 'Esc' })), list));
   document.body.append(box);
   input.focus();
   let kb = 0, items = [];
@@ -480,7 +520,7 @@ async function openPalette() {
     else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
   });
   draw();
-  paletteNotes = await api.get('/api/notes', { quiet: true }).catch(() => []);
+  paletteNotes = state.notes || await api.get('/api/notes', { quiet: true }).catch(() => []);
   if ($('.palette')) draw();
 }
 
@@ -536,13 +576,14 @@ function renderRing() {
   hold.addEventListener('pointerdown', start);
   hold.addEventListener('pointerup', cancel);
   hold.addEventListener('pointerleave', cancel);
-  ringEl = h('div', { class: 'ring' }, h('div', { class: 'ring-card' },
-    logo(7),
+  // Square ripples round a rocking bell, the time breathing red; Hold to dismiss (2 s) and Snooze 5 min.
+  ringEl = h('div', { class: 'ring' }, h('div', { class: 'ring-card', role: 'alertdialog', 'aria-label': item.label || 'Alarm' },
+    h('div', { class: 'bellw' }, h('i', { class: 'rp' }), h('i', { class: 'rp' }), h('i', { class: 'rp' }), icon(item.kind === 'timer' ? 'timer' : 'bell')),
     h('div', { class: 'kind', text: item.kind === 'timer' ? "TIME'S UP" : 'ALARM' }),
-    h('div', { class: 'label', text: item.label || '' }),
     h('div', { class: 'clock', text: U.clock(state.clock) }),
-    kit.btn('Snooze 5 min', () => api.post(`/api/ring/snooze?id=${encodeURIComponent(item.id)}&minutes=5&via=${encodeURIComponent('clicked Snooze in the window')}`, {}).then(pollState), { kind: 'primary', cls: 'snooze' }),
-    hold));
+    h('div', { class: 'label', text: item.label || '' }),
+    h('div', { class: 'acts' }, hold,
+      kit.btn('Snooze 5 min', () => api.post(`/api/ring/snooze?id=${encodeURIComponent(item.id)}&minutes=5&via=${encodeURIComponent('clicked Snooze in the window')}`, {}).then(pollState), { cls: 'snooze big' }))));
   document.body.append(ringEl);
 }
 on('tick', () => { if (ringEl) ringEl.querySelector('.clock').textContent = U.clock(state.clock); });
@@ -564,5 +605,5 @@ function renderReminders() {
   }
 }
 
-window.addEventListener('resize', () => { placeNavBar(); });
+window.addEventListener('resize', () => { placeNavBar(false); });
 boot();

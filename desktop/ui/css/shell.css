@@ -1,68 +1,98 @@
-/* The window: sidebar, page header, page, and the whole-window states (REDESIGN §3, §5 Overlays). */
+/* The window (round 5): sidebar, page header, page, and the whole-window states. */
 #app { display: grid; grid-template-columns: var(--side) 1fr; height: 100vh; }
 
 /* ---- sidebar ---- */
-.side { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 16px 12px 14px; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; overflow: hidden; }
-.brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; min-width: 0; }
+.side { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 20px 16px 16px; background: var(--side-bg); box-shadow: inset -1px 0 0 var(--border); min-height: 0; overflow: hidden; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 20px; min-width: 0; }
 .brand .logo { flex: none; }
-.brand b { font-size: 17px; }
-.brand .ver { margin-left: auto; color: var(--faint); font-size: 12px; }
-.side .new { width: 100%; height: 36px; justify-content: flex-start; margin-bottom: 8px; }
+.brand b { font: 800 18px/1 var(--mono); letter-spacing: -.01em; }
+.brand .ver { margin-left: auto; color: var(--faint); font: 500 var(--fs-caption)/1 var(--mono); }
+.side .new { width: 100%; justify-content: flex-start; margin-bottom: 20px; }
 .side .new .kbd { margin-left: auto; }
-.navs { position: relative; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden; min-height: 0; margin: 0 -4px; padding: 0 4px; }
+.navs { position: relative; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; overflow-x: hidden; min-height: 0; margin: 0 -4px; padding: 0 4px; }
 .navs::-webkit-scrollbar { width: 0; }
-.group { padding: 14px 10px 6px; font: 700 11px var(--mono); letter-spacing: .14em; color: var(--faint); white-space: nowrap; }
-.nav { position: relative; display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; border: 0; background: transparent; color: var(--muted); font-size: 14px; text-align: left; cursor: pointer; white-space: nowrap; flex: none;
+.nav-gap { height: 12px; flex: none; }
+.nav { position: relative; display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs-body)/1 var(--mono); text-align: left; cursor: pointer; white-space: nowrap; flex: none;
   transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
 .nav:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
-.nav:hover .ic { transform: translateX(2px); }
-.nav .ic { font-size: 14px; transition: transform 160ms var(--spring); }
+.nav > .ic { font-size: 16px; }
 .nav .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nav .kbd { opacity: 0; transition: opacity var(--quick) var(--ease); }
-.nav:hover .kbd, .nav.on .kbd { opacity: 1; }
-.nav.on { background: var(--surface2); color: var(--fg); }
-.nav.on:hover .ic { transform: none; }
-.nav .count { margin-left: auto; }
-.nav .count + .kbd { display: none; }
-/* The accent bar slides between rows (one element for the whole list). */
-.nav-bar { position: absolute; left: 4px; top: 0; width: 3px; height: 18px; background: var(--accent); transition: transform 240ms var(--spring), opacity var(--quick) var(--ease); pointer-events: none; z-index: 1; }
-.side-foot { display: flex; flex-direction: column; gap: 2px; padding-top: 10px; }
-.mini { margin: 0 0 8px; padding: 10px 12px 12px 16px; cursor: pointer; }
-.mini .t { font-size: 13px; font-weight: 700; margin: 6px 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mini .s { font-size: 12px; color: var(--accent-ink); margin-bottom: 8px; }
-.update { margin: 0 0 8px; padding: 10px 12px; display: grid; gap: 6px; background: color-mix(in srgb, var(--teal) 12%, transparent); border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent); }
+.nav:hover .kbd { opacity: 1; }
+.nav .cnt { margin-left: auto; color: var(--faint); font: 500 var(--fs-caption)/1 var(--mono); }
+.nav .cnt.ink { color: var(--accent-ink); }
+.nav .cnt + .kbd, .nav .count + .kbd { display: none; }
+.nav.on { color: var(--fg); font-weight: 700; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), var(--surface2) 60%); box-shadow: var(--hi); }
+/* Sub pages (Week, Attendance; Alarms, Reminders, Timers, World clock) show under their open group. */
+.nav.sub { height: 32px; padding-left: 44px; font-size: 13px; }
+.nav.sub > .ic { display: none; }
+.nav.sub.on { background: transparent; box-shadow: none; }
+.nav.sub.on::before { content: ""; position: absolute; left: 30px; top: 13px; width: 6px; height: 6px; background: var(--accent); box-shadow: 0 0 10px var(--glow); }
+/* The accent bar slides between the top rows (one element for the whole list). */
+.nav-bar { position: absolute; left: 4px; top: 0; width: 3px; height: 24px; background: var(--accent); box-shadow: 0 0 10px var(--glow); transition: opacity var(--quick) var(--ease); pointer-events: none; z-index: 1; }
+.side-foot { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; }
+.mini { margin: 0 0 12px; padding: 14px; cursor: pointer; }
+.mini .top { display: flex; align-items: center; gap: 8px; }
+.mini .until { margin-left: auto; color: var(--faint); font: 500 var(--fs-caption)/1 var(--mono); }
+.mini .t { font: 800 15px/1.2 var(--mono); margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini .s { font: 500 var(--fs-small)/1 var(--mono); color: var(--accent-ink); margin-top: 6px; }
+.mini .bar { margin-top: 12px; }
+.update { margin: 0 0 12px; padding: 12px 14px; display: grid; gap: 8px; background: color-mix(in srgb, var(--teal) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--teal) 40%, var(--border)); }
 .update .chip { justify-self: start; }
-.update p { margin: 0; font: 12px/1.4 var(--sans); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.sync { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0; font-size: 12px; color: var(--muted); min-width: 0; white-space: nowrap; }
-.sync i { width: 7px; height: 7px; flex: none; background: var(--faint); }
-.sync i.synced { background: var(--teal); }
+.update p { margin: 0; font: 12px/1.45 var(--sans); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sync { display: flex; align-items: center; gap: 8px; padding: 12px 8px 0; font: 500 var(--fs-small)/1 var(--mono); color: var(--muted); min-width: 0; white-space: nowrap; }
+.sync i { width: 8px; height: 8px; flex: none; background: var(--faint); }
+.sync i.synced { background: var(--teal); box-shadow: 0 0 8px var(--teal); }
 .sync i.offline { background: var(--orange); }
 .sync span { color: var(--faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* Narrow: icons only. */
 @media (max-width: 979px) {
-  .side { padding: 14px 8px; align-items: stretch; }
-  .brand { justify-content: center; padding: 2px 0 12px; }
-  .brand b, .brand .ver, .group, .nav .lbl, .nav .kbd, .side .new .lbl, .side .new .kbd, .sync b, .sync span, .mini, .update { display: none; }
-  .side .new { width: 40px; height: 40px; padding: 0; justify-content: center; align-self: center; }
-  .group + .nav { margin-top: 10px; }
+  .side { padding: 16px 8px; align-items: stretch; }
+  .brand { justify-content: center; padding: 2px 0 16px; }
+  .brand b, .brand .ver, .nav .lbl, .nav .kbd, .nav .cnt, .side .new .lbl, .side .new .kbd, .sync b, .sync span, .mini, .update { display: none; }
+  .side .new { width: 40px; padding: 0; justify-content: center; align-self: center; margin-bottom: 16px; }
   .nav { justify-content: center; padding: 0; }
+  .nav.sub { height: 36px; padding: 0; }
+  .nav.sub > .ic { display: inline-block; font-size: 14px; }
+  .nav.sub.on { color: var(--accent-ink); }
+  .nav.sub.on::before { display: none; }
   .nav .count { position: absolute; top: 3px; right: 6px; min-width: 14px; height: 14px; font-size: 9px; }
+  .nav-bar { left: 0; }
   .sync { justify-content: center; padding: 8px 0 0; }
 }
 
 /* ---- main column ---- */
 .main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.head { height: 56px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 var(--pad); border-bottom: 1px solid var(--border); min-width: 0; }
-.head h1 { margin: 0; font-size: 17px; font-weight: 700; white-space: nowrap; }
-.head .ctx { color: var(--muted); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.head .mid { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* The page header: title, a muted context line, the page's tools, its actions, then Search or ask. */
+.head { height: 72px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 var(--pad); box-shadow: inset 0 -1px 0 var(--border); min-width: 0; }
+.head h1 { margin: 0; font: 800 var(--fs-head)/1 var(--mono); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.head .ctx { color: var(--muted); font: 500 13px/1 var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.head .mid { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: 8px; }
 .head .acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
-.head .back { margin-left: -10px; }
+.head .acts:empty { display: none; }
+.head .btn { height: 32px; padding: 0 12px; font-size: 12px; }
+.head .btn.sq { width: 32px; padding: 0; }
+.head .back { margin-left: -12px; }
+.head .ask { margin-left: auto; display: flex; align-items: center; gap: 10px; width: 420px; min-width: 0; height: 44px; padding: 0 14px; border: 0; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); color: var(--faint); font: 400 var(--fs-body) var(--mono); cursor: text; flex: 0 1 420px; transition: box-shadow var(--quick) var(--ease), color var(--quick) var(--ease); }
+.head .ask:hover { box-shadow: inset 0 0 0 1px var(--border2); color: var(--muted); }
+.head .ask .ic { font-size: 15px; }
+.head .ask .lbl { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head .ask kbd { padding: 4px 6px; box-shadow: inset 0 0 0 1px var(--border2); }
+.head .acts + .ask { margin-left: 0; }
+@media (max-width: 1599px) { .head .ask { width: 300px; flex-basis: 300px; } }
+@media (max-width: 1279px) { .head .ask { width: 44px; flex: none; padding: 0; justify-content: center; } .head .ask .lbl, .head .ask kbd { display: none; } }
+@media (max-width: 599px) { .head { height: 60px; gap: 10px; } .head h1 { font-size: 20px; } .head .ctx { display: none; } }
 #page { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
-.page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--pad); scroll-behavior: smooth; }
+.page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 32px var(--pad) var(--pad); scroll-behavior: smooth; }
 .page.flush { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .page-col { max-width: 880px; display: grid; gap: var(--gap); }
+/* Two columns: the page and, when there is room for both, a right rail. Narrower, the rail goes under the page.
+   Wide screens never stretch a line: the whole layout stops growing at 2400 px. */
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); gap: var(--s-10); align-items: start; max-width: 2400px; }
+.cols > .col, .cols > .rail { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+.cols > .rail { gap: 28px; }
+@media (max-width: 1599px) { .cols { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---- whole-window states ---- */
 .starting { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; align-content: center; gap: 16px; background: var(--bg); }
@@ -72,38 +102,47 @@
 .starting .line i { display: block; width: 40%; height: 100%; background: var(--accent); animation: indeterminate 1.2s var(--ease) infinite; }
 .starting.leaving { animation: fade-out 200ms var(--ease-in) both; pointer-events: none; }
 
-.droptint { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 2px solid var(--accent); font-size: 20px; font-weight: 700; pointer-events: none; animation: fade-in 120ms var(--ease) both; }
+.droptint { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 2px var(--accent); font: 800 20px var(--mono); pointer-events: none; animation: fade-in var(--quick) var(--ease) both; }
 
-.ring { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgb(0 0 0 / .6); animation: fade-in 160ms var(--ease) both; }
-.ring-card { width: min(400px, calc(100vw - 48px)); display: grid; justify-items: center; gap: 12px; padding: 28px; background: var(--surface); border: 2px solid var(--accent); animation: sheet-in 260ms var(--spring) both; }
-.ring-card .logo { animation: shake 360ms ease-in-out infinite; margin-bottom: 4px; }
-.ring-card .kind { color: var(--accent-ink); font: 700 13px var(--mono); letter-spacing: .16em; }
-.ring-card .label { font-size: 22px; font-weight: 700; text-align: center; overflow-wrap: anywhere; }
-.ring-card .clock { font: 700 56px/1 var(--mono); font-variant-numeric: tabular-nums; }
+/* ---- the ring: square ripples round a rocking bell, the time breathes red, Hold to dismiss shimmers ---- */
+.ring { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: radial-gradient(90% 70% at 50% 40%, color-mix(in srgb, var(--accent) 22%, rgb(0 0 0 / .72)), rgb(0 0 0 / .86) 70%); animation: fade-in 160ms var(--ease) both; }
+.ring-card { width: min(440px, calc(100vw - 48px)); display: grid; justify-items: center; padding: 48px 24px 24px; background: radial-gradient(90% 60% at 50% 30%, color-mix(in srgb, var(--accent) 22%, var(--bg)), var(--bg) 70%); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); box-shadow: var(--float), 0 40px 80px -30px var(--glow-soft); animation: sheet-in 260ms var(--ease) both; overflow: hidden; }
+.ring-card .bellw { position: relative; width: 64px; height: 64px; display: grid; place-items: center; color: #fff; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-ink) 80%, transparent); }
+.ring-card .bellw .rp { position: absolute; inset: 0; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-ink) 70%, transparent); animation: rip 2400ms var(--ease) infinite; }
+.ring-card .bellw .rp:nth-child(2) { animation-delay: 800ms; } .ring-card .bellw .rp:nth-child(3) { animation-delay: 1600ms; }
+.ring-card .bellw .ic { font-size: 26px; animation: rock 600ms ease-in-out infinite; transform-origin: 50% 10%; }
+.ring-card .kind { margin-top: 40px; color: var(--accent-ink); font: 700 var(--fs-small) var(--mono); letter-spacing: .16em; }
+.ring-card .clock { margin-top: 12px; font: 800 64px/1 var(--mono); letter-spacing: -.05em; font-variant-numeric: tabular-nums; animation: breathe-text 2400ms ease-in-out infinite; }
+.ring-card .label { margin-top: 12px; font: 700 var(--fs-body)/1.3 var(--mono); text-align: center; overflow-wrap: anywhere; }
+.ring-card .acts { width: 100%; display: grid; gap: 12px; margin-top: 40px; }
 .ring-card .btn { width: 100%; }
-.ring-card .snooze { margin-top: 8px; height: 48px; }
-.hold { position: relative; overflow: hidden; }
-.hold i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: color-mix(in srgb, var(--accent) 35%, transparent); pointer-events: none; }
+.hold { position: relative; overflow: hidden; height: 52px !important; font: 800 15px var(--mono) !important; letter-spacing: .1em; text-transform: uppercase; background: var(--accent) !important; box-shadow: 0 12px 28px -10px var(--glow) !important; }
+.hold::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 60px; background: linear-gradient(90deg, transparent, rgb(255 255 255 / .35), transparent); --shim-w: 440px; animation: shim 2400ms ease-in-out infinite; pointer-events: none; }
+.hold i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgb(255 255 255 / .22); pointer-events: none; }
 .hold.holding i { width: 100%; transition: width 2000ms linear; }
 .hold span { position: relative; }
+.ring-card .snooze { height: 48px; background: transparent; box-shadow: inset 0 0 0 1px var(--border2); color: var(--soft); }
 
-.reminders { position: fixed; right: 18px; bottom: 18px; z-index: 75; display: grid; gap: 10px; }
-.reminder { width: 360px; padding: 12px; display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--gold); box-shadow: var(--shadow); animation: toast-in 240ms var(--spring) both; }
+.reminders { position: fixed; right: 24px; bottom: 24px; z-index: 75; display: grid; gap: 12px; }
+.reminder { width: 380px; padding: 16px 16px 16px 20px; display: grid; gap: 12px; position: relative; background: var(--surface3); border: 1px solid var(--border2); box-shadow: var(--float); animation: toast-in var(--t-sheet) var(--ease) both; }
+.reminder::before { content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 3px; background: var(--gold); }
 .reminder .row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .reminder .ic { color: var(--gold); }
-.reminder .acts { display: flex; justify-content: flex-end; gap: 6px; }
+.reminder .acts { display: flex; justify-content: flex-end; gap: 8px; }
 
-/* ---- command palette ---- */
-.palette { position: fixed; inset: 0; z-index: 65; display: grid; justify-items: center; align-items: start; padding-top: 12vh; background: color-mix(in srgb, black 45%, transparent); animation: fade-in 120ms var(--ease) both; }
-.palette-box { width: min(600px, calc(100vw - 48px)); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); animation: sheet-in 200ms var(--ease) both; }
-.palette-box input { width: 100%; height: 52px; padding: 0 18px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); font: 16px var(--mono); outline: none; }
-.palette-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
-.palette-list button { display: flex; align-items: center; gap: 12px; width: 100%; height: 38px; padding: 0 12px; border: 0; background: transparent; color: var(--fg); font-size: 14px; text-align: left; cursor: pointer; }
-.palette-list button .ic { color: var(--muted); }
+/* ---- command palette: Search or ask ---- */
+.palette { position: fixed; inset: 0; z-index: 65; display: grid; justify-items: center; align-items: start; padding-top: 12vh; background: color-mix(in srgb, black 50%, transparent); animation: fade-in var(--quick) var(--ease) both; }
+.palette-box { width: min(640px, calc(100vw - 48px)); background: var(--surface2); border: 1px solid var(--border2); box-shadow: var(--float); animation: sheet-in 200ms var(--ease) both; }
+.palette-top { display: flex; align-items: center; gap: 12px; padding: 0 20px; box-shadow: inset 0 -1px 0 var(--border); color: var(--faint); }
+.palette-top .ic { font-size: 16px; }
+.palette-box input { flex: 1; min-width: 0; height: 56px; padding: 0; border: 0; background: transparent; color: var(--fg); font: 400 16px var(--mono); outline: none; }
+.palette-list { max-height: 50vh; overflow-y: auto; padding: 4px 8px 8px; }
+.palette-list button { display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 12px; border: 0; background: transparent; color: var(--fg); font: 500 var(--fs-body) var(--mono); text-align: left; cursor: pointer; }
+.palette-list button .ic { color: var(--muted); font-size: 15px; }
 .palette-list button .hint { margin-left: auto; color: var(--faint); font-size: 12px; }
-.palette-list button.kb { background: var(--surface2); }
+.palette-list button.kb { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), var(--surface3) 60%); box-shadow: inset 2px 0 0 var(--accent); }
 .palette-list button.kb .ic { color: var(--accent-ink); }
-.palette-list .grp { padding: 10px 12px 4px; font: 700 11px var(--mono); letter-spacing: .14em; color: var(--faint); }
+.palette-list .grp { padding: 12px 12px 6px; font: 700 var(--fs-caption) var(--mono); letter-spacing: .14em; color: var(--faint); }
 
 /* ---- the pixel hourglass ---- */
 .logo { display: block; image-rendering: pixelated; shape-rendering: crispEdges; }

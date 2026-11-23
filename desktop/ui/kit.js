@@ -37,7 +37,7 @@ export function search({ value = '', placeholder = 'Search', oninput } = {}) {
 export function picker({ options = [], value = null, placeholder = 'Choose', onChange, title = '', width } = {}) {
   const val = h('span', { class: 'val' });
   const sw = h('i', { class: 'swatch' });
-  const el = h('button', { class: 'picker', type: 'button', style: width ? { width: `${width}px` } : null }, sw, val, h('i', { class: 'ic caret', text: '\u{f078}' }));
+  const el = h('button', { class: 'picker', type: 'button', style: width ? { width: `${width}px` } : null }, sw, val, icon('down', 'caret'));
   el.options = options;
   // A <button>'s own value is a string: keep the real one (a number, null, an id) beside it.
   let current = value;
@@ -119,6 +119,13 @@ export function meter(frac, { cls = '', tint } = {}) {
   return el;
 }
 
+// A progress line: a red fill that creeps with the clock and a glowing head (the live class).
+export function progress({ thin = false, head = !thin } = {}) {
+  const fill = h('i'), dot = head ? h('b') : null;
+  const el = h('div', { class: `prog ${thin ? 'thin' : ''}` }, h('div', { class: 'bar' }, fill, dot));
+  el.set = (f) => { el.style.setProperty('--p', `${Math.max(0, Math.min(1, f || 0)) * 100}%`); };
+  return el;
+}
 // ---- overlays ----
 const stack = []; // open overlays, newest last; Esc closes the newest
 
