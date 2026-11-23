@@ -436,7 +436,7 @@ class Repo(private val ctx: Context, autoConfigure: Boolean = true) {
         val by = LinkedHashMap<String, LinkedHashMap<LocalDate, Session>>()
         // Expanding the recurrences is the slow part and ignores the marks: cache it until a
         // course or event changes, and only re-read the marks on a tap.
-        val key = listOf(store.all("courses"), events()).flatten().fold(17L) { h, r -> h * 31 + r.id.hashCode() * 7L + r.optLong("updated_at") }.hashCode() * 31 + (from.hashCode() + to.hashCode() * 31)
+        val key = listOf(store.all("courses"), events()).flatten().fold(17L) { h, r -> h * 31 + r.id.hashCode() * 7L + r.optLong("updated_at") }.hashCode() * 31 + (from.hashCode() + to.hashCode() * 31 + zone.id.hashCode() * 961)
         val base = attBase?.takeIf { it.first == key } ?: Pair(key, Recurrence.expand(events(), store.all("courses").associateBy { it.id }, from, to, zone, emptyMap())).also { attBase = it }
         val marks = marks()
         for (o0 in base.second) {

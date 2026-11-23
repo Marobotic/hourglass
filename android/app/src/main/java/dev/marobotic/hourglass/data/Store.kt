@@ -71,19 +71,26 @@ class Store(private val file: File) {
         _version.value++
         if (writeQueued) return
         writeQueued = true
-        writer.schedule({ flush() }, 250, java.util.concurrent.TimeUnit.MILLISECONDS)
+        writer.schedule(Runnable { flush() }, 250, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
-    @Synchronized
+    // The JSON text is built under the store lock (the rows are mutable); the slow disk part is not,
+    // so reads and taps on the main thread never wait for it.
+    private val ioLock = Any()
     private fun write() {
-        writeQueued = false
-        val t = JSONObject()
-        for (name in TABLES) t.put(name, JSONArray(tables.getValue(name).values.toList()))
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(JSONObject().put("tables", t).put("meta", meta).toString())
-        if (!tmp.renameTo(file)) {
-            file.delete()
-            tmp.renameTo(file)
+        val text = synchronized(this) {
+            writeQueued = false
+            val t = JSONObject()
+            for (name in TABLES) t.put(name, JSONArray(tables.getValue(name).values.toList()))
+            JSONObject().put("tables", t).put("meta", meta).toString()
+        }
+        synchronized(ioLock) {
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(text)
+            if (!tmp.renameTo(file)) {
+                file.delete()
+                tmp.renameTo(file)
+            }
         }
     }
 
@@ -154,5 +161,5 @@ class Store(private val file: File) {
         save()
     }
 
-    @Synchronized fun flush() = write()
+    fun flush() = write()
 }
