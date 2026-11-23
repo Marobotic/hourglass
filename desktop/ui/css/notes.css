@@ -12,7 +12,7 @@
 .folder .cnt { color: var(--faint); font: 500 var(--fs-caption) var(--mono); }
 .folder-add { align-self: flex-start; margin: 8px 0 0 4px; }
 .notes-scroll { overflow-y: auto; min-height: 0; }
-.notes-main { padding: 32px var(--pad) var(--pad) 32px; display: grid; gap: 24px; align-content: start; max-width: 2200px; }
+.notes-main { padding: 32px var(--pad) var(--pad) 32px; display: grid; gap: 24px; align-content: start; max-width: 2200px; width: 100%; margin-inline: auto; }
 .course-line { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
 .course-line b { font: 800 20px/1 var(--mono); }
 .course-line .link { padding: 0; color: var(--accent-ink); }
@@ -31,12 +31,11 @@
 
 /* ---- the note (round 5): this course's notes on the left, the page in a raised card, the rail on the right ---- */
 .note-page { container: note / inline-size; }
-.note-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 360px minmax(0, 1fr) 340px; gap: 32px; padding: 32px var(--pad) var(--pad); max-width: 2400px; }
+.note-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 360px minmax(0, 1fr) 340px; gap: 32px; padding: 32px var(--pad) var(--pad); max-width: 2400px; width: 100%; margin-inline: auto; }
 .note-list, .note-rail { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; margin: 0 -4px; padding: 0 4px; }
 .note-list .section { margin-bottom: 0; }
 @container note (max-width: 1699px) { .note-split { grid-template-columns: minmax(0, 1fr) 320px; } .note-list { display: none; } }
 @container note (max-width: 1199px) { .note-split { grid-template-columns: minmax(0, 1fr); } .note-rail { display: none; } }
-@container note (max-width: 700px) { .note-split { padding: 12px; } .note-scroll { padding: 24px 16px 0; } .note-title { font-size: 24px; } .note-meta > .muted { display: none; } .note-tools { padding: 8px; } }
 .note-paper { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .note-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 40px 32px 0; }
 .note-wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 12px; }
@@ -84,6 +83,9 @@
 .note-body .ln[data-k="ul"], .note-body .ln[data-k="ol"], .note-body .ln[data-k="todo"] { padding-left: calc(var(--ind, 0) * 24px + 26px); }
 .note-body .ln[data-k="ul"]::before { content: "•"; position: absolute; left: calc(var(--ind, 0) * 24px + 8px); color: var(--muted); }
 .note-body .ln[data-k="ol"]::before { content: attr(data-n) "."; position: absolute; left: calc(var(--ind, 0) * 24px); width: 22px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Narrow note (after the base rules so it wins): smaller title and margins. */
+@container note (max-width: 700px) { .note-split { padding: 12px; } .note-scroll { padding: 24px 16px 0; } .note-title { font-size: 24px; } .note-meta > .muted { display: none; } .note-tools { padding: 8px; } }
+
 /* ---- to-do look: the ONE place the box, tick and done line are styled ----
    Note cards preview to-dos with this same look (.todo-preview: the same .ln contract, read only).
    Maro's chosen design (2026-11-20, option "Rounded square" in Project Exports\Hourglass\checkbox-options-2.html).

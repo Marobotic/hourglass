@@ -67,9 +67,11 @@
 /* The page header: title, a muted context line, the page's tools, its actions, then Search or ask. */
 .head { height: 72px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 var(--pad); box-shadow: inset 0 -1px 0 var(--border); min-width: 0; }
 .head h1 { margin: 0; font: 800 var(--fs-head)/1 var(--mono); letter-spacing: -.02em; white-space: nowrap; flex: none; }
-.head .ctx { color: var(--muted); font: 500 13px/1 var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
-.head .mid { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: 8px; }
-.head .acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.head .ctx { color: var(--muted); font: 500 13px/16px var(--mono); min-width: 120px; max-width: 360px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex: 0 1 auto; }
+.head .mid { display: flex; align-items: center; gap: 8px; flex: none; margin-left: 8px; }
+.head .acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; }
+.head .acts > * { flex: none; }
+.head .acts > .search { flex: 0 1 340px; min-width: 180px; }
 .head .acts:empty { display: none; }
 .head .btn { height: 32px; padding: 0 12px; font-size: 12px; }
 .head .btn.sq { width: 32px; padding: 0; }
@@ -87,15 +89,16 @@
 @container main (max-width: 1000px) { .head .ctx { display: none; } }
 @container main (max-width: 760px) {
   .head { height: auto; min-height: 60px; flex-wrap: wrap; gap: 5px 10px; padding-block: 8px; }
-  .head h1 { font-size: 20px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .head h1 { font-size: 20px; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   /* A zero-height break after Search or ask: the tools always start the second row. */
   .head:has(> .mid, > .acts:not(:empty))::after { content: ""; order: 1; flex-basis: 100%; height: 0; }
   .head .ask { order: 1; width: 40px; height: 40px; }
-  .head .mid, .head .acts { order: 2; margin-left: 0; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .head .mid { flex: 1 1 auto; }
-  .head .acts { flex: 0 1 auto; }
+  .head .mid, .head .acts { order: 2; margin-left: 0; min-width: 0; max-width: 100%; flex-wrap: wrap; }
+  .head .mid { flex: 0 1 auto; }
+  .head .acts { flex: 1 1 auto; }
   .head .acts .search { flex: 1; min-width: 0; }
-  .head .mid::-webkit-scrollbar, .head .acts::-webkit-scrollbar { display: none; }
+  .head .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .head .back { margin-left: -8px; } .head .back .lbl { display: none; }
 }
 #page { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 32px var(--pad) var(--pad); scroll-behavior: smooth; container: page / inline-size; }
@@ -103,7 +106,7 @@
 .page-col { max-width: 880px; display: grid; gap: var(--gap); }
 /* Two columns: the page and, when there is room for both, a right rail. Narrower, the rail goes under the page.
    Wide screens never stretch a line: the whole layout stops growing at 2400 px. */
-.cols { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); gap: var(--s-10); align-items: start; max-width: 2400px; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); gap: var(--s-10); align-items: start; max-width: 2400px; margin-inline: auto; }
 .cols > .col, .cols > .rail { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
 .cols > .rail { gap: 28px; }
 .cols.one { grid-template-columns: minmax(0, 1fr); }

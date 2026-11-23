@@ -141,13 +141,13 @@ export default {
       const past = state.clock > o.end_ms;
       const live = state.clock >= o.start_ms && state.clock < o.end_ms;
       const kinds = o.parts.map((p) => U.kindLabel(p.kind)).join(' + ');
-      return h('button', { class: `blk ${height < 100 ? 'short' : ''} ${past ? 'past' : ''} ${live ? 'is-live' : ''} ${o.mark === 'off' ? 'off' : ''}`, style: { '--c': o.color, '--p': live ? `${((state.clock - o.start_ms) / (o.end_ms - o.start_ms)) * 100}%` : null, top: `${U.minutes(o.start_time) / 60 * HOUR + 2}px`, height: `${height - 4}px` }, onclick: () => ctx.openSession(o.parts[0]), title: `${o.title} · ${U.range(o.start_time, o.end_time)}${o.location ? ' · ' + o.location : ''}` },
+      return h('button', { class: `blk ${height < 100 ? 'short' : ''} ${height < 64 ? 'tiny' : ''} ${past ? 'past' : ''} ${live ? 'is-live' : ''} ${o.mark === 'off' ? 'off' : ''}`, style: { '--c': o.color, '--p': live ? `${((state.clock - o.start_ms) / (o.end_ms - o.start_ms)) * 100}%` : null, top: `${U.minutes(o.start_time) / 60 * HOUR + 2}px`, height: `${height - 4}px` }, onclick: () => ctx.openSession(o.parts[0]), title: `${o.title} · ${U.range(o.start_time, o.end_time)}${o.location ? ' · ' + o.location : ''}` },
         live ? h('i', { class: 'fill' }) : null,
         height > 40 ? h('span', { class: 'tm tnum' }, h('span', { class: 'tm-range', text: U.range(o.start_time, o.end_time) }), h('span', { class: 'tm-start', text: U.t(o.start_time) })) : null,
         h('b', { text: o.title }),
-        height > 84 ? h('span', { class: 's', text: [kinds, o.location].filter(Boolean).join(' · ') }) : null,
+        height > 84 && (kinds || o.location) ? h('span', { class: 's' }, kinds ? h('span', { class: o.location ? 's-kind' : '', text: kinds }) : null, kinds && o.location ? h('span', { class: 's-kind', text: ' · ' }) : null, o.location ? h('span', { text: o.location }) : null) : null,
         height > 104 && o.mark ? h('span', { class: `mk ${o.mark}`, text: U.markTag(o.mark) }) : height > 104 && live ? h('span', { class: 's ink', text: U.left(Math.ceil((o.end_ms - state.clock) / 60000)) }) : null,
-        height > 130 && !live && o.teacher ? h('span', { class: 's', text: U.lead(o.teacher) }) : null);
+        height > 130 && !live && o.teacher ? h('span', { class: 's s-who', text: U.lead(o.teacher) }) : null);
     }
 
     function grid(list, dates) {

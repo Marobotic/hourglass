@@ -1,6 +1,6 @@
 /* The assistant (round 5): the transcript and composer centred at 880, the rail on the right. */
 .chat-page { container: chat / inline-size; }
-.chat-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 460px; max-width: 2400px; }
+.chat-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 460px; max-width: 2400px; width: 100%; margin-inline: auto; }
 .chat-rail { min-height: 0; overflow-y: auto; padding: 32px var(--pad) var(--pad) 8px; display: flex; flex-direction: column; gap: 24px; }
 @container chat (max-width: 1399px) { .chat-split { grid-template-columns: minmax(0, 1fr); } .chat-rail { display: none; } }
 .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
