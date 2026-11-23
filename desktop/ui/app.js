@@ -431,6 +431,8 @@ function mount(page, arg) {
 // Pages update on these.
 on('tick', () => current?.update?.('tick'));
 on('data', () => current?.update?.('data'));
+// A page changed what the sidebar shows (the schedule's Day / Week / Month).
+on('nav', () => renderSide());
 on('state', () => current?.update?.('state'));
 
 // ---- New menu, keys, palette ------------------------------------------------------------------------------

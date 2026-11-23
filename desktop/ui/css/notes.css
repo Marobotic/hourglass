@@ -1,48 +1,79 @@
-/* Notes list and the note editor. */
-.notes-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px 1fr; }
-.folders { display: flex; flex-direction: column; gap: 2px; padding: 16px 10px; border-right: 1px solid var(--border); overflow-y: auto; }
-.folders .group { padding: 16px 10px 6px; }
-.folder { position: relative; display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 6px 10px; border: 0; background: transparent; color: var(--muted); font: 14px var(--mono); text-align: left; cursor: pointer; transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
+/* Notes list (round 5): folders as a rail with counts, Take a note, the live class band, the masonry of cards. */
+.notes-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 288px 1fr; }
+.folders-wrap { display: flex; flex-direction: column; gap: 16px; min-height: 0; padding: 32px 8px 24px var(--pad); }
+.folders { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; }
+.folders .group { padding: 20px 12px 8px; font: 500 var(--fs-small)/16px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.folder { position: relative; display: flex; align-items: center; gap: 12px; height: 40px; flex: none; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs-body) var(--mono); text-align: left; cursor: pointer; transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
 .folder:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
-.folder.on { background: var(--surface2); color: var(--fg); }
-.folder.on::before { content: ""; position: absolute; left: 0; top: 50%; width: 3px; height: 18px; transform: translateY(-50%); background: var(--accent); }
-.folder .swatch { width: 12px; height: 12px; }
-.folder .ic { font-size: 13px; }
-.folder small { font-size: 11px; }
+.folder.on { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), var(--surface2) 60%); color: var(--fg); font-weight: 700; box-shadow: var(--hi); }
+.folder.on::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--accent); box-shadow: 0 0 10px var(--glow); }
+.folder .swatch { width: 10px; height: 10px; margin: 0 3px; }
+.folder .ic { font-size: 15px; }
+.folder .cnt { color: var(--faint); font: 500 var(--fs-caption) var(--mono); }
 .folder-add { align-self: flex-start; margin: 8px 0 0 4px; }
 .notes-scroll { overflow-y: auto; min-height: 0; }
-.notes-main { padding: var(--pad); display: grid; gap: 18px; align-content: start; }
-.course-line { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 13px; }
-.course-line .link { padding: 0; }
-.take { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 640px; height: 48px; margin: 0 auto; padding: 0 16px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font: 15px var(--mono); text-align: left; cursor: text; transition: background-color var(--quick) var(--ease), border-color var(--quick) var(--ease); }
-.take:hover { background: var(--surface2); border-color: var(--faint); }
-.masonry { display: grid; gap: 12px; align-items: start; }
-.mcol { display: grid; gap: 12px; align-content: start; }
-.mcard { display: grid; gap: 8px; padding: 14px; text-align: left; color: var(--fg); font: inherit; }
-.mcard.tinted { background: color-mix(in srgb, var(--c) 8%, var(--surface)); border-color: color-mix(in srgb, var(--c) 32%, var(--border)); }
-.mcard.tinted:hover { background: color-mix(in srgb, var(--c) 14%, var(--surface)); border-color: color-mix(in srgb, var(--c) 55%, var(--border)); }
-.mcard b { font-size: 15.5px; overflow-wrap: anywhere; }
-.mcard .pin { color: var(--gold); font-size: 12px; }
-.mcard p { margin: 0; font: 14px/1.5 var(--sans); color: color-mix(in srgb, var(--fg) 85%, transparent); white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 10; -webkit-box-orient: vertical; overflow: hidden; }
-.mcard small { font-size: 12px; gap: 8px; }
-.mcard small em { font-style: normal; font-weight: 700; color: color-mix(in srgb, var(--c, var(--accent)) 75%, var(--fg)); }
+.notes-main { padding: 32px var(--pad) var(--pad) 32px; display: grid; gap: 24px; align-content: start; max-width: 2200px; }
+.course-line { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+.course-line b { font: 800 20px/1 var(--mono); }
+.course-line .link { padding: 0; color: var(--accent-ink); }
+.take { display: flex; align-items: center; height: 48px; background: var(--surface); box-shadow: var(--hi), inset 0 0 0 1px var(--border); }
+.take-main { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px; border: 0; background: transparent; color: var(--faint); font: 400 var(--fs-body) var(--mono); text-align: left; cursor: text; }
+.take-main .ic { color: var(--muted); font-size: 15px; }
+.take-ic { width: 48px; height: 100%; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; transition: color var(--quick) var(--ease); }
+.take-ic:hover, .take-main:hover { color: var(--fg); }
+.take:hover { box-shadow: var(--hi), inset 0 0 0 1px var(--border2); }
+.band { display: grid; gap: 16px; align-items: start; }
+.masonry { display: grid; gap: 16px; align-items: start; }
+.mcol { display: grid; gap: 16px; align-content: start; min-width: 0; }
 .notes-empty { grid-column: 1 / -1; }
-@media (max-width: 979px) { .notes-split { grid-template-columns: 200px 1fr; } }
+@container page (max-width: 900px) { .notes-split { grid-template-columns: 220px 1fr; } }
+@media (max-width: 979px) { .notes-split { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .folders-wrap { padding: 16px var(--pad) 0; } .folders { flex-direction: row; overflow-x: auto; } .folders .group, .folder-add { display: none; } .folder { flex: none; } }
 
-/* ---- the note ---- */
-.note-page { padding-top: 24px; }
-.note-wrap { max-width: 820px; margin: 0 auto; display: grid; gap: 14px; }
+/* ---- the note (round 5): this course's notes on the left, the page in a raised card, the rail on the right ---- */
+.note-page { container: note / inline-size; }
+.note-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 360px minmax(0, 1fr) 340px; gap: 32px; padding: 32px var(--pad) var(--pad); max-width: 2400px; }
+.note-list, .note-rail { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; margin: 0 -4px; padding: 0 4px; }
+.note-list .section { margin-bottom: 0; }
+@container note (max-width: 1699px) { .note-split { grid-template-columns: minmax(0, 1fr) 320px; } .note-list { display: none; } }
+@container note (max-width: 1199px) { .note-split { grid-template-columns: minmax(0, 1fr); } .note-rail { display: none; } }
+@container note (max-width: 700px) { .note-split { padding: 16px; } }
+.note-paper { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.note-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 40px 32px 0; }
+.note-wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 12px; }
 .note-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .note-meta .picker { height: 32px; }
 .note-meta .field { height: 32px; }
-.note-status { font-size: 12px; min-width: 64px; text-align: right; }
-.note-title { width: 100%; border: 0; outline: none; background: transparent; color: var(--fg); font: 700 28px/1.25 var(--mono); padding: 4px 0; }
+.note-meta .muted { font: 500 var(--fs-small) var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.note-status { font: 500 var(--fs-small) var(--mono); white-space: nowrap; }
+.note-title { width: 100%; border: 0; outline: none; background: transparent; color: var(--fg); font: 800 36px/1.2 var(--mono); letter-spacing: -.02em; padding: 4px 0 12px; }
 .note-title::placeholder { color: var(--faint); }
-.note-tools { position: sticky; top: -24px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px; background: var(--surface); border: 1px solid var(--border); }
-.note-tools .picker.compact { height: 28px; font-size: 13px; }
-.note-tools .btn.active { background: var(--surface2); color: var(--fg); }
-.tsep { width: 1px; height: 22px; margin: 0 4px; background: var(--border); }
-.note-body { min-height: 50vh; padding: 8px 0 120px; outline: none; font: 15px/1.7 "Inter", var(--sans); color: var(--fg); caret-color: var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; cursor: text; }
+.note-tools { position: relative; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 10px 12px; background: var(--surface2); box-shadow: inset 0 -1px 0 var(--border); }
+.note-tools .picker.compact { height: 32px; font-size: 12px; }
+.note-tools .btn.subtle { width: 36px; height: 36px; padding: 0; color: var(--soft); }
+.note-tools .btn.subtle .lbl { margin-left: -6px; font-size: 11px; }
+.note-tools .btn.subtle:has(.lbl) { width: 44px; }
+.note-tools .btn.subtle .ic { font-size: 16px; }
+.note-tools .btn.active { background: var(--surface3); color: var(--fg); box-shadow: var(--hi), inset 0 -2px 0 var(--accent); }
+.note-tools .btn.pinned { color: var(--gold); }
+.tsep { width: 1px; height: 20px; margin: 0 6px; background: var(--border2); }
+.note-live { padding: 20px 20px 20px 24px; }
+.note-live h2 { font-size: 22px; margin-top: 12px; }
+.note-live .acts { margin-top: 16px; }
+.note-live .acts .btn { flex: 1 1 100%; min-width: 0; }
+.big-count { font: 800 28px/1 var(--mono); }
+.big-count span { font-size: 16px; color: var(--faint); }
+.check-bar { position: relative; height: 6px; margin-top: 12px; background: var(--surface4); }
+.check-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); box-shadow: 0 0 10px var(--glow-soft); transition: width 600ms var(--ease); }
+.vers { display: grid; }
+.ver-row { display: flex; align-items: center; gap: 16px; height: 36px; padding: 0; border: 0; background: transparent; color: var(--muted); font: 500 13px var(--mono); text-align: left; cursor: pointer; }
+.ver-row > :first-child { width: 84px; flex: none; }
+.ver-row.now { color: var(--fg); cursor: default; }
+.ver-row:not(.now):hover { color: var(--fg); }
+.att-file { display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.att-file .fbox { width: 48px; height: 48px; flex: none; display: grid; place-items: center; background: linear-gradient(135deg, var(--surface4), var(--surface2)); box-shadow: inset 0 0 0 1px var(--border2); color: var(--muted); font-size: 16px; }
+.att-file b { display: block; font: 700 13px/18px var(--mono); }
+.att-file small { display: block; font: 400 var(--fs-small)/18px var(--mono); color: var(--muted); }
+.note-body { min-height: 50vh; padding: 0 0 120px; outline: none; font: 15px/1.7 "Inter", var(--sans); color: var(--fg); caret-color: var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; cursor: text; }
 .note-body.blank > .ln[data-k="p"]:first-child::after { content: "Write something…"; position: absolute; left: 0; top: 0; color: var(--faint); pointer-events: none; }
 .note-body .ln { position: relative; min-height: 1.7em; padding-left: calc(var(--ind, 0) * 24px); }
 .note-body .ln[data-i="1"] { --ind: 1; } .note-body .ln[data-i="2"] { --ind: 2; } .note-body .ln[data-i="3"] { --ind: 3; }

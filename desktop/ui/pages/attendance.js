@@ -1,9 +1,12 @@
-// Attendance: every course with every session so far (AttendancePage.qml). ✓ attended, ✗ absent, – off,
-// empty = not marked. Click a box to cycle it.
-import { h, swap } from '../dom.js';
+// Attendance: every course with every session so far (AttendancePage.qml). ✓ attended (teal), ✗ absent (red),
+// – off (muted), empty = not marked. Click a box to cycle it. Round 5 look: the course cards side by side with their
+// rate against 75%, and on the right the term at a glance, what is left to mark (with Attended / Absent / Off) and
+// the legend. The marks stay the original symbols (Maro, 2026-11-23), never coloured squares.
+import { h, icon, swap } from '../dom.js';
 
 const NEXT = { '': 'attended', attended: 'absent', absent: 'off', off: 'none' };
 const GLYPH = { attended: '✓', absent: '✗', off: '–', '': '' };
+const TINT = { attended: 'var(--teal)', absent: 'var(--accent)', off: 'var(--muted)', '': 'var(--faint)' };
 
 export default {
   mount(root, ctx) {
@@ -11,8 +14,13 @@ export default {
     let data = [];
     let last = '';
     let first = true;
-    const body = h('div', { class: 'page-col' });
-    root.append(ctx.head({ title: 'Attendance', ctx: 'Every session so far, per course', acts: [kit.btn('Schedule', () => ctx.go('schedule'), { icon: 'week', kind: 'subtle' })] }), h('div', { class: 'page' }, body));
+    let popped = '';   // the box just marked here: it pops once
+    const main = h('div', { class: 'col' });
+    const rail = h('div', { class: 'rail' });
+    const headCtx = h('span', { class: 'ctx', text: 'Every session so far, per course' });
+    const head = ctx.head({ title: 'Attendance' });
+    head.insertBefore(headCtx, head.querySelector('.acts'));
+    root.append(head, h('div', { class: 'page' }, h('div', { class: 'cols att-cols' }, main, rail)));
     const today = () => U.dayOf(state.clock);
 
     async function load() {
@@ -32,7 +40,7 @@ export default {
           if (!o.course_id) continue;
           const day = o.session_date || o.date;
           const c = by[o.course_id] || (by[o.course_id] = {});
-          if (!c[day]) c[day] = { date: day, mark: o.mark || '', event_id: o.event_id, future: o.start_ms > state.clock };
+          if (!c[day]) c[day] = { date: day, mark: o.mark || '', event_id: o.event_id, kind: o.kind, start_time: o.start_time, end_time: o.end_time, future: o.start_ms > state.clock, live: o.start_ms <= state.clock && o.end_ms > state.clock };
         }
         next = state.courses.map((c) => ({ course: c, sessions: Object.values(by[c.id] || {}).sort((a, b) => (a.date < b.date ? -1 : 1)) }));
       }
@@ -44,35 +52,79 @@ export default {
       render();
     }
 
-    const mark = (course, date, status) => api.action('mark_session', { course: course.id, date, status });
+    const mark = (course, date, status) => { popped = `${course.id}|${date}`; return api.action('mark_session', { course: course.id, date, status }).then(load); };
     const count = (list, m) => list.filter((s) => s.mark === m && (m || !s.future)).length;
-
-    function legend() {
-      const key = (box, tint, label) => h('span', { class: 'key' }, h('i', { class: `att-box sm ${box ? 'on' : ''}`, style: { '--c': tint }, text: box }), label);
-      return h('div', { class: 'legend' }, key('✓', 'var(--teal)', 'attended'), key('✗', 'var(--accent-ink)', 'absent'), key('–', 'var(--muted)', 'off (no class)'), key('', 'var(--faint)', 'not marked: click to mark'));
-    }
+    const rateOf = (yes, no) => (yes + no ? yes / (yes + no) : null);
+    const box = (m, { sm = false, cls = '' } = {}) => h('i', { class: `att-box sm ${m ? 'on' : ''} ${cls}`.trim(), style: { '--c': TINT[m] }, text: GLYPH[m] });
 
     function card({ course, sessions: list }) {
       const past = list.filter((s) => !s.future).length;
       const yes = count(list, 'attended'), no = count(list, 'absent'), off = count(list, 'off'), open = count(list, '');
-      const rate = yes + no ? yes / (yes + no) : null;
-      return h('div', { class: 'card stripe att-card', style: { '--c': course.color } },
+      const rate = rateOf(yes, no);
+      const low = rate != null && rate < 0.75;
+      const toCome = list.length - past;
+      // Below 75%: what one more absence does.
+      const worse = low || (rate != null && rateOf(yes, no + 1) < 0.75) ? Math.round(rateOf(yes, no + 1) * 100) : null;
+      const firstOpen = list.find((s) => !s.mark && !s.future);
+      return h('div', { class: 'card att-card', style: { '--c': course.color } },
+        h('i', { class: 'edge' }),
         h('div', { class: 'row' }, h('b', { class: 'grow ellipsis att-name', text: course.name }),
-          h('b', { class: 'att-rate', style: { color: rate == null ? 'var(--faint)' : rate < 0.75 ? 'var(--orange)' : 'var(--teal)' }, text: rate == null ? '—' : Math.round(rate * 100) + '%' })),
-        rate != null ? kit.meter(rate, { cls: rate < 0.75 ? 'warn' : '', tint: 'var(--teal)' }) : null,
-        h('small', { class: 'muted', text: `✓ ${yes} attended   ✗ ${no} absent   – ${off} off${open ? `   · ${open} not marked` : ''}   of ${past} so far, ${list.length - past} to come` }),
-        h('div', { class: 'att-grid' }, list.map((s) => h('div', { class: `att-cell ${s.future && !s.mark ? 'future' : ''}` },
-          h('button', { class: `att-box ${s.mark ? 'on' : ''}`, style: { '--c': s.mark === 'attended' ? 'var(--teal)' : s.mark === 'absent' ? 'var(--accent-ink)' : s.mark === 'off' ? 'var(--muted)' : 'var(--faint)' },
-            'data-tip': U.longDate(s.date), text: GLYPH[s.mark], onclick: () => mark(course, s.date, NEXT[s.mark]) }),
-          h('small', { text: U.shortDate(s.date).split(' ').slice(1).join(' ') })))),
+          h('b', { class: `att-rate tnum ${rate == null ? 'faint' : low ? 'ink' : 'teal-ink'}`, text: rate == null ? '—' : Math.round(rate * 100) + '%' })),
+        h('div', { class: 'att-stats tnum' },
+          h('span', { class: 'teal-ink', text: `✓ ${yes} attended` }), h('span', { class: no ? 'ink' : '', text: `✗ ${no} absent` }), h('span', { text: `– ${off} off` }),
+          open ? h('span', { class: 'gold', text: `● ${open} to mark` }) : null, h('span', { class: 'faint', text: `of ${past} so far, ${toCome} to come` })),
+        h('div', { class: 'att-grid' }, list.map((s) => {
+          const k = `${course.id}|${s.date}`;
+          return h('div', { class: `att-cell ${s.future && !s.mark ? 'future' : ''}` },
+            h('button', { class: `att-box ${s.mark ? 'on' : ''} ${s === firstOpen ? 'next' : ''} ${popped === k ? 'pop' : ''}`, style: { '--c': TINT[s.mark] },
+              'data-tip': U.longDate(s.date), text: GLYPH[s.mark], onclick: () => mark(course, s.date, NEXT[s.mark]) }),
+            h('small', { text: U.shortDate(s.date).split(' ').slice(1).join(' ') }));
+        })),
+        worse != null && (low || toCome) ? h('div', { class: 'att-warn' }, icon('warning'), h('span', { text: low ? `Below 75%. One more absence takes it to ${worse}%; ${U.plural(toCome, 'session')} left this term.` : `One more absence takes it to ${worse}%, under 75%.` })) : null,
         open ? kit.btn(`Mark the ${open} unmarked as attended`, () => { for (const s of list) if (!s.mark && !s.future) mark(course, s.date, 'attended'); }, { kind: 'subtle', icon: 'check', compact: true, cls: 'self-start' }) : null);
     }
 
+    // ---- the rail ----
+    function summary() {
+      const all = data.flatMap((d) => d.sessions);
+      const yes = count(all, 'attended'), no = count(all, 'absent'), off = count(all, 'off'), open = count(all, '');
+      const rate = rateOf(yes, no);
+      if (rate == null && !open) return null;
+      const seg = (n, cls) => (n ? h('i', { class: cls, style: { flex: String(n) } }) : null);
+      return h('div', { class: 'card raised att-sum' },
+        h('div', { class: 'row big-row' }, h('span', { class: `big tnum ${rate != null && rate < 0.75 ? 'ink' : ''}`, text: rate == null ? '—' : Math.round(rate * 100) + '%' }),
+          h('div', {}, h('b', { text: 'attended this term' }), h('small', { text: `${yes} of ${yes + no} sessions held so far` }))),
+        h('div', { class: 'stackbar' }, seg(yes, 'a'), seg(no, 'x'), seg(off, 'o'), seg(open, 'u')),
+        h('div', { class: 'att-legend' },
+          h('span', {}, box('attended'), `Attended ${yes}`), h('span', {}, box('absent'), `Absent ${no}`),
+          h('span', {}, box('off'), `Off ${off}`), h('span', {}, box(''), `To mark ${open}`)));
+    }
+    function toMark() {
+      const list = data.flatMap((d) => d.sessions.filter((s) => !s.mark && !s.future).map((s) => ({ ...s, course: d.course }))).sort((a, b) => (a.date < b.date ? 1 : -1));
+      if (!list.length) return null;
+      return h('div', { class: 'card raised rail-card' }, kit.section('To mark', String(list.length)),
+        h('div', { class: 'stack16' }, list.slice(0, 4).map((s) => h('div', { class: 'tomark', style: { '--c': s.course.color } },
+          h('div', { class: 'row' }, h('i', { class: 'dot' }), h('div', { class: 'grow' }, h('b', { class: 'ellipsis', text: `${s.course.name} · ${U.kindLabel(s.kind)}` }),
+            h('small', { text: `${s.date === today() ? 'Today' : U.shortDate(s.date)} ${U.range(s.start_time, s.end_time)}${s.live ? ' · live now' : ''}` }))),
+          kit.seg([{ label: '✓ Attended', value: 'attended', tint: 'var(--teal)' }, { label: '✗ Absent', value: 'absent', tint: 'var(--accent)' }, { label: '– Off', value: 'off', tint: 'var(--muted)' }], '', (v) => mark(s.course, s.date, v), { cls: 'mark-seg' })))),
+        list.length > 4 ? h('small', { class: 'faint more', text: `${list.length - 4} more in the courses` }) : null);
+    }
+    function legend() {
+      return h('div', { class: 'card rail-card' }, kit.section('Legend'),
+        h('div', { class: 'att-legend' }, h('span', {}, box('attended'), 'attended'), h('span', {}, box('absent'), 'absent'), h('span', {}, box('off'), 'off (no class)'), h('span', {}, box(''), 'not marked: click to mark')));
+    }
+
     function render() {
-      swap(body, legend(),
-        data.length ? h('div', { class: `stack12 ${first ? 'stagger' : ''}` }, data.map(card))
-          : h('div', { class: 'empty' }, h('h2', { text: 'No courses yet' }), h('p', { text: 'Add a course with its weekly times and its sessions show up here to mark.' }), kit.btn('Add a course', () => ctx.editCourse(null), { kind: 'primary', icon: 'plus' })));
+      const shown = data.filter((d) => d.sessions.length);
+      if (!data.length) {
+        swap(main, h('div', { class: 'empty' }, h('h2', { text: 'No courses yet' }), h('p', { text: 'Add a course with its weekly times and its sessions show up here to mark.' }), kit.btn('Add a course', () => ctx.editCourse(null), { kind: 'primary', icon: 'plus' })));
+        rail.replaceChildren();
+        return;
+      }
+      swap(main, h('div', { class: `att-grid-cards ${first ? 'stagger' : ''}` }, shown.map(card)));
+      swap(rail, summary(), toMark(), legend());
       first = false;
+      popped = '';
     }
 
     load();
