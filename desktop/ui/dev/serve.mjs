@@ -99,11 +99,14 @@ async function shoot(br, s) {
   const [w, ht] = String(s.size || '1440x900').split('x').map(Number);
   await br.send('Emulation.setDeviceMetricsOverride', { width: Math.round(w / (s.dsf || 1)), height: Math.round(ht / (s.dsf || 1)), deviceScaleFactor: s.dsf || 1, mobile: false });
   await br.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: s.reduce ? 'reduce' : 'no-preference' }] });
+  await br.send('Page.bringToFront');
+  await br.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await br.send('Page.navigate', { url: url(s.page || 'now', s.query || '') });
   await wait(s.wait || 2600);
   if (s.eval) {
-    const r = await br.send('Runtime.evaluate', { expression: `(async () => { ${s.eval} })()`, awaitPromise: true });
+    const r = await br.send('Runtime.evaluate', { expression: `(async () => { ${s.eval} })()`, awaitPromise: true, returnByValue: true });
     if (r.result?.exceptionDetails) console.error('eval failed:', r.result.exceptionDetails.exception?.description);
+    else if (r.result?.result?.value !== undefined) console.log('eval:', JSON.stringify(r.result.result.value));
     await wait(s.after || 900);
   }
   const png = await br.send('Page.captureScreenshot', { format: 'png' });

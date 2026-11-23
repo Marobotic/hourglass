@@ -106,6 +106,7 @@ async function boot() {
   document.addEventListener('visibilitychange', () => {
     document.documentElement.classList.toggle('motion-paused', !onScreen());
     if (onScreen() && state.loaded) wake();
+    scheduleTick();
   });
   if (TAURI) {
     askWindow();
@@ -145,6 +146,8 @@ async function refresh() {
   }
   emit('data');
   renderSide();
+  // What is on screen may now show seconds (a live class, a running timer): tick at that pace from now on.
+  scheduleTick();
 }
 
 let polling = false;
@@ -175,6 +178,7 @@ async function pollState() {
       renderReminders();
       renderLogin();
       emit('state');
+      scheduleTick();
     }
     // An alarm started ringing while the window sat in the tray: bring it back.
     if ((d.ringing || []).length && !wasRinging && TAURI) invoke('show_window');

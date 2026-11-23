@@ -79,12 +79,12 @@
 .head .ask .ic { font-size: 15px; }
 .head .ask .lbl { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .head .ask kbd { padding: 4px 6px; box-shadow: inset 0 0 0 1px var(--border2); }
-.head .acts + .ask { margin-left: 0; }
+.head .acts:not(:empty) + .ask { margin-left: 0; }
 @media (max-width: 1599px) { .head .ask { width: 300px; flex-basis: 300px; } }
 @media (max-width: 1279px) { .head .ask { width: 44px; flex: none; padding: 0; justify-content: center; } .head .ask .lbl, .head .ask kbd { display: none; } }
 @media (max-width: 599px) { .head { height: 60px; gap: 10px; } .head h1 { font-size: 20px; } .head .ctx { display: none; } }
 #page { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
-.page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 32px var(--pad) var(--pad); scroll-behavior: smooth; }
+.page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 32px var(--pad) var(--pad); scroll-behavior: smooth; container: page / inline-size; }
 .page.flush { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .page-col { max-width: 880px; display: grid; gap: var(--gap); }
 /* Two columns: the page and, when there is room for both, a right rail. Narrower, the rail goes under the page.
@@ -92,7 +92,8 @@
 .cols { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); gap: var(--s-10); align-items: start; max-width: 2400px; }
 .cols > .col, .cols > .rail { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
 .cols > .rail { gap: 28px; }
-@media (max-width: 1599px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.cols.one { grid-template-columns: minmax(0, 1fr); }
+@container page (max-width: 1519px) { .cols { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---- whole-window states ---- */
 .starting { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; align-content: center; gap: 16px; background: var(--bg); }

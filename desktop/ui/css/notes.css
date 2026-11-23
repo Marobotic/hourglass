@@ -54,6 +54,7 @@
 .note-body .ln[data-k="ul"]::before { content: "•"; position: absolute; left: calc(var(--ind, 0) * 24px + 8px); color: var(--muted); }
 .note-body .ln[data-k="ol"]::before { content: attr(data-n) "."; position: absolute; left: calc(var(--ind, 0) * 24px); width: 22px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 /* ---- to-do look: the ONE place the box, tick and done line are styled ----
+   Note cards preview to-dos with this same look (.todo-preview: the same .ln contract, read only).
    Maro's chosen design (2026-11-20, option "Rounded square" in Project Exports\Hourglass\checkbox-options-2.html).
    Do NOT restyle it without Maro's OK; tools/notes-editor-webview.mjs pins it (LOOK).
    Contract with editor.js (state never lives here): a to-do line is .ln[data-k="todo"]; data-c="1" when done.
@@ -61,22 +62,22 @@
    when done. data-hot is on the line while the pointer is over its box; .ticking is on the line for 400ms after
    the user ticks it (never on load, undo, redo or a server reload), so only a user's tick animates. The editor
    strips inline colour/decoration inside lines, so these rules always win. */
-.note-body .ln[data-k="todo"] { --hit: 5px; padding-left: calc(var(--ind, 0) * 24px + 28px); transition: color 200ms ease 120ms; }
+:is(.note-body, .todo-preview) .ln[data-k="todo"] { --hit: 5px; padding-left: calc(var(--ind, 0) * 24px + 28px); transition: color 200ms ease 120ms; }
 /* 16px, 5px corners, on whole pixels, centred on the first text line. The ring is an inset shadow, not a border,
    so the box's centre is the tick's centre; ticking floods the red in from the ring. */
-.note-body .ln[data-k="todo"]::before,
-.note-body .ln[data-k="todo"][data-c="1"]::after { content: ""; position: absolute; box-sizing: border-box; left: calc(var(--ind, 0) * 24px + 2px); top: round(calc((1.7em - 16px) / 2), 1px); width: 16px; height: 16px; }
-.note-body .ln[data-k="todo"]::before { border: 0; border-radius: 5px; background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); transition: box-shadow 240ms cubic-bezier(.4, 0, .2, 1), background-color 160ms; }
-.note-body .ln[data-k="todo"][data-hot]::before { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.note-body .ln[data-k="todo"][data-c="1"]::before { box-shadow: inset 0 0 0 8px var(--accent); background: transparent; }
-.note-body .ln[data-k="todo"][data-c="1"][data-hot]::before { box-shadow: inset 0 0 0 8px color-mix(in srgb, var(--accent) 88%, white); }
+:is(.note-body, .todo-preview) .ln[data-k="todo"]::before,
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-c="1"]::after { content: ""; position: absolute; box-sizing: border-box; left: calc(var(--ind, 0) * 24px + 2px); top: round(calc((1.7em - 16px) / 2), 1px); width: 16px; height: 16px; }
+:is(.note-body, .todo-preview) .ln[data-k="todo"]::before { border: 0; border-radius: 5px; background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); transition: box-shadow 240ms cubic-bezier(.4, 0, .2, 1), background-color 160ms; }
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-hot]::before { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-c="1"]::before { box-shadow: inset 0 0 0 8px var(--accent); background: transparent; }
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-c="1"][data-hot]::before { box-shadow: inset 0 0 0 8px color-mix(in srgb, var(--accent) 88%, white); }
 /* The tick: viewBox 0 0 16 16, its bounds centred on (8,8), white 2px round stroke; never a font glyph. A user's
    tick draws it in from the left (220ms ease-out after 170ms, as the path runs); unticking hides it at once. */
-.note-body .ln[data-k="todo"][data-c="1"]::after { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.15 L7 10.75 L11.5 5.25' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat; pointer-events: none; }
-.note-body .ln[data-k="todo"][data-c="1"].ticking::after { animation: todo-tick-draw 220ms ease-out 170ms both; }
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-c="1"]::after { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.15 L7 10.75 L11.5 5.25' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat; pointer-events: none; }
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-c="1"].ticking::after { animation: todo-tick-draw 220ms ease-out 170ms both; }
 @keyframes todo-tick-draw { from { clip-path: inset(0 12.5px 0 0); } to { clip-path: inset(0 3.5px 0 0); } }
-.note-body .ln[data-k="todo"][data-hot] { cursor: pointer; }
-.note-body .ln[data-k="todo"][data-c="1"] { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-hot] { cursor: pointer; }
+:is(.note-body, .todo-preview) .ln[data-k="todo"][data-c="1"] { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
 /* ---- end of to-do look ---- */
 .note-body code { font: 13.5px var(--mono); background: var(--surface3); padding: 1px 5px; }
 .note-body a { color: var(--fg); text-decoration-color: var(--accent); }

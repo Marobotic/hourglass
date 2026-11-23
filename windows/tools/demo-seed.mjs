@@ -47,3 +47,27 @@ await call("set_alarm", { time: "07:15", days: ["Mon", "Tue", "Wed", "Thu", "Fri
 await call("set_alarm", { before: "Linear Algebra", minutes_before: 15 });
 await call("start_timer", { minutes: 25, label: "Problem set 3" });
 console.log("seeded", algo.course.name, "live", liveStart, "-", liveEnd, "on", dow);
+
+// Round 5 screenshots: past sessions marked, to-do notes, an exam this week and one alarm ring skipped.
+const get = async (path) => (await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}` } })).json();
+const past = (await get(`/api/schedule?from=${termStart}&to=${addDays(today, -1)}`)).occurrences.filter((o) => o.course_id);
+const pattern = { Algorithms: "aaaoaaxaaa", "Linear Algebra": "aaaaaaaaaa", "Operating Systems": "axaaxaaaxa", "Technical Writing": "aaax" };
+const seen = {};
+for (const o of past) {
+  const p = pattern[o.title] || "a";
+  const i = (seen[o.title] = (seen[o.title] ?? -1) + 1);
+  const c = p[i % p.length];
+  if (o === past.filter((x) => x.title === "Algorithms").at(-1)) continue; // one left to mark
+  await call("mark_session", { event_id: o.event_id, date: o.session_date || o.date, status: c === "a" ? "attended" : c === "x" ? "absent" : "off" });
+}
+await call("add_note", { course: "Algorithms", date: today, title: "Problem set 3 plan", body: "Q2 and Q4 are **knapsack** variants; Q5 needs the LCS table from last week. Due Friday 23:59 on the portal.\n\n## Before Friday\n- [x] Read chapter 15.3 on LCS\n- [x] Draw the knapsack table for Q2\n- [ ] Write the recurrence for Q4 and check it on the **5-item example** from class\n- [ ] Ask Dr. Okafor about Q5 in office hours\n\n## Recurrence for Q4\ndp[i][w] = max(dp[i-1][w], v + dp[i-1][w - w_i]). Fill rows top to bottom; the answer is the last cell.\n\n- Base row is all zeros\n- Items heavier than w copy the row above" });
+await call("add_note", { title: "This week", body: "- [x] Print the problem set\n- [ ] Buy lino ink, black\n- [x] Book a library room\n- [ ] Email Dr. Mensah about lab 3" });
+await call("add_note", { course: "Linear Algebra", date: addDays(today, -5), title: "Row reduction", body: "Pivot, scale, eliminate below, then back-substitute. Rank is the number of pivots; free columns give the null space." });
+await call("add_event", { title: "Quiz 2", course: "Linear Algebra", kind: "exam", date: addDays(today, 3), start: "09:00", end: "10:00", location: "B204" });
+const alarms = (await call("list_alarms", {}));
+const lead = (Array.isArray(alarms) ? alarms : alarms.alarms || []).find((a) => a.lead_course_id || a.lead_event_id);
+if (lead?.next_at) {
+  const d = new Date(lead.next_at);
+  await call("skip_alarm", { alarm_id: lead.id, date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` }).catch((e) => console.log("skip:", e.message));
+}
+console.log("marked", past.length, "past sessions");
