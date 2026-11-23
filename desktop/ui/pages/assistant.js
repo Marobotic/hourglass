@@ -37,15 +37,13 @@ export default {
     const ui = { tools: new Set(), steps: new Set(), words: new Map() };
 
     // ---- header ----
-    const subEl = h('small', { class: 'ch-sub' });
+    const subEl = h('span', { class: 'ctx ch-sub' });
     const numsEl = h('button', { class: 'ch-nums', title: 'Usage', onclick: () => usageSheet() });
     const stateEl = h('span', { class: 'ch-state' });
-    const head = h('div', { class: 'chat-head' },
-      h('span', { class: 'ch-glyph', text: '✦' }),
-      h('div', { class: 'col ch-who' }, h('b', { text: 'Assistant' }), subEl),
-      h('span', { class: 'grow' }), numsEl, stateEl,
-      kit.btn('New chat', () => newChat(), { kind: 'subtle', icon: 'plus', compact: true, title: 'New chat (Ctrl+N)' }),
-      kit.btn('', (e) => headMenu(e.currentTarget), { kind: 'subtle', icon: 'more', compact: true, title: 'More' }));
+    const head = ctx.head({ title: 'Assistant', mid: [stateEl], acts: [numsEl,
+      kit.btn('New chat', () => newChat(), { icon: 'plus', title: 'New chat (Ctrl+N)' }),
+      kit.btn('', (e) => headMenu(e.currentTarget), { kind: 'subtle', icon: 'more', title: 'More' })] });
+    head.insertBefore(subEl, head.querySelector('.mid'));
 
     // ---- transcript ----
     const msgs = h('div', { class: 'msgs selectable' });
@@ -68,8 +66,9 @@ export default {
     const foot = h('div', { class: 'composer-foot' }, engineLine, modeNote, h('span', { class: 'grow' }), modelChip, h('span', { class: 'mode-slot' }, modeChip));
     const wrap = h('div', { class: 'composer-wrap' }, editBar, statusEl, composer, foot);
 
-    const chatEl = h('div', { class: 'chat' }, head, h('div', { class: 'msgs-wrap' }, msgs, toBottom), quotaEl, wrap);
-    root.append(h('div', { class: 'page flush' }, chatEl));
+    const chatEl = h('div', { class: 'chat' }, h('div', { class: 'msgs-wrap' }, msgs, toBottom), quotaEl, wrap);
+    const railEl = h('aside', { class: 'chat-rail' });
+    root.append(head, h('div', { class: 'page flush chat-page' }, h('div', { class: 'chat-split' }, chatEl, railEl)));
 
     // ---- helpers ----
     const busy = () => sending || !!chat.busy || pending !== '' || (chat.queue || []).length > 0;
@@ -575,11 +574,46 @@ export default {
       if (msgs.scrollTop < 40 && messages().length > shownCount) msgs.querySelector('.msgs-more')?.click();
     });
 
+    // ---- the rail: what this chat changed (Undo where it can be undone), what it can see, things to try ----
+    const READS = /^(get|list|search|find|read|note_versions|world_clock|reminder_settings|whats_now|drive_info|usage)/;
+    let driveInfo = null;
+    function paintRail() {
+      const changes = [];
+      for (const m of chat.messages || []) {
+        if (m.role !== 'assistant') continue;
+        for (const t of m.tools || []) if (!READS.test(t.tool || '') && t.status !== 'error') changes.push({ m, t });
+      }
+      const n = state.now;
+      const later = (n?.today || []).filter((o) => o.end_ms > state.clock && o !== n?.active && o.event_id !== n?.active?.event_id).length;
+      const notes = state.notes || [];
+      const see = [
+        ['now', 'Today', [n?.active?.state === 'live' ? `${n.active.title} live` : '', later ? `${U.plural(later, 'more session')}` : ''].filter(Boolean).join(', ') || 'Nothing else on'],
+        ['bell', 'Alarms', (n?.alarms || []).length ? `next ${U.clock(n.alarms[0].next_at)}` : 'none set'],
+        ['notes', 'Notes', `${U.plural(notes.length, 'note')} in ${U.plural(state.courses.length, 'course')}`],
+        driveInfo?.used != null ? ['drive', 'Drive', `${U.bytes(driveInfo.used)}${driveInfo.files != null ? ` in ${U.plural(driveInfo.files, 'file')}` : ''}`] : null,
+      ].filter(Boolean);
+      swap(railEl,
+        changes.length ? h('div', { class: 'card raised rail-card' }, kit.section('Changes in this chat', String(changes.length)),
+          h('div', { class: 'changes' }, changes.slice(-6).reverse().map(({ m, t }) => {
+            const run = t.status === 'running';
+            return h('div', { class: 'change' },
+              run ? h('span', { class: 'dots' }, h('b'), h('b'), h('b')) : h('span', { class: 'teal-ink' }, icon('check')),
+              h('div', { class: 'grow' }, h('b', { class: 'ellipsis', text: t.label || t.tool }), toolSummary(t) ? h('small', { class: 'ellipsis', text: toolSummary(t) }) : null),
+              String(m.id) === undoTarget() && !busy() && (t.diff || /file|drive/.test(t.tool || '')) ? kit.btn('Undo', undo, { kind: 'ghost', icon: 'undo', compact: true }) : null);
+          }))) : null,
+        h('div', { class: 'card rail-card' }, kit.section('It can see'),
+          h('div', { class: 'sees' }, see.map(([ic, k, v]) => h('div', { class: 'see' }, icon(ic), h('b', { text: k }), h('span', { class: 'ellipsis', text: v }))))),
+        chat.enabled ? h('div', { class: 'card rail-card' }, kit.section('Try'),
+          h('div', { class: 'stack8' }, SUGGESTIONS.slice(0, 3).map((t) => h('button', { class: 'try', onclick: () => { ta.value = t; send(false); } }, icon('spark'), h('span', { class: 'ellipsis', text: t }))))) : null);
+    }
+    api.get('/api/drive/usage', { quiet: true }).then((d) => { driveInfo = d ? { used: d.used ?? d.used_bytes, files: d.files ?? d.file_count } : null; paintRail(); }).catch(() => {});
+
     function render() {
       const wasNear = stick;
       renderTranscript();
       paintStatus();
       paintChrome();
+      paintRail();
       if (wasNear) requestAnimationFrame(() => scrollEnd());
       else toBottom.hidden = false;
     }

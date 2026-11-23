@@ -8,7 +8,7 @@ export function session(ctx, occ) {
   const day = occ.session_date || occ.date;
   let mark = occ.mark || '';
   const markHint = h('small', { class: 'faint' });
-  const markSeg = kit.seg([{ label: 'Attended', value: 'attended', tint: 'var(--teal)' }, { label: 'Absent', value: 'absent', tint: 'var(--accent-ink)' }, { label: 'Off', value: 'off' }], mark, async (v) => {
+  const markSeg = kit.seg([{ label: '✓ Attended', value: 'attended', tint: 'var(--teal)' }, { label: '✗ Absent', value: 'absent', tint: 'var(--accent)' }, { label: '– Off', value: 'off', tint: 'var(--muted)' }], mark, async (v) => {
     const status = v === mark ? 'none' : v;
     const r = await api.action('mark_session', { event_id: occ.event_id, date: day, status }).catch(() => null);
     if (r) mark = status === 'none' ? '' : status;

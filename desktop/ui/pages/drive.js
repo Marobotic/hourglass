@@ -565,14 +565,15 @@ export default {
         problem ? h('div', { class: 'sync-alert row' }, icon('warning'), h('span', { class: 'grow', text: problem }), kit.btn('', () => setProblem(''), { kind: 'subtle', compact: true, icon: 'close' })) : null,
         top && syncFolders.length ? h('div', { class: 'stack8' }, kit.section('Synced folders', U.plural(syncFolders.length, 'pair')), syncFolders.map(syncCard)) : null,
         drive.courses?.length ? h('div', {}, kit.section('Courses', String(drive.courses.length)), h('div', { class: 'course-tiles' }, drive.courses.map(courseCard))) : null,
-        h('div', { class: 'files-block' },
+        // Nothing here: nothing drawn (Upload and drop-anywhere stay in the header and the window).
+        list.length ? h('div', { class: 'files-block' },
           kit.section(top ? 'Files' : (drive.path?.at(-1)?.name || 'Files'), list.length ? `${U.plural(folders.length, 'folder')} · ${U.plural(files.length, 'file')}` : ''),
           list.length && view === 'details' ? h('div', { class: 'drow dhead' }, heading('name', 'NAME'), heading('date', 'MODIFIED'), heading('type', 'TYPE'), heading('size', 'SIZE', 'right'), h('span')) : null,
           list.length && view !== 'details' ? h('div', { class: 'row sort-row' }, h('span', { class: 'label-inline faint', text: 'SORT' }), kit.seg([['name', 'Name'], ['date', 'Modified'], ['type', 'Type'], ['size', 'Size']].map(([v, l]) => ({ label: l + (sort.by === v ? (sort.desc ? ' ↓' : ' ↑') : ''), value: v })), sort.by, sortOn)) : null,
           list.length
             ? h('div', { class: `dlist v-${view} ${first ? 'stagger' : ''}` },
               view === 'details' ? list.map(itemEl) : [folders.length ? h('div', { class: `dgrid v-${view}` }, folders.map(itemEl)) : null, files.length ? h('div', { class: `dgrid v-${view}` }, files.map(itemEl)) : null])
-            : h('div', { class: 'empty drive-empty' }, icon('upload'), h('h2', { text: top ? 'Your Drive is empty' : 'Nothing in this folder' }), h('p', { text: 'Drop files anywhere on the window, or upload them.' }), kit.btn('Upload', uploadPick, { kind: 'primary', icon: 'upload' }))),
+            : null) : null,
         list.length ? h('small', { class: 'faint drive-tip', text: 'Click a picture or video to preview it, anything else opens in its app. Edits you save there are uploaded again by themselves.' }) : null);
       first = false;
     }

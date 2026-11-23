@@ -14,7 +14,9 @@ export default {
     let history = null;
     let update = null;
     const body = h('div', { class: 'page-col settings' });
-    root.append(ctx.head({ title: 'Settings' }), h('div', { class: 'page' }, body));
+    // A full page: Back (and Esc) returns to where you were.
+    const back = () => ctx.go(state.prevPage && state.prevPage !== 'settings' ? state.prevPage : 'now');
+    root.append(ctx.head({ title: 'Settings', back }), h('div', { class: 'page' }, body));
 
     const set = (patch) => api.put('/api/settings', patch).then(() => { ctx.pollState(); load(); }).catch(() => {});
     const s = () => state.settings || {};
@@ -66,11 +68,11 @@ export default {
       const signedIn = !!account.signed_in;
       const mcp = ai?.mcp_url;
       swap(body,
-        h('section', {}, kit.section('Time'),
+        h('section', { class: 'card raised set-card' }, kit.section('Time'),
           row('Clock', '', kit.seg([{ label: '12-hour', value: '12h' }, { label: '24-hour', value: '24h' }], s().time_format === '24h' ? '24h' : '12h', (v) => set({ time_format: v }))),
           row('Week starts on', '', kit.seg([{ label: 'Saturday', value: 6 }, { label: 'Sunday', value: 7 }, { label: 'Monday', value: 1 }], s().week_start || 6, (v) => set({ week_start: v }))),
           row('Time zone', 'The app\'s time zone, the same on every device. Change it from the world clock.', kit.btn('World clock', () => ctx.go('world'), { icon: 'globe' }))),
-        h('section', {}, kit.section('Alarms'),
+        h('section', { class: 'card raised set-card' }, kit.section('Alarms'),
           row('Lecture reminders', 'Rings before every lecture, on all your devices.', kit.seg([0, 10, 15, 30, 60].map((m) => ({ label: m ? `${m} min` : 'Off', value: m })), s().lecture_reminder_min || 0, (v) => set({ lecture_reminder_min: v }))),
           row('Ringtone', 'Rings on every device. Upload an audio file or pick a song in Jukebox: Set as alarm.', kit.btn(busy ? 'Uploading…' : 'Upload audio file', uploadTone, { icon: 'folder-open', disabled: busy || !signedIn })),
           tones.length ? h('div', { class: 'tones' }, tones.map(toneRow)) : null,
@@ -84,10 +86,10 @@ export default {
             kit.btn(history ? 'Hide' : 'Show', async () => { history = history ? null : await api.get('/api/ring/history').catch(() => []); render(); })),
           historyBlock(),
           row('Reminders', 'Tone, snooze length and alert style for reminders.', kit.btn('Reminder settings', () => ctx.go('reminders'), { icon: 'reminder' }))),
-        h('section', {}, kit.section('Assistant'),
+        h('section', { class: 'card raised set-card' }, kit.section('Assistant'),
           row('Engine and keys', 'Which AI runs the assistant: the free models, your Claude subscription, or your own API key.', kit.btn('Assistant settings', () => ctx.go('assistant', { settings: true }), { icon: 'sliders' })),
           row('Usage', 'Tokens and cost per day and per model.', kit.btn('Usage', () => ctx.go('assistant', { usage: true }), { icon: 'tasks' }))),
-        h('section', {}, kit.section('Use with AI'),
+        h('section', { class: 'card raised set-card' }, kit.section('Use with AI'),
           h('p', { class: 'muted set-p', text: 'Tell any AI "use Hourglass to move my Tuesday lecture". Add your link as a connector (MCP server) in ChatGPT, Claude, Gemini CLI or Codex. Anyone with the link can change your schedule, so keep it to yourself.' }),
           h('div', { class: 'row wrap' },
             mcp ? h('code', { class: 'ai-link selectable', text: mcp.split('/mcp/')[0] + '/mcp/' + (mcp.split('/mcp/')[1] || '').slice(0, 8) + '…' }) : null,
@@ -101,15 +103,15 @@ export default {
                 render();
               }
             }, { kind: 'danger', icon: 'trash' }) : null)),
-        h('section', {}, kit.section('Account'),
+        h('section', { class: 'card raised set-card' }, kit.section('Account'),
           signedIn ? row(account.email || '', 'Your Jukebox account. ' + (sync.state === 'synced' ? `Synced ${U.clock(sync.last_ok || state.clock)}, shared with your phones.` : sync.state === 'offline' ? 'Offline: changes are kept here and sent when the connection is back.' : ''),
             kit.btn('Sync now', (e) => { const b = e.currentTarget; b.disabled = true; api.post('/api/sync/now', {}, { readOnly: true }).then(() => ctx.pollState()).finally(() => { b.disabled = false; }); }, { icon: 'sync' }),
             kit.btn('Sign out', async () => {
               if (await kit.confirm('Sign out?', 'This computer stops syncing until you sign in again.', 'Sign out')) api.post('/api/account/logout', {}).then(() => ctx.pollState());
             }, { kind: 'subtle' }))
             : row('Not signed in', 'Hourglass works on this computer only until you sign in.', kit.btn('Sign in', () => ctx.pollState(), { kind: 'primary' }))),
-        h('section', {}, kit.section('About'),
-          row(`Hourglass ${state.app.version || globalThis.HOURGLASS_VERSION || ''}`, update?.latest ? `Hourglass ${update.latest.version} is ready.` : update?.checked_at ? 'You have the newest version.' : 'Updates install by themselves when you say so.',
+        h('section', { class: 'card raised set-card' }, kit.section('About'),
+          row(`Hourglass ${globalThis.HOURGLASS_VERSION || state.app.version || ''}`, (state.app.version && globalThis.HOURGLASS_VERSION && state.app.version !== globalThis.HOURGLASS_VERSION ? `Background service ${state.app.version}. ` : '') + (update?.latest ? `Hourglass ${update.latest.version} is ready.` : update?.checked_at ? 'You have the newest version.' : 'Updates install by themselves when you say so.'),
             update?.latest ? kit.btn('Install and restart', () => api.post('/api/update/install', {}, { readOnly: true }), { kind: 'primary', icon: 'download' })
               : kit.btn('Check for updates', async () => { update = await api.get('/api/update?check=1', { quiet: true }).catch(() => ({ checked_at: Date.now() })); render(); }, { icon: 'refresh' }))));
     }
@@ -117,6 +119,6 @@ export default {
     load();
     aiLoad(false);
     const poll = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 5000);
-    return { update(w) { if (w === 'state' || w === 'data') render(); }, unmount() { clearInterval(poll); } };
+    return { escape() { back(); return true; }, update(w) { if (w === 'state' || w === 'data') render(); }, unmount() { clearInterval(poll); } };
   },
 };

@@ -81,7 +81,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .pv-nav.right { right: 16px; }
 
 /* ---- upload panel ---- */
-.uploads { position: fixed; right: 20px; bottom: 20px; z-index: 76; width: 360px; max-height: 50vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); animation: toast-in 220ms var(--spring) both; }
+.uploads { position: fixed; right: 20px; bottom: 20px; z-index: 76; width: 360px; max-height: 50vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); animation: toast-in 220ms var(--ease) both; }
 .up-head { display: flex; align-items: center; gap: 8px; padding: 10px 8px 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .up-wait { padding: 8px 14px 0; font-size: 12px; }
 .up-list { overflow-y: auto; padding: 6px 0; }
