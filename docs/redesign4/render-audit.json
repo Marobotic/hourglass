@@ -1,0 +1,1381 @@
+[
+ {
+  "out": "png/alarm-new/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarm-new/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarm-new/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarm-new/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/alarms/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant-empty/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/assistant/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/attendance/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/confirm/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/confirm/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/confirm/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/confirm/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/course/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/course/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/course/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/course/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive-drop/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive-drop/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive-drop/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive-upload/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive-upload/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive-upload/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive-upload/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/drive/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/event/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/event/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/event/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/event/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/menu/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/menu/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/menu/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/menu/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/new/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/new/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/new/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/new/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/note/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/notes/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now-next/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/now/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/palette/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/palette/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/palette/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/reminders/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring-timer/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring-timer/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring-timer/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring-timer/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/ring/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-day/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-month/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-month/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-month/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-month/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-month/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-month/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-month/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/schedule-week/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/session/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/session/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/session/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/session/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/settings/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/signin/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/starting/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/timers/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/toast/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/toast/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/toast/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/toast/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/versions/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/versions/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/versions/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/versions/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/1280.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/1440.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/1920.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/2560.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/3840.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/390.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/768.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ },
+ {
+  "out": "png/world/phone.png",
+  "fonts": true,
+  "scroll": false,
+  "empty": false,
+  "bad": []
+ }
+]
