@@ -1,0 +1,1247 @@
+[
+ {
+  "file": "screens/now",
+  "out": "png/now/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/now",
+  "out": "png/now/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/now",
+  "out": "png/now/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/now",
+  "out": "png/now/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/now",
+  "out": "png/now/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/now",
+  "out": "png/now/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/now",
+  "out": "png/now/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/now",
+  "out": "png/now/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/now-next",
+  "out": "png/now-next/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/now-next",
+  "out": "png/now-next/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/now-next",
+  "out": "png/now-next/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/now-next",
+  "out": "png/now-next/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/now-next",
+  "out": "png/now-next/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/now-next",
+  "out": "png/now-next/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/now-next",
+  "out": "png/now-next/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/now-next",
+  "out": "png/now-next/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/schedule-week",
+  "out": "png/schedule-week/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/schedule-week",
+  "out": "png/schedule-week/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/schedule-week",
+  "out": "png/schedule-week/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/schedule-week",
+  "out": "png/schedule-week/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/schedule-week",
+  "out": "png/schedule-week/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/schedule-week",
+  "out": "png/schedule-week/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/schedule-week",
+  "out": "png/schedule-week/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/schedule-week",
+  "out": "png/schedule-week/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/schedule-day",
+  "out": "png/schedule-day/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/schedule-day",
+  "out": "png/schedule-day/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/schedule-day",
+  "out": "png/schedule-day/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/schedule-day",
+  "out": "png/schedule-day/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/schedule-day",
+  "out": "png/schedule-day/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/schedule-day",
+  "out": "png/schedule-day/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/schedule-day",
+  "out": "png/schedule-day/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/schedule-day",
+  "out": "png/schedule-day/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/schedule-month",
+  "out": "png/schedule-month/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/schedule-month",
+  "out": "png/schedule-month/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/schedule-month",
+  "out": "png/schedule-month/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/schedule-month",
+  "out": "png/schedule-month/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/schedule-month",
+  "out": "png/schedule-month/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/schedule-month",
+  "out": "png/schedule-month/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/schedule-month",
+  "out": "png/schedule-month/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "screens/attendance",
+  "out": "png/attendance/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/attendance",
+  "out": "png/attendance/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/attendance",
+  "out": "png/attendance/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/attendance",
+  "out": "png/attendance/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/attendance",
+  "out": "png/attendance/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/attendance",
+  "out": "png/attendance/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/attendance",
+  "out": "png/attendance/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/attendance",
+  "out": "png/attendance/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/notes",
+  "out": "png/notes/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/notes",
+  "out": "png/notes/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/notes",
+  "out": "png/notes/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/notes",
+  "out": "png/notes/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/notes",
+  "out": "png/notes/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/notes",
+  "out": "png/notes/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/notes",
+  "out": "png/notes/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/notes",
+  "out": "png/notes/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/note",
+  "out": "png/note/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/note",
+  "out": "png/note/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/note",
+  "out": "png/note/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/note",
+  "out": "png/note/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/note",
+  "out": "png/note/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/note",
+  "out": "png/note/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/note",
+  "out": "png/note/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/note",
+  "out": "png/note/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/drive",
+  "out": "png/drive/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/drive",
+  "out": "png/drive/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/drive",
+  "out": "png/drive/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/drive",
+  "out": "png/drive/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/drive",
+  "out": "png/drive/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/drive",
+  "out": "png/drive/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/drive",
+  "out": "png/drive/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/drive",
+  "out": "png/drive/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/alarms",
+  "out": "png/alarms/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/alarms",
+  "out": "png/alarms/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/alarms",
+  "out": "png/alarms/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/alarms",
+  "out": "png/alarms/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/alarms",
+  "out": "png/alarms/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/alarms",
+  "out": "png/alarms/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/alarms",
+  "out": "png/alarms/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/alarms",
+  "out": "png/alarms/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/reminders",
+  "out": "png/reminders/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/reminders",
+  "out": "png/reminders/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/reminders",
+  "out": "png/reminders/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/reminders",
+  "out": "png/reminders/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/reminders",
+  "out": "png/reminders/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/reminders",
+  "out": "png/reminders/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/reminders",
+  "out": "png/reminders/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/reminders",
+  "out": "png/reminders/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/timers",
+  "out": "png/timers/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/timers",
+  "out": "png/timers/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/timers",
+  "out": "png/timers/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/timers",
+  "out": "png/timers/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/timers",
+  "out": "png/timers/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/timers",
+  "out": "png/timers/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/timers",
+  "out": "png/timers/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/timers",
+  "out": "png/timers/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/world",
+  "out": "png/world/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/world",
+  "out": "png/world/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/world",
+  "out": "png/world/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/world",
+  "out": "png/world/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/world",
+  "out": "png/world/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/world",
+  "out": "png/world/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/world",
+  "out": "png/world/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/world",
+  "out": "png/world/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/assistant",
+  "out": "png/assistant/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/assistant",
+  "out": "png/assistant/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/assistant",
+  "out": "png/assistant/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/assistant",
+  "out": "png/assistant/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/assistant",
+  "out": "png/assistant/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/assistant",
+  "out": "png/assistant/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/assistant",
+  "out": "png/assistant/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/assistant",
+  "out": "png/assistant/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/assistant-empty",
+  "out": "png/assistant-empty/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/assistant-empty",
+  "out": "png/assistant-empty/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/assistant-empty",
+  "out": "png/assistant-empty/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/assistant-empty",
+  "out": "png/assistant-empty/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/assistant-empty",
+  "out": "png/assistant-empty/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/assistant-empty",
+  "out": "png/assistant-empty/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/assistant-empty",
+  "out": "png/assistant-empty/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/assistant-empty",
+  "out": "png/assistant-empty/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/settings",
+  "out": "png/settings/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/settings",
+  "out": "png/settings/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/settings",
+  "out": "png/settings/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/settings",
+  "out": "png/settings/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/settings",
+  "out": "png/settings/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/settings",
+  "out": "png/settings/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/settings",
+  "out": "png/settings/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/settings",
+  "out": "png/settings/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/signin",
+  "out": "png/signin/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/signin",
+  "out": "png/signin/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/signin",
+  "out": "png/signin/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/signin",
+  "out": "png/signin/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/signin",
+  "out": "png/signin/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/signin",
+  "out": "png/signin/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/signin",
+  "out": "png/signin/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/signin",
+  "out": "png/signin/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/starting",
+  "out": "png/starting/390.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/starting",
+  "out": "png/starting/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/starting",
+  "out": "png/starting/1280.png",
+  "w": 1280,
+  "h": 800
+ },
+ {
+  "file": "screens/starting",
+  "out": "png/starting/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/starting",
+  "out": "png/starting/1920.png",
+  "w": 1920,
+  "h": 1080
+ },
+ {
+  "file": "screens/starting",
+  "out": "png/starting/2560.png",
+  "w": 2560,
+  "h": 1440
+ },
+ {
+  "file": "screens/starting",
+  "out": "png/starting/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/starting",
+  "out": "png/starting/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/new",
+  "out": "png/new/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/new",
+  "out": "png/new/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/new",
+  "out": "png/new/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/new",
+  "out": "png/new/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/palette",
+  "out": "png/palette/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/palette",
+  "out": "png/palette/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/palette",
+  "out": "png/palette/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "screens/session",
+  "out": "png/session/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/session",
+  "out": "png/session/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/session",
+  "out": "png/session/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/session",
+  "out": "png/session/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/event",
+  "out": "png/event/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/event",
+  "out": "png/event/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/event",
+  "out": "png/event/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/event",
+  "out": "png/event/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/course",
+  "out": "png/course/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/course",
+  "out": "png/course/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/course",
+  "out": "png/course/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/course",
+  "out": "png/course/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/alarm-new",
+  "out": "png/alarm-new/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/alarm-new",
+  "out": "png/alarm-new/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/alarm-new",
+  "out": "png/alarm-new/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/alarm-new",
+  "out": "png/alarm-new/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/versions",
+  "out": "png/versions/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/versions",
+  "out": "png/versions/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/versions",
+  "out": "png/versions/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/versions",
+  "out": "png/versions/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/confirm",
+  "out": "png/confirm/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/confirm",
+  "out": "png/confirm/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/confirm",
+  "out": "png/confirm/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/confirm",
+  "out": "png/confirm/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/menu",
+  "out": "png/menu/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/menu",
+  "out": "png/menu/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/menu",
+  "out": "png/menu/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/menu",
+  "out": "png/menu/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/toast",
+  "out": "png/toast/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/toast",
+  "out": "png/toast/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/toast",
+  "out": "png/toast/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/toast",
+  "out": "png/toast/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/ring",
+  "out": "png/ring/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/ring",
+  "out": "png/ring/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/ring",
+  "out": "png/ring/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/ring",
+  "out": "png/ring/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/ring-timer",
+  "out": "png/ring-timer/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/ring-timer",
+  "out": "png/ring-timer/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/ring-timer",
+  "out": "png/ring-timer/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/ring-timer",
+  "out": "png/ring-timer/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "screens/drive-drop",
+  "out": "png/drive-drop/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/drive-drop",
+  "out": "png/drive-drop/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/drive-drop",
+  "out": "png/drive-drop/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "screens/drive-upload",
+  "out": "png/drive-upload/768.png",
+  "w": 768,
+  "h": 1024
+ },
+ {
+  "file": "screens/drive-upload",
+  "out": "png/drive-upload/1440.png",
+  "w": 1440,
+  "h": 900
+ },
+ {
+  "file": "screens/drive-upload",
+  "out": "png/drive-upload/3840.png",
+  "w": 3840,
+  "h": 2160
+ },
+ {
+  "file": "phone/drive-upload",
+  "out": "png/drive-upload/phone.png",
+  "w": 390,
+  "h": 844
+ },
+ {
+  "file": "overview/phone",
+  "out": "overview/phone.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/desktop-390",
+  "out": "overview/desktop-390.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/desktop-768",
+  "out": "overview/desktop-768.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/desktop-1280",
+  "out": "overview/desktop-1280.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/desktop-1440",
+  "out": "overview/desktop-1440.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/desktop-1920",
+  "out": "overview/desktop-1920.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/desktop-2560",
+  "out": "overview/desktop-2560.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/desktop-3840",
+  "out": "overview/desktop-3840.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ },
+ {
+  "file": "overview/overlays",
+  "out": "overview/overlays.png",
+  "w": 3600,
+  "h": 0,
+  "sheet": true
+ }
+]
