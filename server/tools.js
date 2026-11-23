@@ -22,6 +22,7 @@ Start with whats_now for anything about "now", "today" or "next"; get_schedule f
 To adjust the schedule: get_schedule or list_courses to find event ids, then update_event / add_event / remove_event. Mark days with mark_session (attended, absent, off).
 Anything that comes back every year (a birthday, an anniversary) is ONE event with repeat {freq: "yearly"} and no until, starting on the next (or the original) date; never add one event per year. The same goes for monthly things (rent, a bill): one event with repeat {freq: "monthly"}.
 When removing a single lecture of a recurring series use remove_event with scope "occurrence" and the date; only use scope "series" when the user wants the whole thing gone.
+Alarms: "skip my alarm today", "stop/turn off/cancel the alarm today only", "no alarm tomorrow", "just this once" mean skip_alarm (one ring skipped, the alarm stays on). Turning an alarm off (set_alarm enabled false, set_alarms_enabled) is for good, every day, until it is turned back on: never use it for one day. Say an alarm is skipped or off only when the tool returned without an error.
 Permission modes govern whether a tool runs immediately or waits for the user's Apply action.`;
 
 export const TOOLS = [
@@ -298,7 +299,7 @@ export const TOOLS = [
   {
     name: "list_alarms",
     title: "List alarms",
-    description: "Alarms with the next time each will ring (next_at, ms epoch).",
+    description: "Alarms with the next time each will ring (next_at, ms epoch). skipped_at: a ring still to come that was skipped with skip_alarm (next_at is then the ring after it).",
     input: {},
     readOnly: true,
     run: (s) => s.listAlarms(),
@@ -318,6 +319,13 @@ export const TOOLS = [
       enabled: z.boolean().optional(),
     },
     run: (s, a) => s.setAlarm(a),
+  },
+  {
+    name: "skip_alarm",
+    title: "Skip alarm once",
+    description: 'Skip ONE ring of an alarm: "skip my alarm today", "turn off the alarm today only", "no alarm tomorrow". The alarm stays on for every other day. date: the day to skip (YYYY-MM-DD), default today; it skips the alarm\'s next ring on that day. Fails if the alarm has no ring left that day. undo: true brings a skipped ring back.',
+    input: { alarm_id: z.string(), date: date.optional(), undo: z.boolean().optional() },
+    run: (s, a) => (a.undo ? s.unskipAlarm(a) : s.skipAlarm(a)),
   },
   {
     name: "set_lecture_reminders",
@@ -475,12 +483,12 @@ export const TOOLS = [
   {
     name: "set_alarms_enabled",
     title: "Turn alarms on or off",
-    description: "Turn several alarms on or off at once: the listed alarm_ids, or all of them (all: true). Lecture alarms are included in all unless lectures: false.",
+    description: "Turn alarms on or off FOR GOOD (every day, until turned back on): the listed alarm_ids, or all of them (all: true). Lecture alarms are included in all unless lectures: false. Not for one day (\"today only\", \"just tomorrow\"): use skip_alarm.",
     input: { enabled: z.boolean(), alarm_ids: z.array(z.string()).optional(), all: z.boolean().optional(), lectures: z.boolean().optional() },
     run: (s, a) => {
       const pick = s.listAlarms().filter((x) => (a.all ? a.lectures !== false || !(x.lead_event_id || x.lead_course_id) : (a.alarm_ids ?? []).includes(x.id)));
       for (const x of pick) s.setAlarm({ alarm_id: x.id, enabled: a.enabled });
-      return { changed: pick.map((x) => ({ id: x.id, label: x.label })), enabled: a.enabled };
+      return { changed: pick.map((x) => ({ id: x.id, label: x.label })), enabled: a.enabled, ...(a.enabled ? {} : { note: "Turned off on every day until turned back on, not skipped once (that is skip_alarm)." }) };
     },
   },
   {
@@ -538,7 +546,7 @@ export const TOOL_CLASSES = {
   mark_session: "change", get_attendance: "read", get_notes: "read", search_notes: "read", add_note: "change", append_note: "change", update_note: "change", delete_note: "risky", note_versions: "read", restore_note_version: "change",
   list_drive: "read", read_file: "read", write_file: "change", edit_file: "risky", delete_file: "risky", rename_file: "change", list_file_versions: "read", restore_file_version: "change",
   move_file: "change", add_folder: "change", remove_folder: "risky", move_folder: "change",
-  list_alarms: "read", set_alarm: "change", set_lecture_reminders: "change", remove_alarm: "risky", list_ringtones: "read", set_ringtone: "change", remove_ringtone: "risky", world_clock: "read", add_clock: "change", set_home_zone: "change", remove_clock: "risky",
+  list_alarms: "read", set_alarm: "change", skip_alarm: "change", set_lecture_reminders: "change", remove_alarm: "risky", list_ringtones: "read", set_ringtone: "change", remove_ringtone: "risky", world_clock: "read", add_clock: "change", set_home_zone: "change", remove_clock: "risky",
   list_reminders: "read", reminder_settings: "read", add_reminder: "change", update_reminder: "change", remove_reminder: "risky", set_reminder_settings: "change", list_timers: "read", start_timer: "change", save_timer: "change", update_timer: "change", stop_timers: "change", set_alarms_enabled: "change", upcoming_events: "read", add_birthday: "change", get_settings: "read", set_settings: "change",
 };
 for (const tool of TOOLS) tool.permission = TOOL_CLASSES[tool.name];

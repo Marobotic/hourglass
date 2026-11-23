@@ -4,7 +4,8 @@
 import { MONTHS, WEEKDAYS, addDays, formatTime, isDate, localParts, parseTime, shortLabel, systemZone, weekStart } from "../dates.js";
 import { expand } from "../recurrence.js";
 import { markMap, markOf, resolveNow, sessionNotes } from "../now.js";
-import { alarmLabel, finishedTimer, nextAlarm, reminderState } from "../alarms.js";
+import { alarmLabel, alarmRingOn, finishedTimer, nextAlarm, reminderState, ringStopKey, ringStopOf } from "../alarms.js";
+import { snoozeTimerId } from "../ring.js";
 import { BUILTIN_RINGTONES, MARKS, PALETTE, REMINDER_TONES, markId, parseWeekday } from "../model.js";
 import { numberedTitle } from "./store.js";
 import { plainText } from "../noteformat.js";
@@ -496,11 +497,64 @@ export class Service {
 
   // --- alarms ----------------------------------------------------------------
 
+  // skipped_at: a ring still to come that was skipped ("skip my alarm today");
+  // next_at is then the one after it.
   listAlarms() {
     const data = this.data();
+    const now = this.clock();
     return data.alarms
-      .map((a) => ({ ...a, label: alarmLabel(a, data), next_at: nextAlarm(a, data, this.clock(), this.tz) }))
+      .map((a) => {
+        const stop = ringStopOf(data, a.id);
+        const skipped_at = stop?.skipped && stop.at > now && a.enabled ? stop.at : null;
+        return { ...a, label: alarmLabel(a, data), next_at: nextAlarm(a, data, now, this.tz), skipped_at };
+      })
       .sort((a, b) => (a.next_at ?? Infinity) - (b.next_at ?? Infinity));
+  }
+
+  // "Skip my alarm today", "no alarm tomorrow": one ring is skipped, the alarm
+  // stays on for every other day. The skip is the account-wide stop every app
+  // already obeys (a dismissal of that ring, written before it rings): each
+  // device drops it from its schedule when it syncs, and the server answers
+  // "stopped" for it, so a ring that still goes off on a device that had not
+  // synced (an iPhone in a pocket) can be stopped but never snoozed back.
+  // date: YYYY-MM-DD, default today. Throws when there is nothing to skip, so
+  // the assistant cannot say it skipped what it did not.
+  skipAlarm({ alarm_id, date }) {
+    const a = this.row("alarms", alarm_id);
+    const data = this.data();
+    const label = alarmLabel(a, data);
+    const day = date || this.today();
+    if (!isDate(day)) throw new Error(`date must be YYYY-MM-DD, not ${day}`);
+    if (!a.enabled) throw new Error(`"${label}" is turned off, so it will not ring on ${day} anyway`);
+    const now = this.clock();
+    const at = alarmRingOn(a, data, day, now, this.tz);
+    if (at === null) throw new Error(`"${label}" has no ring left on ${day === this.today() ? "today" : day} to skip`);
+    const before = ringStopOf(data, a.id);
+    // One skip per alarm: a second one for another day replaces the first.
+    const replaced = before?.skipped && before.at !== at && before.at > now ? before.at : null;
+    this.store.upsert("prefs", { id: ringStopKey(a.id), value: JSON.stringify({ at, action: "dismissed", device: "Assistant", ts: Date.now(), skipped: true }) });
+    const snooze = this.store.get("timers", snoozeTimerId(a.id, at));
+    if (snooze && !snooze.deleted && snooze.state === "running") this.updateTimer({ timer_id: snooze.id, action: "done" });
+    return {
+      alarm_id: a.id,
+      label,
+      skipped_at: at,
+      skipped_date: day,
+      enabled: true,
+      next_at: nextAlarm(a, this.data(), now, this.tz),
+      ...(replaced ? { replaced_skip_at: replaced } : {}),
+      note: "Only this one ring is skipped; the alarm stays on. Devices drop it when they sync. A phone that has not synced since may still ring: Stop or Snooze there just ends it, nothing rings again.",
+    };
+  }
+
+  // Undo a skip: the ring comes back if it is still to come.
+  unskipAlarm({ alarm_id }) {
+    const a = this.row("alarms", alarm_id);
+    const stop = ringStopOf(this.data(), a.id);
+    if (!stop?.skipped) throw new Error(`"${alarmLabel(a, this.data())}" has no skipped ring`);
+    // Overwritten, not deleted: older desktop apps read a deleted pref row too.
+    this.store.upsert("prefs", { id: ringStopKey(a.id), value: JSON.stringify({ at: 0, action: "unskipped", device: "Assistant", ts: Date.now() }) });
+    return { alarm_id: a.id, label: alarmLabel(a, this.data()), next_at: nextAlarm(a, this.data(), this.clock(), this.tz) };
   }
 
   // before: an event id, or a course name for every session of that course.

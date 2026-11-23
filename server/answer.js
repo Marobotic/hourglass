@@ -19,7 +19,7 @@ const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct
 const MON_RE = MONTHS.map((m) => m.slice(0, 3) + (m === "september" ? "(?:t|tember)?" : `(?:${m.slice(3)})?`)).join("|");
 
 // Words that ask for a change: those go to actions or the model, never here.
-const WRITE = /\b(?:set|add|create|make|start|cancel|delete|remove|turn|switch|change|move|rename|edit|update|snooze|stop|pause|resume|mark|put|write|save|remind|wake me|book|clear|reset|disable|enable|tidy|fix|format|summari[sz]e|rewrite|translate)\b/;
+const WRITE = /\b(?:set|skip|add|create|make|start|cancel|delete|remove|turn|switch|change|move|rename|edit|update|snooze|stop|pause|resume|mark|put|write|save|remind|wake me|book|clear|reset|disable|enable|tidy|fix|format|summari[sz]e|rewrite|translate)\b/;
 const QUESTION = /^(?:what|whats|what's|when|whens|when's|which|do i|did i|have i|am i|is there|are there|is anything|any|show|list|tell|give|read|open|check|see|display|get|how many|how much|how long|whats on|my|today|tomorrow|tonight)\b|\?$/;
 
 const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
@@ -258,6 +258,9 @@ export function readAnswer(service, raw) {
   if (!s || s.length > 140) return null;
   const q = s.replace(/^(?:hey|hi|ok|okay|please|so|and|also)[,\s]+/, "").replace(/^(?:can|could|would|will) you\s+(?:please\s+)?/, "");
   if (WRITE.test(q.replace(/\bwake (?:me )?up\b/, "").replace(/\b(?:did i|i) (?:write|wrote|save|saved|add|added|put)\b/, ""))) return null;
+  // A complaint or a "why" about what happened ("my alarm rang anyway...? and on
+  // my phone TWICE...?") is not a request for the list: the model answers it.
+  if (/\b(?:why|anyway|twice|rang|went off|didn'?t (?:ring|go off|work|stop)|did not|still rang|keeps? ringing)\b/.test(q)) return null;
   const day = findDay(q, service.today());
   // No question word: only a bare day ("tomorrow", "thursday schedule"), never a command with a time.
   const asks = QUESTION.test(q) || (!!day && !/\d/.test(day.rest) && day.rest.split(" ").length <= 4);

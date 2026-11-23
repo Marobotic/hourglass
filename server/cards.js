@@ -117,6 +117,8 @@ export function cardsFor(service, tool, args = {}, result = null) {
         return result?.id ? [alarmCard(service, result, args.alarm_id ? (args.enabled === false ? "off" : args.enabled === true && Object.keys(args).length <= 2 ? "on" : "set") : "set")] : [];
       case "remove_alarm":
         return result ? [{ kind: "alarm", state: "removed", label: result.label || "Alarm", time: f.clock(result.time), when: "", at: null, minutes: f.minutes(result.time), enabled: false }] : [];
+      case "skip_alarm":
+        return result?.alarm_id ? [alarmCard(service, { id: result.alarm_id, label: result.label }, "changed")] : [];
       case "set_alarms_enabled":
         return (result?.changed ?? []).slice(0, MAX_CARDS).map((x) => alarmCard(service, { id: x.id, label: x.label }, args.enabled ? "on" : "off"));
       case "start_timer":

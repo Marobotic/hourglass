@@ -124,6 +124,7 @@ const TOOL_LABELS = {
   stop_timer: ["Stopping a timer", "Stopped a timer"],
   stop_timers: ["Stopping timers", "Stopped the timer"],
   set_alarms_enabled: ["Switching alarms", "Switched alarms"],
+  skip_alarm: ["Skipping one alarm", "Skipped one alarm"],
   upcoming_events: ["Looking ahead", "Looked up what's coming"],
   add_birthday: ["Adding a birthday", "Added a birthday"],
   get_settings: ["Reading settings", "Read settings"],
@@ -378,7 +379,7 @@ export function createAssistant({ rootDir, publicUrl, registerKey, filePath = ()
     });
     section("Alarms", () => s.listAlarms().slice(0, 12).map((a) => {
       const next = a.next_at ? localParts(a.next_at, tz) : null;
-      return `- ${a.label}${a.enabled ? "" : " (off)"}: ${a.lead_minutes ? `${a.lead_minutes} min before sessions` : a.days?.length ? `${a.time} on days ${a.days.join(",")}` : `${a.time}${a.date ? ` on ${a.date}` : ""}`}${next ? `, next ${next.date} ${next.time}` : ""} (alarm ${a.id})`;
+      return `- ${a.label}${a.enabled ? "" : " (off)"}: ${a.lead_minutes ? `${a.lead_minutes} min before sessions` : a.days?.length ? `${a.time} on days ${a.days.join(",")}` : `${a.time}${a.date ? ` on ${a.date}` : ""}`}${next ? `, next ${next.date} ${next.time}` : ""}${a.skipped_at ? `, skipped once at ${localParts(a.skipped_at, tz).date} ${localParts(a.skipped_at, tz).time}` : ""} (alarm ${a.id})`;
     }));
     section("Reminders (not done)", () => s.listReminders({ include_done: false }).slice(0, 12).map((r) => {
       const due = r.due_at ? localParts(r.due_at, tz) : null;

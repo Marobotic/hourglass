@@ -12,8 +12,36 @@ export function alarmLabel(alarm, data) {
   return `${course?.name || event?.title || "Class"} in ${alarm.lead_minutes ?? 10} min`;
 }
 
-// Next instant (ms) an alarm rings after fromMs, or null.
+// The one occurrence of an alarm that was stopped for the whole account, from
+// the synced "ring_stop:<alarm id>" pref: { at, action, device, ts, skipped? }.
+// action "dismissed" or "snoozed" after it rang; a skip ("skip my alarm today",
+// see Service.skipAlarm) is a dismissal written before the ring, with skipped:
+// true, so apps that predate skips already refuse to ring it.
+export const ringStopKey = (id) => `ring_stop:${id}`;
+export function parseRingStop(value) {
+  try {
+    const v = typeof value === "string" ? JSON.parse(value) : value;
+    return v && Number.isFinite(Number(v.at)) ? { ...v, at: Number(v.at) } : null;
+  } catch {
+    return null;
+  }
+}
+export function ringStopOf(data, id) {
+  const row = (data.prefs ?? []).find((p) => p.id === ringStopKey(id) && !p.deleted);
+  return row ? parseRingStop(row.value) : null;
+}
+
+// Next instant (ms) an alarm rings after fromMs, or null. An occurrence stopped
+// for the account (skipped ahead of time, or already dismissed) is passed over.
 export function nextAlarm(alarm, data, fromMs, tz) {
+  const t = nextAlarmTime(alarm, data, fromMs, tz);
+  if (t === null) return null;
+  const stop = ringStopOf(data, alarm.id);
+  return stop && stop.at === t ? nextAlarmTime(alarm, data, t, tz) : t;
+}
+
+// The alarm's own schedule, whatever was dismissed or skipped.
+export function nextAlarmTime(alarm, data, fromMs, tz) {
   if (alarm.deleted || !alarm.enabled) return null;
   const today = localParts(fromMs, tz).date;
 
@@ -59,7 +87,32 @@ export function dueBetween(data, fromMs, toMs, tz) {
 }
 
 // A one-off alarm is spent once it has rung.
-export const isSpent = (alarm, data, fromMs, tz) => !alarm.days?.length && !alarm.lead_event_id && !alarm.lead_course_id && nextAlarm(alarm, data, fromMs, tz) === null;
+export const isOneOff = (alarm) => !alarm.days?.length && !alarm.lead_event_id && !alarm.lead_course_id;
+export const isSpent = (alarm, data, fromMs, tz) => isOneOff(alarm) && nextAlarm(alarm, data, fromMs, tz) === null;
+
+// The alarm's first ring on `date` (YYYY-MM-DD in tz) that is still to come
+// after nowMs, from its own schedule, or null.
+export function alarmRingOn(alarm, data, date, nowMs, tz) {
+  const start = zonedToEpoch(date, "00:00", tz);
+  const end = zonedToEpoch(addDays(date, 1), "00:00", tz);
+  const t = nextAlarmTime(alarm, data, Math.max(nowMs, start - 1), tz);
+  return t !== null && t < end ? t : null;
+}
+
+// Why one ring of an alarm (or a timer, which has no alarm row) must not ring,
+// nor come back as a snooze, on any device, or null:
+//  - that occurrence was dismissed, snoozed or skipped for the account (stop);
+//  - the alarm was deleted;
+//  - the alarm was turned off. A one-off alarm turns itself off as it rings,
+//    so for one of those "off" is not a reason (its snooze must still work).
+// The result has the shape of a stop: { at, action, device, ts?, skipped?, reason? }.
+export function ringStopped(alarm, stop, at) {
+  if (stop && stop.at === Number(at)) return stop;
+  if (!alarm) return null;
+  if (alarm.deleted) return { at: Number(at), action: "dismissed", device: "Hourglass", reason: "deleted" };
+  if (!alarm.enabled && !isOneOff(alarm)) return { at: Number(at), action: "dismissed", device: "Hourglass", reason: "off" };
+  return null;
+}
 
 // --- reminders --------------------------------------------------------------
 //

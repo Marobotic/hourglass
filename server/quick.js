@@ -9,6 +9,7 @@ import { WEEKDAYS, addDays, localParts, weekday, zonedToEpoch } from "../core/da
 import { alarmCard, dayCard, eventCard, reminderCard } from "./cards.js";
 import { findDay, readAnswer } from "./answer.js";
 import { REMINDER_TONES } from "../core/model.js";
+import { alarmRingOn } from "../core/alarms.js";
 
 const DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
@@ -475,10 +476,85 @@ function resolveAlarms(t, phrase, ctx) {
   return list.filter((a) => a.enabled && a.next_at && !a.lead_event_id && !a.lead_course_id);
 }
 
+// --- skipping one ring --------------------------------------------------------------------
+//
+// "skip my alarm today", "you can skip my alarm for today only", "stop the alarm
+// today only", "turn off tomorrow's alarm", "no alarm tomorrow", "cancel the gym
+// alarm just this once": ONE ring is skipped and the alarm stays on. On
+// 2026-11-23 "skip my alarm for today only" reached the model, which turned the
+// alarm off for good (set_alarms_enabled); a day-qualified "turn off" here did
+// the same. Anything unclear goes to the model, which has skip_alarm too.
+const SKIP_POLITE = /^(?:(?:hey|ok|okay|so|please|pls|just|you can|you could|can you|could you|would you|will you|i want you to|i need you to|i'd like you to)\s+)+/;
+const SKIP_VERB = /^(skip|cancel|stop|turn off|switch off|disable|silence|mute|kill|drop|no|don't ring|dont ring)\b/;
+const SKIP_ONCE = /\b(?:only|just (?:for )?(?:today|tonight|tomorrow|this once|once)|this once|just once|once)\b/;
+const SKIP_FILLER = /\b(?:my|the|that|this|for|on|of|alarms?|only|just|once|please|ring|ringing|rings|going|off|it|me|a|an|day|morning|next|one)\b/g;
+
+function skipAlarmCommand(t, raw, ctx) {
+  const s = clean(raw).toLowerCase().replace(SKIP_POLITE, "");
+  const aboutAlarm = /\balarms?\b/.test(s) || (ctx?.last === "alarm" && /\b(?:it|that|this one|that one)\b/.test(s));
+  if (!aboutAlarm) return null;
+  // For good, or every alarm: turning off, which alarmCommand (or the model) does.
+  if (/\b(?:all|every|everyday|forever|permanently|for good|from now on|always|anymore|any more)\b/.test(s)) return null;
+  const verb = SKIP_VERB.exec(s);
+  if (!verb) return null;
+  let rest = s.slice(verb[0].length).trim();
+  const today = t.today();
+  const day = findDay(rest, today);
+  if (day && day.from !== day.to) return null; // "this week": the model asks which day
+  const once = SKIP_ONCE.test(s) || /\bnext\b/.test(rest);
+  if (verb[1] !== "skip" && !day && !once) return null; // a plain "turn off my alarm" is for good
+  if (day) rest = day.rest;
+  const date = day ? day.from : null;
+  const data = t.data();
+  const now = t.clock();
+  const h12 = t.settings().time_format !== "24h";
+  // The alarms with a ring left on that day (or at all, for "next" / "once").
+  let list = t.listAlarms().filter((a) => a.enabled).map((a) => ({ a, at: date ? alarmRingOn(a, data, date, now, t.tz) : a.next_at })).filter((x) => x.at !== null);
+  const last = ctx?.alarm_id && /\b(?:it|that|this one|that one)\b/.test(rest) ? list.find((x) => x.a.id === ctx.alarm_id) : null;
+  if (last) list = [last];
+  else {
+    const c = /\b(\d{1,2}(?:[:.]\d{2})?\s*(?:a\s?m|p\s?m)?|noon|midnight)\b/.exec(rest);
+    const k = c ? parseClock(c[1]) : null;
+    if (k) {
+      list = list.filter(({ at }) => {
+        const p = localParts(at, t.tz).time;
+        const m = Number(p.slice(0, 2)) * 60 + Number(p.slice(3, 5));
+        return k.ampm ? m === k.minutes : m % 720 === k.minutes % 720;
+      });
+      rest = rest.replace(c[0], " ");
+    }
+    const words = rest.replace(SKIP_FILLER, " ").replace(/['’]s\b/g, "").split(/\s+/).filter((w) => w.length > 1);
+    if (words.length) list = list.filter(({ a }) => words.every((w) => a.label.toLowerCase().includes(w)));
+    // One you set beats lecture ones, as in resolveAlarms.
+    const own = list.filter(({ a }) => !a.lead_event_id && !a.lead_course_id);
+    if (!words.length && own.length === 1) list = own;
+  }
+  if (list.length !== 1) return null;
+  const { a, at } = list[0];
+  const r = t.skipAlarm({ alarm_id: a.id, date: date ?? localParts(at, t.tz).date });
+  const p = localParts(r.skipped_at, t.tz);
+  const time = fmtClock(Number(p.time.slice(0, 2)) * 60 + Number(p.time.slice(3, 5)), h12);
+  const name = a.label && a.label !== "Alarm" ? `"${a.label}"` : "your alarm";
+  let next = "";
+  if (r.next_at) {
+    const n = localParts(r.next_at, t.tz);
+    next = ` Next ring: ${fmtClock(Number(n.time.slice(0, 2)) * 60 + Number(n.time.slice(3, 5)), h12)} ${dayWord(n.date, today)}.`;
+  }
+  return {
+    text: `Skipped ${name} at ${time} ${dayWord(p.date, today)}, just that once: it stays on.${next}`,
+    tools: [{ tool: "skip_alarm", status: "completed" }],
+    ids: { alarm_id: a.id },
+    cards: [alarmCard(t, a, "changed")],
+  };
+}
+
 function alarmCommand(t, raw, ctx) {
   const s = clean(raw).toLowerCase();
   const aboutAlarm = /\balarms?\b/.test(s) || (ctx?.last === "alarm" && /\b(?:it|that|this one|that one)\b/.test(s));
   if (!aboutAlarm) return null;
+  // "turn off tomorrow's alarm", "stop it today only": one day, which is a skip
+  // (skipAlarmCommand), never turning it off for good. Unclear ones: the model.
+  if (/^(?:turn off|switch off|disable|silence|mute|stop|cancel|skip)\b/.test(s) && (findDay(s, t.today()) || SKIP_ONCE.test(s)) && !/\b(?:all|every)\b/.test(s)) return null;
   let m;
   // Move: "move my gym alarm to 8", "change it to 7:30", "make it 9 instead", "push the alarm to 8am tomorrow".
   if ((m = /^(?:change|move|make|set|push|shift|reschedule|update|put)\s+(.+?)\s+(?:to|for|at)\s+(.+?)(?:\s+instead)?$/.exec(s)) || (m = /^make\s+(it|that)\s+(.+?)(?:\s+instead)?$/.exec(s))) {
@@ -1083,7 +1159,7 @@ function spell(secs) {
  */
 export function quickAnswer(service, text, ctx = {}) {
   if (!text || text.length > 300 || /\n/.test(text.trim())) return null;
-  for (const f of [remindRequest, reminderEdit, reminderCommand, alarmCommand, settingsCommand, clockCommand, attendanceCommand, noteCommand, eventCommand, eventRequest, stopTimerRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
+  for (const f of [remindRequest, reminderEdit, reminderCommand, skipAlarmCommand, alarmCommand, settingsCommand, clockCommand, attendanceCommand, noteCommand, eventCommand, eventRequest, stopTimerRequest, addBirthdayRequest, readAnswer, upcomingRequest, howLongRequest, timerRequest, alarmRequest, lookupRequest, bareBirthdayRequest, scheduleRequest, alarmsRequest]) {
     try {
       const r = f(service, text, ctx);
       if (r) return r;
