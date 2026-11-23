@@ -157,7 +157,8 @@
 .att-chip.bad { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: var(--accent-ink); }
 .att-chip .x { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
 .att-chip .x:hover { color: var(--fg); background: var(--surface3); }
-.composer-foot { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--faint); font: 500 12px var(--mono); }
+.composer-wrap > * { min-width: 0; }
+.composer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 28px; color: var(--faint); font: 500 12px var(--mono); }
 .composer-agent { max-width: 30%; }
 .mode-note { font-size: 11px; }
 .mode-note.m-dangerous { color: var(--accent-ink); }

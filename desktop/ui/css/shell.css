@@ -63,10 +63,10 @@
 }
 
 /* ---- main column ---- */
-.main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; container: main / inline-size; }
 /* The page header: title, a muted context line, the page's tools, its actions, then Search or ask. */
 .head { height: 72px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 var(--pad); box-shadow: inset 0 -1px 0 var(--border); min-width: 0; }
-.head h1 { margin: 0; font: 800 var(--fs-head)/1 var(--mono); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.head h1 { margin: 0; font: 800 var(--fs-head)/1 var(--mono); letter-spacing: -.02em; white-space: nowrap; flex: none; }
 .head .ctx { color: var(--muted); font: 500 13px/1 var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .head .mid { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: 8px; }
 .head .acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
@@ -74,15 +74,29 @@
 .head .btn { height: 32px; padding: 0 12px; font-size: 12px; }
 .head .btn.sq { width: 32px; padding: 0; }
 .head .back { margin-left: -12px; }
-.head .ask { margin-left: auto; display: flex; align-items: center; gap: 10px; width: 420px; min-width: 0; height: 44px; padding: 0 14px; border: 0; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); color: var(--faint); font: 400 var(--fs-body) var(--mono); cursor: text; flex: 0 1 420px; transition: box-shadow var(--quick) var(--ease), color var(--quick) var(--ease); }
+.head .ask { margin-left: auto; display: flex; align-items: center; gap: 10px; width: 420px; min-width: 0; height: 44px; padding: 0 14px; border: 0; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); color: var(--faint); font: 400 var(--fs-body) var(--mono); cursor: text; flex: none; transition: box-shadow var(--quick) var(--ease), color var(--quick) var(--ease); }
 .head .ask:hover { box-shadow: inset 0 0 0 1px var(--border2); color: var(--muted); }
 .head .ask .ic { font-size: 15px; }
 .head .ask .lbl { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .head .ask kbd { padding: 4px 6px; box-shadow: inset 0 0 0 1px var(--border2); }
 .head .acts:not(:empty) + .ask { margin-left: 0; }
-@media (max-width: 1599px) { .head .ask { width: 300px; flex-basis: 300px; } }
-@media (max-width: 1279px) { .head .ask { width: 44px; flex: none; padding: 0; justify-content: center; } .head .ask .lbl, .head .ask kbd { display: none; } }
-@media (max-width: 599px) { .head { height: 60px; gap: 10px; } .head h1 { font-size: 20px; } .head .ctx { display: none; } }
+/* The header sizes itself by the main column, not the window: the title is never cut; Search or ask shrinks to its
+   icon first, then the context line goes, and on a phone-wide column the page's tools move to a second row. */
+@container main (max-width: 1400px) { .head .ask { width: 300px; } }
+@container main (max-width: 1200px) { .head .ask { width: 44px; padding: 0; justify-content: center; } .head .ask .lbl, .head .ask kbd { display: none; } }
+@container main (max-width: 1000px) { .head .ctx { display: none; } }
+@container main (max-width: 760px) {
+  .head { height: auto; min-height: 60px; flex-wrap: wrap; gap: 5px 10px; padding-block: 8px; }
+  .head h1 { font-size: 20px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* A zero-height break after Search or ask: the tools always start the second row. */
+  .head:has(> .mid, > .acts:not(:empty))::after { content: ""; order: 1; flex-basis: 100%; height: 0; }
+  .head .ask { order: 1; width: 40px; height: 40px; }
+  .head .mid, .head .acts { order: 2; margin-left: 0; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .head .mid { flex: 1 1 auto; }
+  .head .acts { flex: 0 1 auto; }
+  .head .acts .search { flex: 1; min-width: 0; }
+  .head .mid::-webkit-scrollbar, .head .acts::-webkit-scrollbar { display: none; }
+}
 #page { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 32px var(--pad) var(--pad); scroll-behavior: smooth; container: page / inline-size; }
 .page.flush { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -152,3 +166,4 @@
 
 /* Burst of pixels for finishing things. */
 .burst { position: fixed; z-index: 150; width: 5px; height: 5px; pointer-events: none; }
+@container page (max-width: 700px) { .section small { display: none; } }

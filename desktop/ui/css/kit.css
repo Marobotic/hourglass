@@ -103,7 +103,8 @@ kbd, .kbd { font: 500 var(--fs-caption)/1 var(--mono); color: var(--faint); }
 .swatch { width: 10px; height: 10px; flex: none; background: var(--c); }
 
 /* ---- segmented: a dark well, the selection raised ---- */
-.seg { display: inline-flex; height: 36px; padding: 2px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); flex: none; }
+.seg { display: inline-flex; height: 36px; padding: 2px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); flex: none; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border: 0; background: transparent; color: var(--muted); font: 500 13px/1 var(--mono); cursor: pointer; white-space: nowrap; position: relative;
   transition: color var(--quick) var(--ease), background-color var(--t-sheet) var(--ease), box-shadow var(--t-sheet) var(--ease); }
 .seg button:hover { color: var(--fg); }
