@@ -22,7 +22,7 @@ struct NowView: View {
             let current = window.first
             let later = Array(window.dropFirst())
             let todays = todayNotes(today, current)
-            let alarm = store.alarms.compactMap { a in Alarms.next(a, store.db.courses, store.db.events, clock).map { (a, $0) } }.min { $0.1 < $1.1 }
+            let alarm = store.alarms.compactMap { a in Alarms.nextRing(a, store.db.courses, store.db.events, clock, stoppedAt: RingSync.stoppedAt(store, a.id)).map { (a, $0) } }.min { $0.1 < $1.1 }
             let timer = store.timers.first { $0.state != "idle" }
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -525,7 +525,7 @@ struct TimeView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        let alarms = store.alarms.map { ($0, Alarms.next($0, store.db.courses, store.db.events, clock)) }.sorted { ($0.1 ?? Int64.max) < ($1.1 ?? Int64.max) }
+                        let alarms = store.alarms.map { ($0, Alarms.nextRing($0, store.db.courses, store.db.events, clock, stoppedAt: RingSync.stoppedAt(store, $0.id))) }.sorted { ($0.1 ?? Int64.max) < ($1.1 ?? Int64.max) }
                         if alarms.isEmpty { T("No alarms yet. Tap the alarm button to add one, at a time or before a course.", 13, H.muted) }
                         ForEach(alarms, id: \.0.id) { item in
                             let a = item.0

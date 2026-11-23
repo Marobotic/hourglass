@@ -1239,8 +1239,10 @@ enum Notifications {
             var from = now
             for k in 0..<10 {
                 guard let at = Alarms.next(a, store.db.courses, store.db.events, from), at < now + 8 * 86_400_000 else { break }
-                fires.append(("alarm-\(a.id)-\(k)", at, "Alarm", Alarms.displayLabel(a, store.db.courses, store.db.events)))
                 from = at
+                // Skipped, or dismissed on another device: not rung here.
+                if RingSync.stoppedElsewhere(store, a.id, at) != nil { continue }
+                fires.append(("alarm-\(a.id)-\(k)", at, "Alarm", Alarms.displayLabel(a, store.db.courses, store.db.events)))
             }
         }
         // Reminders: a notification with Done and Snooze, and their own short tone (or none).

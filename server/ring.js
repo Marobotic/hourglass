@@ -48,7 +48,8 @@ export function createRingRoutes(t) {
       if (dismissedAt >= Date.now() - STOP_TTL) return true;
       t.dismissedSnoozes.delete(timerId);
     }
-    const now = Date.now();
+    // Occurrences are compared on the service clock (the one alarms ring on).
+    const now = t.service?.clock?.() ?? Date.now();
     for (const p of t.store.all("prefs")) {
       if (!p.id.startsWith("ring_stop:")) continue;
       const stop = parseRingStop(p.value);
@@ -71,7 +72,9 @@ export function createRingRoutes(t) {
   t.ringGuard ??= (table, row) => {
     if (table === "timers") {
       if (row.state !== "running" || row.deleted) return row;
-      return blockedSnooze(row.id) ? { ...row, ...finishedTimer(row) } : row;
+      // One tick newer than what the device sent, so its own copy loses to
+      // this one on the next pull (every app keeps the newer updated_at).
+      return blockedSnooze(row.id) ? { ...row, ...finishedTimer(row), updated_at: (Number(row.updated_at) || 0) + 1 } : row;
     }
     if (table === "prefs" && typeof row.id === "string" && row.id.startsWith("ring_stop:") && !row.deleted) {
       // A dismissal or a skip is final for its occurrence: a late "snoozed" for

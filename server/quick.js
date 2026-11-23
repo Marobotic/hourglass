@@ -484,7 +484,8 @@ function resolveAlarms(t, phrase, ctx) {
 // 2026-11-23 "skip my alarm for today only" reached the model, which turned the
 // alarm off for good (set_alarms_enabled); a day-qualified "turn off" here did
 // the same. Anything unclear goes to the model, which has skip_alarm too.
-const SKIP_POLITE = /^(?:(?:hey|ok|okay|so|please|pls|just|you can|you could|can you|could you|would you|will you|i want you to|i need you to|i'd like you to)\s+)+/;
+// "i'm awake, cancel alarm today" (2026-11-22) also counts: the lead-in goes.
+const SKIP_POLITE = /^(?:(?:hey|ok|okay|so|please|pls|just|you can|you could|can you|could you|would you|will you|i want you to|i need you to|i'd like you to|i'?m (?:awake|up)|i am (?:awake|up)|i'?m already (?:awake|up)|already (?:awake|up))[,.!]*\s+(?:and\s+|so\s+)?)+/;
 const SKIP_VERB = /^(skip|cancel|stop|turn off|switch off|disable|silence|mute|kill|drop|no|don't ring|dont ring)\b/;
 const SKIP_ONCE = /\b(?:only|just (?:for )?(?:today|tonight|tomorrow|this once|once)|this once|just once|once)\b/;
 const SKIP_FILLER = /\b(?:my|the|that|this|for|on|of|alarms?|only|just|once|please|ring|ringing|rings|going|off|it|me|a|an|day|morning|next|one)\b/g;

@@ -1,6 +1,10 @@
 package dev.marobotic.hourglass.alarm
 
 import android.content.Context
+import dev.marobotic.hourglass.core.bool
+import dev.marobotic.hourglass.core.ints
+import dev.marobotic.hourglass.core.isDeleted
+import dev.marobotic.hourglass.core.str
 import org.json.JSONObject
 import java.io.File
 
@@ -71,6 +75,25 @@ object RingSync {
         val v = repo.store.get("prefs", key(id))?.takeIf { it.optInt("deleted") == 0 }?.optString("value") ?: return null
         JSONObject(v).takeIf { it.optLong("at") == at }
     }.getOrNull()
+
+    // The one ring of this alarm stopped for the account (dismissed, snoozed or
+    // skipped ahead of time), or null: the schedule passes over it.
+    fun stoppedAt(repo: dev.marobotic.hourglass.data.Repo, id: String): Long? = runCatching {
+        val v = repo.store.get("prefs", key(id))?.takeIf { it.optInt("deleted") == 0 }?.optString("value") ?: return null
+        JSONObject(v).optLong("at").takeIf { it > 0L }
+    }.getOrNull()
+
+    // Why this ring must not come back as a snooze, or null: stopped for the
+    // account (core/alarms.js ringStopped), or the alarm was deleted or turned
+    // off (a one-off turns itself off as it rings, so not for those).
+    fun stoppedFor(repo: dev.marobotic.hourglass.data.Repo, id: String, at: Long): String? {
+        stoppedElsewhere(repo, id, at)?.let { return "${it.optString("action")} on ${it.optString("device")}" }
+        val a = repo.store.get("alarms", id) ?: return null
+        if (a.isDeleted) return "the alarm was deleted"
+        val oneOff = a.ints("days").isEmpty() && a.str("lead_event_id") == null && a.str("lead_course_id") == null
+        if (!oneOff && !a.bool("enabled")) return "the alarm is turned off"
+        return null
+    }
 
     fun share(repo: dev.marobotic.hourglass.data.Repo, id: String, at: Long, action: String) {
         if (id == "test" || at == 0L) return

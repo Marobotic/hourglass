@@ -25,7 +25,7 @@ import { readTree, uploadTree } from "./upload-tree.js";
 import { moveFilesToRecycleBin } from "./recycle.js";
 import { legacyCoursesDirectory, migrateLegacyCoursePairs, resolveCoursesDirectory } from "./courses-paths.js";
 import { Service } from "../../core/node/service.js";
-import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, snoozeTimerId } from "../../core/index.js";
+import { BUILTIN_RINGTONES, REMINDER_TONES, TABLE_NAMES, createRingClient, dueBetween, isSpent, localParts, parseDate, reminderState, remindersDue, ringStopped, snoozeTimerId } from "../../core/index.js";
 import { createHandler, VERSION } from "../../server/app.js";
 
 const HOME = homedir();
@@ -579,7 +579,24 @@ function dismiss(id, via) {
   return true;
 }
 
+// Why this ring must not come back as a snooze, in words, or null
+// (core ringStopped): skipped or dismissed for the account, or its alarm was
+// turned off or deleted. On 2026-11-23 a snooze of an alarm the assistant had
+// just turned off rang again on every device 5 minutes later.
+function noSnooze(item) {
+  if (!item || item.test || item.kind !== "alarm") return null;
+  const why = ringStopped(store.get("alarms", item.id), stoppedElsewhere(item), item.at);
+  if (!why) return null;
+  return why.reason === "off" ? "the alarm is turned off" : why.reason === "deleted" ? "the alarm was deleted" : `already ${why.skipped ? "skipped" : why.action} on ${why.device}`;
+}
+
 function snooze(id, via) {
+  const why = noSnooze(ringing.get(id));
+  if (why) {
+    const r = ring_stop(id, "dismissed", `${via}, not snoozed: ${why}`);
+    if (r) autoSnoozes.delete(baseLabel(r.label));
+    return r ? { snoozed: false, reason: why } : null;
+  }
   const r = ring_stop(id, "snoozed", `${via}, rings again in 5 min`);
   if (!r) return null;
   autoSnoozes.delete(baseLabel(r.label));
@@ -595,6 +612,12 @@ function ringOut(id) {
   r.out = true;
   const base = baseLabel(r.label);
   const n = autoSnoozes.get(base) ?? 0;
+  const why = noSnooze(r);
+  if (why) {
+    autoSnoozes.delete(base);
+    ring_stop(id, "rang out", `nobody answered for 10 min, not snoozed: ${why}`);
+    return;
+  }
   if (r.kind === "alarm" && !r.test && n < AUTO_SNOOZES) {
     autoSnoozes.set(base, n + 1);
     ringClient.state(r).then((stopped) => {
@@ -607,8 +630,8 @@ function ringOut(id) {
       const timer = setTimeout(() => {
         localRings.delete(timer);
         // Offline snooze: still not a way back for an occurrence dismissed meanwhile.
-        const other = stoppedElsewhere(source);
-        if (other) return ringLog(r.label, "skipped", `already ${other.action} on ${other.device}`);
+        const why = noSnooze({ ...source, kind: "alarm" });
+        if (why) return ringLog(r.label, "skipped", why);
         ring(local);
       }, 5 * 60000);
       localRings.add(timer);

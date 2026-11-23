@@ -124,7 +124,7 @@ fun NowScreen(nav: Nav, version: Int, clock: Long) {
     }
     val (cs, es) = remember(version) { repo.store.all("courses") to repo.events() }
     val alarm = remember(version, clock / 60_000) {
-        repo.alarms().mapNotNull { a -> dev.marobotic.hourglass.core.Alarms.next(a, cs, es, clock, zone)?.let { a to it } }.minByOrNull { it.second }
+        repo.alarms().mapNotNull { a -> dev.marobotic.hourglass.core.Alarms.nextRing(a, cs, es, clock, zone, dev.marobotic.hourglass.alarm.RingSync.stoppedAt(repo, a.id))?.let { a to it } }.minByOrNull { it.second }
     }
     val timer = remember(version) { repo.timers().firstOrNull { it.optString("state") != "idle" } }
     // REDESIGN §5 Now: the date over the clock, the hero card, today's notes, what's coming, and the time row.
@@ -368,7 +368,7 @@ fun TimeScreen(nav: Nav, version: Int, clock: Long) {
     val repo = nav.repo
     val (courses, events) = remember(version) { repo.store.all("courses") to repo.events() }
     val alarms = remember(version, clock / 60_000) {
-        repo.alarms().map { it to dev.marobotic.hourglass.core.Alarms.next(it, courses, events, clock, repo.zone) }.sortedBy { it.second ?: Long.MAX_VALUE }
+        repo.alarms().map { it to dev.marobotic.hourglass.core.Alarms.nextRing(it, courses, events, clock, repo.zone, dev.marobotic.hourglass.alarm.RingSync.stoppedAt(repo, it.id)) }.sortedBy { it.second ?: Long.MAX_VALUE }
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {

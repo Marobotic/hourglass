@@ -107,10 +107,32 @@ class RingService : Service() {
             }
             SNOOZE -> {
                 ringing?.let { r ->
-                    RingLog.add(this, r.first, "snoozed", "$via after ${secs()}s, rings again in 5 min")
                     autoSnoozes(baseLabel(r.first), reset = true)
-                    RingSync.share(App.repo(this), r.third, ringAt, "snoozed")
-                    snoozeTimer(r)
+                    val at = ringAt
+                    val after = secs()
+                    if (r.second != "alarm" || at == 0L || test) {
+                        RingLog.add(this, r.first, "snoozed", "$via after ${after}s, rings again in 5 min")
+                        RingSync.share(App.repo(this), r.third, at, "snoozed")
+                        snoozeTimer(r)
+                    } else {
+                        // A ring that was skipped, dismissed on another device, or
+                        // whose alarm was turned off or deleted, ends here: a snooze
+                        // would bring it back on every device 5 minutes later, as on
+                        // 2026-11-23. Asked here first, then the server (2 s).
+                        val app = applicationContext
+                        Thread {
+                            val repo = App.repo(app)
+                            val why = RingSync.stoppedFor(repo, r.third, at)
+                                ?: (repo.ringState(r.third, at, timeoutMs = 2000) as? dev.marobotic.hourglass.data.Repo.RingStateResult.Stopped)?.let { "${it.action} on ${it.device}" }
+                            if (why != null) {
+                                RingLog.add(app, r.first, "dismissed", "$via after ${after}s, not snoozed: $why")
+                            } else {
+                                RingLog.add(app, r.first, "snoozed", "$via after ${after}s, rings again in 5 min")
+                                RingSync.share(repo, r.third, at, "snoozed")
+                                repo.startTimer(5 * 60, baseLabel(r.first) + SNOOZED, id = RingSync.snoozeId(r.third, at))
+                            }
+                        }.start()
+                    }
                 }
                 finish(); return START_NOT_STICKY
             }
@@ -161,7 +183,14 @@ class RingService : Service() {
             val base = baseLabel(r.first)
             val n = autoSnoozes(base)
             if (r.second == "alarm" && !test && n < AUTO_SNOOZES) {
-                val state = if (ringAt != 0L) repo.ringState(r.third, ringAt, timeoutMs = 2000) else dev.marobotic.hourglass.data.Repo.RingStateResult.Active
+                // Skipped, dismissed elsewhere, or the alarm turned off or deleted
+                // here already: no auto-snooze, whatever the server says.
+                val local = if (ringAt != 0L) RingSync.stoppedFor(repo, r.third, ringAt) else null
+                val state = when {
+                    local != null -> dev.marobotic.hourglass.data.Repo.RingStateResult.Stopped("dismissed", local)
+                    ringAt != 0L -> repo.ringState(r.third, ringAt, timeoutMs = 2000)
+                    else -> dev.marobotic.hourglass.data.Repo.RingStateResult.Active
+                }
                 handler.post {
                     if (ringing != r) return@post
                     when (state) {

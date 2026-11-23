@@ -318,10 +318,20 @@ object Alarms {
         return label.ifBlank { "Alarm" }
     }
 
+    // The next ring that was not skipped or dismissed for the whole account
+    // (core/alarms.js nextAlarm). stoppedAt: the one ring stopped for the
+    // account (the synced "ring_stop:<alarm id>" pref), or null.
+    fun nextRing(alarm: JSONObject, courses: List<JSONObject>, events: List<JSONObject>, from: Long, zone: ZoneId, stoppedAt: Long?): Long? {
+        val t = next(alarm, courses, events, from, zone) ?: return null
+        return if (stoppedAt != null && stoppedAt == t) next(alarm, courses, events, t, zone) else t
+    }
+
     // The soonest thing that should ring after `from`: an alarm or a running timer.
-    fun soonest(courses: List<JSONObject>, events: List<JSONObject>, alarms: List<JSONObject>, timers: List<JSONObject>, from: Long, zone: ZoneId): Due? {
+    // A ring skipped ("skip my alarm today") or dismissed on another device is
+    // passed over, so it is not set with Android at all.
+    fun soonest(courses: List<JSONObject>, events: List<JSONObject>, alarms: List<JSONObject>, timers: List<JSONObject>, from: Long, zone: ZoneId, stoppedAt: (String) -> Long? = { null }): Due? {
         val out = mutableListOf<Due>()
-        for (a in alarms) next(a, courses, events, from, zone)?.let { out += Due("alarm", a.id, it, displayLabel(a, courses, events)) }
+        for (a in alarms) nextRing(a, courses, events, from, zone, stoppedAt(a.id))?.let { out += Due("alarm", a.id, it, displayLabel(a, courses, events)) }
         for (t in timers) if (!t.isDeleted && t.optString("state") == "running" && t.optLong("ends_at") > from)
             out += Due("timer", t.id, t.optLong("ends_at"), t.optString("label").ifBlank { "Timer" })
         return out.minByOrNull { it.at }

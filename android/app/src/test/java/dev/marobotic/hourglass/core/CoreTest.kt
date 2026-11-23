@@ -96,6 +96,20 @@ class CoreTest {
         assertNull(Alarms.next(a("time" to "07:00", "enabled" to 0), c, e, from, zone))
     }
 
+    // Mirrors core/test/alarm-skip.test.js: a ring skipped ("skip my alarm
+    // today") or dismissed for the account is passed over by the schedule.
+    @Test fun skippedRingIsPassedOver() {
+        val from = at("2026-09-28", "12:00")
+        val c = listOf(course); val e = listOf(lecture)
+        val lead = JSONObject().put("id", "a").put("enabled", 1).put("deleted", 0).put("days", JSONArray()).put("lead_event_id", "e1").put("lead_minutes", 20)
+        val ring = at("2026-09-29", "07:40")
+        assertEquals(ring, Alarms.nextRing(lead, c, e, from, zone, null))
+        assertEquals(at("2026-10-06", "07:40"), Alarms.nextRing(lead, c, e, from, zone, ring))
+        assertEquals(ring, Alarms.nextRing(lead, c, e, from, zone, ring - 1))
+        val due = Alarms.soonest(c, e, listOf(lead), emptyList(), from, zone) { if (it == "a") ring else null }
+        assertEquals(at("2026-10-06", "07:40"), due?.at)
+    }
+
     @Test fun alarmDisplayLabel() {
         val c = listOf(course); val e = listOf(lecture)
         fun a(vararg kv: Pair<String, Any?>) = JSONObject().put("id", "a").put("enabled", 1).put("deleted", 0).put("days", JSONArray()).apply { for ((k, v) in kv) put(k, v ?: JSONObject.NULL) }

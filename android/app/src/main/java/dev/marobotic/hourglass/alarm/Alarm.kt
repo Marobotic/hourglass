@@ -60,7 +60,7 @@ object Scheduler {
     }
 
     fun soonest(repo: Repo, from: Long): Due? =
-        Alarms.soonest(repo.store.all("courses"), repo.events(), repo.alarms(), repo.timers(), from, repo.zone)
+        Alarms.soonest(repo.store.all("courses"), repo.events(), repo.alarms(), repo.timers(), from, repo.zone) { RingSync.stoppedAt(repo, it) }
 
     fun ensureChannel(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)

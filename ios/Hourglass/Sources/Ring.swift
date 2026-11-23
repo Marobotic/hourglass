@@ -95,6 +95,27 @@ enum RingSync {
     }
 
     static func snoozeId(_ r: RingInfo) -> String { nameUUID("snooze:\(r.id):\(r.at)").uuidString.lowercased() }
+
+    // The one ring of this alarm stopped for the account (dismissed, snoozed,
+    // or skipped ahead of time with "skip my alarm today"), or nil.
+    @MainActor
+    static func stoppedAt(_ store: Store, _ id: String) -> Int64? {
+        guard let v = store.pref(key(id)), let s = try? JSONDecoder().decode(Stop.self, from: Data(v.utf8)), s.at > 0 else { return nil }
+        return s.at
+    }
+
+    // Why this ring must not come back as a snooze, or nil (core/alarms.js
+    // ringStopped): stopped for the account, or the alarm was deleted or turned
+    // off. A one-off alarm turns itself off as it rings, so not for those.
+    @MainActor
+    static func stoppedFor(_ store: Store, _ r: RingInfo) -> String? {
+        if let s = stoppedElsewhere(store, r.id, r.at) { return "\(s.action) on \(s.device)" }
+        guard r.kind == "alarm", let a = store.db.alarms.first(where: { $0.id == r.id }) else { return nil }
+        if a.deleted == 1 { return "the alarm was deleted" }
+        let oneOff = a.days.isEmpty && a.lead_event_id == nil && a.lead_course_id == nil
+        if !oneOff && a.enabled == 0 { return "the alarm is turned off" }
+        return nil
+    }
 }
 
 // The ring screen's buttons. iOS runs them in Hourglass (opening it in the
@@ -133,6 +154,14 @@ struct RingSnoozeIntent: LiveActivityIntent {
         let store = Store.shared
         RingLog.answered(r)
         AlarmKitScheduler.stop(r.uuid)
+        // Skipped, dismissed elsewhere, or the alarm turned off or deleted: the
+        // ring ends here. On 2026-11-23 a snooze of an alarm turned off minutes
+        // before rang again 5 minutes later on every device. This iPhone may
+        // not have synced, so the server is asked next as well.
+        if let why = RingSync.stoppedFor(store, r) {
+            RingLog.add(r.label, "dismissed", "Snooze on the iPhone alarm, not snoozed: \(why)")
+            return .result()
+        }
         // Check /api/ring/state before scheduling a snooze (2 s timeout)
         let state = await store.ringState(id: r.id, at: r.at)
         switch state {

@@ -550,6 +550,15 @@ enum Alarms {
         return label.isEmpty ? "Alarm" : a.label
     }
 
+    // The next ring not skipped or dismissed for the account (core/alarms.js
+    // nextAlarm). stoppedAt: the one ring stopped for the account, from the
+    // synced "ring_stop:<alarm id>" pref (RingSync.stoppedAt), or nil.
+    static func nextRing(_ a: Alarm, _ courses: [Course], _ events: [Event], _ from: Int64, stoppedAt: Int64?) -> Int64? {
+        guard let t = next(a, courses, events, from) else { return nil }
+        if let s = stoppedAt, s == t { return next(a, courses, events, t) }
+        return t
+    }
+
     static func next(_ a: Alarm, _ courses: [Course], _ events: [Event], _ from: Int64) -> Int64? {
         if a.deleted == 1 || a.enabled == 0 { return nil }
         let today = Dates.dayOf(from)
