@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hourglass round 5 · motion</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* The motion set. Every demo loops on its own cycle (data-cycle, ms) so it can be watched live here,
+     and render.mjs freezes clones at chosen moments (data-frames) for the frame strips. */
+  body { overflow: auto; padding: 40px; }
+  h1 { font: 800 28px/1 var(--mono); letter-spacing: -.02em; }
+  .lead { margin: 10px 0 32px; color: var(--muted); font: 400 14px/1.5 var(--mono); max-width: 980px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 280px); gap: 32px 24px; }
+  .demo-wrap h2 { font: 700 14px/20px var(--mono); }
+  .demo-wrap p { margin: 4px 0 12px; font: 400 12px/18px var(--mono); color: var(--muted); min-height: 36px; }
+  .demo { width: 280px; height: 400px; position: relative; overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+  .E { animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+
+  /* 1 screen transition: 280 ms, the new screen slides 32 px and fades in, the old one moves 24 px and dims */
+  .scr { position: absolute; inset: 0 0 64px; padding: 20px 16px; }
+  .scr .eb { font: 500 10px/1 var(--mono); letter-spacing: .14em; color: var(--muted); }
+  .scr .big { font: 800 44px/1 var(--mono); letter-spacing: -.05em; margin: 6px 0 14px; }
+  .scr .blk { height: 92px; background: linear-gradient(180deg, #2a1818, #1c1414); box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px rgba(177, 66, 66, .4); padding: 12px 14px; font: 800 18px/1 var(--mono); }
+  .scr .ln { height: 44px; margin-top: 8px; background: var(--s1); box-shadow: inset 3px 0 0 var(--cc, var(--teal)), inset 0 0 0 1px var(--line); padding: 8px 12px; font: 700 12px/1.4 var(--mono); }
+  .scr .ln small { display: block; color: var(--muted); font-weight: 400; }
+  #m-screen .a { animation: scrA 2400ms infinite; } #m-screen .b { animation: scrB 2400ms infinite; }
+  @keyframes scrA { 0%, 40% { opacity: 1; transform: none; animation-timing-function: cubic-bezier(.4, 0, 1, 1); } 46% { opacity: 0; transform: translateX(-24px); } 88% { opacity: 0; transform: translateX(-24px); animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 99.7%, 100% { opacity: 1; transform: none; } }
+  @keyframes scrB { 0%, 43% { opacity: 0; transform: translateX(32px); animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 51.7% { opacity: 1; transform: none; } 88% { opacity: 1; transform: none; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 99.7%, 100% { opacity: 0; transform: translateX(32px); } }
+  .mtabs { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; display: grid; grid-template-columns: repeat(5, 1fr); background: #161616; box-shadow: inset 0 1px 0 var(--line); }
+  .mtabs span { display: grid; place-items: center; color: var(--faint); }
+  .mtabs .ind { position: absolute; top: 0; height: 3px; width: 24px; background: var(--accent); box-shadow: 0 0 12px 1px rgba(177, 66, 66, .85); }
+  #m-screen .ind { animation: indA 2400ms infinite; }
+  @keyframes indA { 0%, 40% { left: 16px; width: 24px; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 46% { left: 16px; width: 80px; } 52% { left: 72px; width: 24px; } 88% { left: 72px; width: 24px; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 94% { left: 16px; width: 80px; } 100% { left: 16px; width: 24px; } }
+  #m-screen .t0 { animation: on0 2400ms infinite; } #m-screen .t1 { animation: on1 2400ms infinite; }
+  @keyframes on0 { 0%, 44% { color: var(--fg); } 50%, 92% { color: var(--faint); } 98%, 100% { color: var(--fg); } }
+  @keyframes on1 { 0%, 44% { color: var(--faint); } 50%, 92% { color: var(--fg); } 98%, 100% { color: var(--faint); } }
+
+  /* 2 tab indicator: travels 260 ms, stretching toward the target first, then settling */
+  #m-tabs .mtabs { top: 168px; bottom: auto; }
+  #m-tabs .ind { animation: indB 3600ms infinite; }
+  @keyframes indB {
+    0%, 18% { left: 16px; width: 24px; animation-timing-function: cubic-bezier(.4, 0, .2, 1); } 22% { left: 16px; width: 136px; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 25.2% { left: 128px; width: 24px; }
+    48% { left: 128px; width: 24px; animation-timing-function: cubic-bezier(.4, 0, .2, 1); } 52% { left: 128px; width: 136px; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 55.2% { left: 240px; width: 24px; }
+    78% { left: 240px; width: 24px; animation-timing-function: cubic-bezier(.4, 0, .2, 1); } 82% { left: 16px; width: 248px; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 85.2%, 100% { left: 16px; width: 24px; } }
+  #m-tabs .t0 { animation: tb0 3600ms infinite; } #m-tabs .t2 { animation: tb2 3600ms infinite; } #m-tabs .t4 { animation: tb4 3600ms infinite; }
+  @keyframes tb0 { 0%, 21% { color: var(--fg); } 24%, 83% { color: var(--faint); } 86%, 100% { color: var(--fg); } }
+  @keyframes tb2 { 0%, 24% { color: var(--faint); } 26%, 51% { color: var(--fg); } 54%, 100% { color: var(--faint); } }
+  @keyframes tb4 { 0%, 54% { color: var(--faint); } 56%, 81% { color: var(--fg); } 84%, 100% { color: var(--faint); } }
+  #m-tabs .caption { position: absolute; left: 16px; right: 16px; top: 40px; font: 400 12px/18px var(--mono); color: var(--muted); }
+  #m-tabs .caption b { display: block; font: 800 26px/1.2 var(--mono); color: var(--fg); margin-bottom: 6px; }
+
+  /* 3 to-do tick: ring floods red in 240 ms, the tick draws in 220 ms after 170 ms, the line strikes through */
+  #m-todo { padding: 40px 20px; }
+  #m-todo .todo li { font-size: 16px; line-height: 34px; }
+  #m-todo .todo li::before, #m-todo .todo li::after { top: 9px; }
+  #m-todo li.go { color: var(--fg); animation: txt 2400ms infinite; }
+  #m-todo li.go::before { animation: flood 2400ms infinite; }
+  #m-todo li.go::after { content: ""; position: absolute; left: 2px; top: 9px; width: 16px; height: 16px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.15 L7 10.75 L11.5 5.25' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px no-repeat; animation: tick 2400ms infinite; }
+  #m-todo li.go span { position: relative; }
+  #m-todo li.go span::after { content: ""; position: absolute; left: 0; right: 0; top: 52%; height: 1.5px; background: rgba(150, 150, 150, .7); transform-origin: left; animation: strike 2400ms infinite; }
+  @keyframes flood { 0%, 25% { box-shadow: inset 0 0 0 1.5px var(--muted); animation-timing-function: cubic-bezier(.4, 0, .2, 1); } 35% { box-shadow: inset 0 0 0 8px var(--accent); } 88% { box-shadow: inset 0 0 0 8px var(--accent); } 95%, 100% { box-shadow: inset 0 0 0 1.5px var(--muted); } }
+  @keyframes tick { 0%, 32% { clip-path: inset(0 12.5px 0 0); opacity: 1; animation-timing-function: ease-out; } 41% { clip-path: inset(0 3.5px 0 0); } 88% { clip-path: inset(0 3.5px 0 0); opacity: 1; } 92%, 100% { clip-path: inset(0 3.5px 0 0); opacity: 0; } }
+  @keyframes txt { 0%, 30% { color: var(--fg); } 40%, 88% { color: var(--muted); } 95%, 100% { color: var(--fg); } }
+  @keyframes strike { 0%, 32% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 45% { transform: scaleX(1); } 88% { transform: scaleX(1); opacity: 1; } 95%, 100% { transform: scaleX(1); opacity: 0; } }
+
+  /* 4 attendance toggle: the selection slides in (220 ms), the session square pops teal, the % rolls up */
+  #m-att { padding: 28px 16px; }
+  #m-att .hd { display: flex; align-items: baseline; font: 700 15px/1 var(--mono); }
+  #m-att .roll { margin-left: auto; height: 24px; overflow: hidden; font: 800 22px/24px var(--mono); color: var(--teal-ink); }
+  #m-att .roll div { animation: roll 2400ms infinite; }
+  @keyframes roll { 0%, 34% { transform: none; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 44%, 88% { transform: translateY(-24px); } 96%, 100% { transform: none; } }
+  #m-att .sq i.u { animation: pop 2400ms infinite; }
+  @keyframes pop { 0%, 30% { background: rgba(255, 255, 255, .04); box-shadow: inset 0 0 0 1.5px var(--muted); transform: none; } 36% { background: var(--teal); box-shadow: none; transform: scale(1.25); } 42%, 88% { background: var(--teal); box-shadow: none; transform: none; } 96%, 100% { background: rgba(255, 255, 255, .04); box-shadow: inset 0 0 0 1.5px var(--muted); } }
+  #m-att .mark { position: relative; margin-top: 20px; }
+  #m-att .mark span { position: relative; z-index: 1; white-space: nowrap; font-size: 12px; gap: 4px; }
+  #m-att .mark .sel { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / 3); background: color-mix(in srgb, var(--teal) 80%, #000); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12); animation: sel 2400ms infinite; }
+  @keyframes sel { 0%, 20% { opacity: 0; transform: scaleX(.6); animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 29%, 88% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; transform: none; } }
+  #m-att .mark .first { animation: wht 2400ms infinite; }
+  @keyframes wht { 0%, 22% { color: var(--muted); } 28%, 88% { color: #fff; } 96%, 100% { color: var(--muted); } }
+
+  /* 5 live class progress: the fill creeps, the head glows, minutes roll down */
+  #m-live { padding: 16px; }
+  #m-live .live h2 { font-size: 22px; }
+  #m-live .bar i { animation: fillp 3000ms linear infinite; }
+  #m-live .bar b { animation: headp 3000ms linear infinite, glow 1500ms ease-in-out infinite; }
+  @keyframes fillp { from { width: 78%; } to { width: 86%; } }
+  @keyframes headp { from { left: 78%; } to { left: 86%; } }
+  #m-live .mins { display: inline-block; height: 24px; overflow: hidden; vertical-align: bottom; }
+  #m-live .mins div { animation: minr 3000ms infinite; }
+  @keyframes minr { 0%, 45% { transform: none; animation-timing-function: cubic-bezier(.2, .8, .2, 1); } 55%, 100% { transform: translateY(-24px); } }
+
+  /* 6 timer countdown: the ring drains with the seconds; at zero it flashes and says Done */
+  #m-timer { display: grid; place-items: center; }
+  #m-timer .rg { position: relative; width: 200px; height: 200px; }
+  #m-timer svg { width: 200px; height: 200px; transform: rotate(-90deg); }
+  #m-timer circle { fill: none; stroke-width: 6; }
+  #m-timer .tr { stroke: var(--s4); }
+  #m-timer .pr { stroke: var(--accent); stroke-dasharray: 534; filter: drop-shadow(0 0 6px rgba(177, 66, 66, .8)); animation: drain 3000ms infinite; }
+  @keyframes drain { 0% { stroke-dashoffset: 445; } 83.3% { stroke-dashoffset: 534; } 100% { stroke-dashoffset: 534; } }
+  #m-timer .dg { position: absolute; inset: 0; display: grid; place-items: center; font: 800 40px/1 var(--mono); letter-spacing: -.04em; }
+  #m-timer .sx { display: inline-block; height: 40px; overflow: hidden; vertical-align: top; margin: 0; }
+  #m-timer .sx div { animation: secs 3000ms steps(1) infinite; }
+  @keyframes secs { 0% { transform: translateY(0); } 16.66% { transform: translateY(-40px); } 33.33% { transform: translateY(-80px); } 50% { transform: translateY(-120px); } 66.66% { transform: translateY(-160px); } 83.33%, 100% { transform: translateY(-200px); } }
+  #m-timer .sx div span { display: block; height: 40px; }
+  #m-timer .flash { position: absolute; inset: 0; background: radial-gradient(circle, rgba(177, 66, 66, .55), transparent 65%); opacity: 0; animation: flash 3000ms infinite; }
+  @keyframes flash { 0%, 83% { opacity: 0; } 87% { opacity: 1; } 95% { opacity: .3; } 100% { opacity: 0; } }
+  #m-timer .lbl { position: absolute; bottom: 48px; left: 0; right: 0; text-align: center; font: 500 12px/1 var(--mono); color: var(--muted); }
+  #m-timer .done { position: absolute; bottom: 84px; left: 0; right: 0; text-align: center; font: 800 13px/1 var(--mono); letter-spacing: .14em; color: var(--ink); opacity: 0; animation: donet 3000ms infinite; }
+  @keyframes donet { 0%, 83% { opacity: 0; } 86%, 100% { opacity: 1; } }
+
+  /* 7 alarm ring: square ripples, a breathing glow on the time, the bell rocks, Stop shimmers */
+  #m-ring { background: radial-gradient(90% 60% at 50% 38%, #3a1a1a, #121212 70%); display: flex; flex-direction: column; align-items: center; padding-top: 52px; }
+  #m-ring .bellw { position: relative; width: 64px; height: 64px; display: grid; place-items: center; color: #fff; }
+  #m-ring .rp { position: absolute; inset: 0; box-shadow: inset 0 0 0 2px rgba(255, 120, 120, .7); animation: rip 2400ms cubic-bezier(.2, .8, .2, 1) infinite; }
+  #m-ring .rp:nth-child(2) { animation-delay: 800ms; } #m-ring .rp:nth-child(3) { animation-delay: 1600ms; }
+  @keyframes rip { from { transform: scale(1); opacity: .9; } to { transform: scale(2.8); opacity: 0; } }
+  #m-ring .bellw svg { width: 32px; height: 32px; animation: rock 600ms ease-in-out infinite; transform-origin: 50% 10%; }
+  @keyframes rock { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }
+  #m-ring .tt { margin-top: 48px; font: 800 64px/1 var(--mono); letter-spacing: -.05em; animation: breathe 2400ms ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { text-shadow: 0 0 0 rgba(255, 90, 90, 0); } 50% { text-shadow: 0 0 28px rgba(255, 90, 90, .85); } }
+  #m-ring .lb { margin-top: 10px; font: 700 14px/1 var(--mono); }
+  #m-ring .sb { margin-top: 6px; font: 400 12px/1 var(--mono); color: var(--muted); }
+  #m-ring .stop { position: absolute; left: 16px; right: 16px; bottom: 76px; height: 52px; display: grid; place-items: center; font: 800 15px/1 var(--mono); letter-spacing: .1em; background: var(--accent); overflow: hidden; box-shadow: 0 12px 28px -10px rgba(177, 66, 66, .9); }
+  #m-ring .stop::after { content: ""; position: absolute; top: 0; bottom: 0; width: 60px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .35), transparent); animation: shim 2400ms ease-in-out infinite; }
+  @keyframes shim { 0%, 30% { left: -60px; } 70%, 100% { left: 100%; } }
+  #m-ring .snz { position: absolute; left: 16px; right: 16px; bottom: 16px; height: 48px; display: grid; place-items: center; font: 700 14px/1 var(--mono); box-shadow: inset 0 0 0 1px var(--line2); color: var(--soft); }
+
+  /* strip mode */
+  .strip { display: flex; gap: 16px; }
+  .strip .fr { display: flex; flex-direction: column; gap: 8px; }
+  .strip .ts { font: 700 12px/1 var(--mono); color: var(--muted); }
+  .strip .ts b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div id="all">
+  <h1>Hourglass · motion</h1>
+  <p class="lead">One motion language: things arrive with a fast-out curve (cubic-bezier .2 .8 .2 1), nothing bounces, and red only glows on what is live or ringing. Every demo loops; durations are the real ones.</p>
+  <div class="grid">
+    <div class="demo-wrap"><h2>Screen transition</h2><p>280 ms. New screen +32 px → 0 and fades in; the old one drifts −24 px and fades.</p>
+      <div class="demo" id="m-screen" data-cycle="2400" data-frames="0,1000,1060,1120,1240,1600">
+        <div class="scr a"><div class="eb">TUESDAY 6 OCTOBER</div><div class="big">09:37</div><div class="blk">Algorithms<div style="font:500 11px/1 var(--mono);color:var(--ink);margin-top:10px">LIVE · 23 min left</div></div><div class="ln" style="--cc:var(--teal)">11:00 Linear Algebra<small>Tutorial · B204</small></div></div>
+        <div class="scr b"><div class="eb">5 – 11 OCTOBER</div><div style="font:800 22px/1 var(--mono);margin:8px 0 14px">Week 6</div><div class="ln" style="--cc:var(--accent);background:linear-gradient(90deg,rgba(177,66,66,.2),transparent)">08:00 Algorithms<small>Lecture · Room 4.12</small></div><div class="ln">11:00 Linear Algebra<small>Tutorial · B204</small></div><div class="ln" style="--cc:var(--green)">13:30 Printmaking<small>Studio · NB631</small></div><div class="ln" style="--cc:var(--gold)">16:15 Study group<small>Library</small></div></div>
+        <div class="mtabs"><span class="t0" data-i="now"></span><span class="t1" data-i="schedule"></span><span data-i="notes"></span><span data-i="drive"></span><span data-i="time"></span><i class="ind"></i></div>
+      </div></div>
+    <div class="demo-wrap"><h2>Tab indicator</h2><p>260 ms. The bar stretches toward the new tab, then its tail catches up.</p>
+      <div class="demo" id="m-tabs" data-cycle="3600" data-frames="0,700,800,860,910,1100">
+        <div class="caption"><b>Now → Notes</b>The bar is the only thing that moves; the icons just change colour.</div>
+        <div class="mtabs"><span class="t0" data-i="now"></span><span data-i="schedule"></span><span class="t2" data-i="notes"></span><span data-i="drive"></span><span class="t4" data-i="time"></span><i class="ind"></i></div>
+      </div></div>
+    <div class="demo-wrap"><h2>To-do tick</h2><p>The 0.3.4 box: ring floods red (240 ms), tick draws (220 ms, +170 ms), text strikes through.</p>
+      <div class="demo" id="m-todo" data-cycle="2400" data-frames="0,620,740,860,1000,1300">
+        <div class="eyebrow" style="margin-bottom:12px">Before Friday</div>
+        <ul class="todo"><li class="done">Read chapter 15.3 on LCS</li><li class="go"><span>Draw the knapsack table</span></li><li>Write the recurrence for Q4</li><li>Ask Dr. Okafor about Q5</li></ul>
+      </div></div>
+    <div class="demo-wrap"><h2>Attendance toggle</h2><p>220 ms. The selection slides in, today's square pops teal, the percentage rolls.</p>
+      <div class="demo" id="m-att" data-cycle="2400" data-frames="0,500,620,820,1000,1300">
+        <div class="card course" style="--cc:#B14242"><span class="cc-edge"></span><div class="hd"><span style="font:700 15px/1 var(--mono)">Algorithms</span><span class="roll num"><div><span style="display:block">91%</span><span style="display:block">92%</span></div></span></div>
+          <div class="sq"><i class="a"></i><i class="a"></i><i class="o">–</i><i class="a"></i><i class="x"></i><i class="a"></i><i class="a"></i><i class="u"></i><i class="f"></i></div>
+          <div class="mark"><i class="sel"></i><span class="first">✓ Attended</span><span>✗ Absent</span><span>– Off</span></div></div>
+      </div></div>
+    <div class="demo-wrap"><h2>Live class progress</h2><p>Continuous. The fill creeps with the clock; the head breathes; minutes roll.</p>
+      <div class="demo" id="m-live" data-cycle="3000" data-frames="0,600,1200,1500,1800,2900">
+        <section class="live" style="padding:16px 16px 16px 20px"><div class="top"><span class="tag onair"><i class="pulse"></i>Live</span><span class="left num" style="margin-left:auto"><b class="mins"><div><span style="display:block">23</span><span style="display:block">22</span></div></b>min</span></div><h2>Algorithms</h2><div class="meta">Room 4.12 · Dr. Okafor</div>
+          <div class="prog"><div class="bar"><i></i><b></b></div><div class="ends num"><span>08:00</span><span>10:00</span></div></div></section>
+        <div class="eyebrow" style="margin:24px 0 8px">Sidebar mini</div>
+        <div class="card" style="padding:12px"><div style="font:800 14px/1 var(--mono)">Algorithms</div><div class="prog" style="margin-top:10px"><div class="bar" style="height:4px"><i></i></div></div></div>
+      </div></div>
+    <div class="demo-wrap"><h2>Timer countdown</h2><p>The ring drains each second; at zero a red bloom and Done.</p>
+      <div class="demo" id="m-timer" data-cycle="3000" data-frames="0,500,1500,2400,2600,2850">
+        <div class="rg"><span class="flash"></span><svg viewBox="0 0 200 200"><circle class="tr" cx="100" cy="100" r="85"/><circle class="pr" cx="100" cy="100" r="85"/></svg><div class="dg num"><span>00:0<span class="sx"><div><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span><span>0</span></div></span></span></div></div>
+        <div class="done">DONE</div><div class="lbl">Problem set 3</div>
+      </div></div>
+    <div class="demo-wrap"><h2>Alarm ring</h2><p>Square ripples every 800 ms, the time breathes red, the bell rocks, Stop shimmers.</p>
+      <div class="demo" id="m-ring" data-cycle="2400" data-frames="0,300,600,1000,1200,1800">
+        <div class="bellw"><i class="rp"></i><i class="rp"></i><i class="rp"></i><svg class="i" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z M10 21h4"/></svg></div>
+        <div class="tt num">07:15</div><div class="lb">Wake up</div><div class="sb">Wed 7 Oct · rings on all devices</div>
+        <div class="stop">STOP</div><div class="snz">Snooze 5 min</div>
+      </div></div>
+  </div>
+</div>
+<script>
+  // Tab icons, same drawings as the screens.
+  const I = {
+    now: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    schedule: '<path d="M3.5 5.5h17v15h-17z M3.5 10h17 M8 3v4 M16 3v4"/>',
+    notes: '<path d="M5 3.5h10l4 4v13H5z M15 3.5v4h4 M8.5 11.5h7 M8.5 15h7"/>',
+    drive: '<path d="M3.5 6h6l2 2.5h9v11h-17z M3.5 11h17"/>',
+    time: '<circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 1.5 M3.5 6l3.5-3 M20.5 6l-3.5-3"/>',
+  };
+  for (const s of document.querySelectorAll('[data-i]')) s.innerHTML = `<svg class="i s24" viewBox="0 0 24 24">${I[s.dataset.i]}</svg>`;
+
+  // ?strip=<id>: that demo frozen at its chosen moments, side by side.
+  const id = new URLSearchParams(location.search).get('strip');
+  if (id) {
+    const src = document.getElementById(`m-${id}`);
+    const wrap = src.closest('.demo-wrap');
+    const frames = src.dataset.frames.split(',').map(Number);
+    document.body.innerHTML = `<h1 style="font-size:22px">${wrap.querySelector('h2').textContent}</h1><p class="lead" style="margin:8px 0 20px">${wrap.querySelector('p').textContent} · cycle ${src.dataset.cycle} ms</p><div class="strip">${frames.map((t) => `<div class="fr"><span class="ts">t = <b>${t}</b> ms</span>${src.outerHTML.replace(`id="m-${id}"`, `id="m-${id}" data-t="${t}"`)}</div>`).join('')}</div>`;
+    document.body.style.padding = '24px 32px';
+    window.__strip = () => {
+      for (const d of document.querySelectorAll('.demo[data-t]')) for (const a of d.getAnimations({ subtree: true })) { a.pause(); a.currentTime = Number(d.dataset.t); }
+    };
+  }
+</script>
+</body>
+</html>

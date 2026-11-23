@@ -1,0 +1,212 @@
+[
+ {
+  "file": "screens/now-phone",
+  "out": "png/now-phone.png",
+  "w": 390,
+  "h": 844,
+  "dsf": 2
+ },
+ {
+  "file": "screens/now-pc",
+  "out": "png/now-pc.png",
+  "w": 2048,
+  "h": 1152,
+  "dsf": 1.25
+ },
+ {
+  "file": "screens/schedule-phone",
+  "out": "png/schedule-phone.png",
+  "w": 390,
+  "h": 844,
+  "dsf": 2
+ },
+ {
+  "file": "screens/schedule-pc",
+  "out": "png/schedule-pc.png",
+  "w": 2048,
+  "h": 1152,
+  "dsf": 1.25
+ },
+ {
+  "file": "screens/attendance-phone",
+  "out": "png/attendance-phone.png",
+  "w": 390,
+  "h": 844,
+  "dsf": 2
+ },
+ {
+  "file": "screens/attendance-pc",
+  "out": "png/attendance-pc.png",
+  "w": 2048,
+  "h": 1152,
+  "dsf": 1.25
+ },
+ {
+  "file": "screens/notes-phone",
+  "out": "png/notes-phone.png",
+  "w": 390,
+  "h": 844,
+  "dsf": 2
+ },
+ {
+  "file": "screens/notes-pc",
+  "out": "png/notes-pc.png",
+  "w": 2048,
+  "h": 1152,
+  "dsf": 1.25
+ },
+ {
+  "file": "screens/note-phone",
+  "out": "png/note-phone.png",
+  "w": 390,
+  "h": 844,
+  "dsf": 2
+ },
+ {
+  "file": "screens/note-pc",
+  "out": "png/note-pc.png",
+  "w": 2048,
+  "h": 1152,
+  "dsf": 1.25
+ },
+ {
+  "file": "screens/alarms-phone",
+  "out": "png/alarms-phone.png",
+  "w": 390,
+  "h": 844,
+  "dsf": 2
+ },
+ {
+  "file": "screens/alarms-pc",
+  "out": "png/alarms-pc.png",
+  "w": 2048,
+  "h": 1152,
+  "dsf": 1.25
+ },
+ {
+  "file": "screens/assistant-phone",
+  "out": "png/assistant-phone.png",
+  "w": 390,
+  "h": 844,
+  "dsf": 2
+ },
+ {
+  "file": "screens/assistant-pc",
+  "out": "png/assistant-pc.png",
+  "w": 2048,
+  "h": 1152,
+  "dsf": 1.25
+ },
+ {
+  "file": "motion",
+  "query": "?strip=screen",
+  "out": "png/motion-screen.png",
+  "w": 1840,
+  "h": 560,
+  "dsf": 1,
+  "strip": "screen"
+ },
+ {
+  "file": "motion",
+  "query": "?strip=tabs",
+  "out": "png/motion-tabs.png",
+  "w": 1840,
+  "h": 560,
+  "dsf": 1,
+  "strip": "tabs"
+ },
+ {
+  "file": "motion",
+  "query": "?strip=todo",
+  "out": "png/motion-todo.png",
+  "w": 1840,
+  "h": 560,
+  "dsf": 1,
+  "strip": "todo"
+ },
+ {
+  "file": "motion",
+  "query": "?strip=att",
+  "out": "png/motion-att.png",
+  "w": 1840,
+  "h": 560,
+  "dsf": 1,
+  "strip": "att"
+ },
+ {
+  "file": "motion",
+  "query": "?strip=live",
+  "out": "png/motion-live.png",
+  "w": 1840,
+  "h": 560,
+  "dsf": 1,
+  "strip": "live"
+ },
+ {
+  "file": "motion",
+  "query": "?strip=timer",
+  "out": "png/motion-timer.png",
+  "w": 1840,
+  "h": 560,
+  "dsf": 1,
+  "strip": "timer"
+ },
+ {
+  "file": "motion",
+  "query": "?strip=ring",
+  "out": "png/motion-ring.png",
+  "w": 1840,
+  "h": 560,
+  "dsf": 1,
+  "strip": "ring"
+ },
+ {
+  "file": "compare/now",
+  "out": "png/compare-now.png",
+  "w": 2040,
+  "h": 1960,
+  "dsf": 1
+ },
+ {
+  "file": "compare/schedule",
+  "out": "png/compare-schedule.png",
+  "w": 2040,
+  "h": 1960,
+  "dsf": 1
+ },
+ {
+  "file": "compare/attendance",
+  "out": "png/compare-attendance.png",
+  "w": 2040,
+  "h": 1960,
+  "dsf": 1
+ },
+ {
+  "file": "compare/notes",
+  "out": "png/compare-notes.png",
+  "w": 2040,
+  "h": 1960,
+  "dsf": 1
+ },
+ {
+  "file": "compare/note",
+  "out": "png/compare-note.png",
+  "w": 2040,
+  "h": 1960,
+  "dsf": 1
+ },
+ {
+  "file": "compare/alarms",
+  "out": "png/compare-alarms.png",
+  "w": 2040,
+  "h": 1960,
+  "dsf": 1
+ },
+ {
+  "file": "compare/assistant",
+  "out": "png/compare-assistant.png",
+  "w": 2040,
+  "h": 1960,
+  "dsf": 1
+ }
+]
