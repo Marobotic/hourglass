@@ -46,6 +46,7 @@ await call("add_note", { course: "Operating Systems", date: addDays(today, -1), 
 await call("set_alarm", { time: "07:15", days: ["Mon", "Tue", "Wed", "Thu", "Fri"], label: "Wake up" });
 await call("set_alarm", { before: "Linear Algebra", minutes_before: 15 });
 await call("start_timer", { minutes: 25, label: "Problem set 3" });
+for (const zone of ["Europe/London", "Asia/Tokyo", "Africa/Cairo"]) await call("add_clock", { zone }).catch(() => {});
 console.log("seeded", algo.course.name, "live", liveStart, "-", liveEnd, "on", dow);
 
 // Round 5 screenshots: past sessions marked, to-do notes, an exam this week and one alarm ring skipped.

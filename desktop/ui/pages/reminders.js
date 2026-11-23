@@ -1,6 +1,7 @@
 // Reminders: "call mom at 6". Not alarms: at its time a reminder shows a notification and, if chosen, a short tone;
 // then it waits as overdue until it is ticked, like a to-do (RemindersPage.qml). Its settings sync to every device.
 import { h, icon, swap } from '../dom.js';
+import { timeSeg } from './alarms.js';
 
 export default {
   mount(root, ctx, arg) {
@@ -26,8 +27,8 @@ export default {
     const listEl = h('div', { class: 'stack8' });
     const doneEl = h('div');
     const settingsEl = h('div');
-    root.append(ctx.head({ title: 'Reminders', ctx: 'A notification with Done and Snooze, not an alarm', acts: [kit.btn('Alarms', () => ctx.go('alarms'), { icon: 'bell', kind: 'subtle' })] }),
-      h('div', { class: 'page' }, h('div', { class: 'page-col' }, form, listEl, doneEl, settingsEl)));
+    root.append(ctx.head({ title: 'Reminders', ctx: 'A notification with Done and Snooze, not an alarm', mid: [timeSeg(ctx, 'reminders')] }),
+      h('div', { class: 'page' }, h('div', { class: 'cols rem-cols' }, h('div', { class: 'col' }, form, listEl, doneEl), h('div', { class: 'rail' }, settingsEl))));
 
     function drawDays() { dayT.replaceChildren(kit.days(newDays, (d) => { newDays = d; check(); })); }
     function check() {
@@ -101,7 +102,7 @@ export default {
 
     function settingsBlock() {
       const setS = (args) => api.action('set_reminder_settings', args).then(load);
-      return h('div', { class: 'stack12' }, kit.section('Reminder settings'),
+      return h('div', { class: 'card raised rail-card stack16' }, kit.section('Reminder settings'),
         h('small', { class: 'faint', text: 'A reminder is a notification with Done and Snooze, not an alarm. These settings are the same on all your devices.' }),
         h('div', { class: 'set-row' }, h('span', { class: 'muted', text: 'Alert' }), kit.seg([{ label: 'With a tone', value: 'tone' }, { label: 'Notification only', value: 'silent' }], settings.style, (v) => setS({ style: v }))),
         settings.style === 'tone' ? h('div', { class: 'set-row' }, h('span', { class: 'muted', text: 'Tone' }), h('div', { class: 'row wrap' }, (settings.tones || []).map((t) => kit.btn(t.charAt(0).toUpperCase() + t.slice(1), () => {
@@ -123,7 +124,7 @@ export default {
       if (key === lastKey) return;
       lastKey = key;
       const open = reminders.filter((x) => !x.done), done = reminders.filter((x) => x.done).slice(0, 20);
-      swap(listEl, open.length ? open.map(row) : h('div', { class: 'quiet', text: 'No reminders. Add one above, or ask the assistant: "remind me to call mom at 6".' }));
+      swap(listEl, open.map(row));
       swap(doneEl, done.length ? h('div', { class: 'stack8' }, kit.section('Done', String(done.length), kit.btn(showDone ? 'Hide' : 'Show', () => { showDone = !showDone; lastKey = ''; load(); }, { kind: 'subtle', compact: true })), showDone ? done.map(row) : null) : null);
       swap(settingsEl, settingsBlock());
     }

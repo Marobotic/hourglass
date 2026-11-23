@@ -1,5 +1,6 @@
 // World clock: cities side by side; the home clock is the app's time zone on every device (WorldClockPage.qml).
 import { h, icon, swap, debounce } from '../dom.js';
+import { timeSeg } from './alarms.js';
 
 export default {
   mount(root, ctx) {
@@ -11,8 +12,8 @@ export default {
     const q = kit.field({ placeholder: 'Add a city, e.g. Tokyo' });
     const drop = h('div', { class: 'zone-drop', hidden: true });
     const searchBox = h('div', { class: 'search zone-search' }, icon('search'), q, drop);
-    const head = ctx.head({ title: 'World clock', acts: [searchBox] });
-    head.insertBefore(ctxLine, head.querySelector('.acts'));
+    const head = ctx.head({ title: 'World clock', mid: [timeSeg(ctx, 'world')], acts: [searchBox] });
+    head.insertBefore(ctxLine, head.querySelector('.mid'));
     const grid = h('div', { class: 'clock-grid stagger' });
     root.append(head, h('div', { class: 'page' }, grid));
 
@@ -49,7 +50,7 @@ export default {
       const night = hr < 6 || hr >= 19;
       return h('div', { class: `card clock-card ${c.home ? 'stripe home' : ''}`, 'data-id': c.id || c.zone },
         h('div', { class: 'row' }, h('b', { class: 'grow ellipsis', text: c.label }),
-          c.home ? kit.chip('App time', { cls: 'live' }) : kit.btn('', () => api.action('remove_clock', { clock_id: c.id }), { kind: 'subtle', icon: 'close', compact: true, title: 'Remove' })),
+          c.home ? kit.chip('App time', { cls: 'gold' }) : kit.btn('', () => api.action('remove_clock', { clock_id: c.id }), { kind: 'subtle', icon: 'close', compact: true, title: 'Remove' })),
         h('div', { class: 'row clock-time' }, h('span', { class: 'tnum cc-time', 'data-off': String(c.offset_min), text: U.clockAt(state.clock, c.offset_min) }), icon(night ? 'moon' : 'sun', 'muted daynight')),
         h('div', { class: 'muted', text: (date === home ? 'Today' : date > home ? 'Tomorrow' : 'Yesterday') + (c.home ? '' : '  ·  ' + U.diffText(c.diff_min)) }),
         c.home ? null : kit.btn('Use as app time', () => api.action('set_home_zone', { clock_id: c.id }).then(() => ctx.pollState()), { kind: 'subtle', compact: true, cls: 'self-start' }));

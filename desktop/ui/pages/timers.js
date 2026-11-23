@@ -1,6 +1,7 @@
 // Timers: one big number with Start / Stop, quick lengths, pause, +1 min, and timers scheduled for later
 // (TimersPage.qml). Every device rings when a timer ends.
 import { h, icon, swap } from '../dom.js';
+import { timeSeg } from './alarms.js';
 
 const QUICK = [5, 10, 15, 25, 30, 45, 60];
 
@@ -12,13 +13,13 @@ export default {
 
     const labelEl = h('div', { class: 'timer-label' });
     const bigEl = h('button', { class: 'timer-big tnum', title: 'Change the length' });
-    // Progress runs around a square frame (no circles in Marochy): one SVG rect, dash = time left.
-    const ring = h('div', { class: 'timer-ring', html: '<svg viewBox="0 0 100 100" preserveAspectRatio="none"><rect class="track" x="1" y="1" width="98" height="98" pathLength="1"/><rect class="bar" x="1" y="1" width="98" height="98" pathLength="1"/></svg>' });
+    // The ring drains with the time left (round 5 motion); at zero a red bloom and Done.
+    const ring = h('div', { class: 'timer-ring', html: '<i class="bloom"></i><svg viewBox="0 0 200 200"><circle class="track" cx="100" cy="100" r="92" pathLength="1"/><circle class="bar" cx="100" cy="100" r="92" pathLength="1"/></svg><span class="done">Done</span>' });
     const actions = h('div', { class: 'row timer-acts' });
     const quick = h('div', { class: 'row wrap timer-quick' });
     const upcomingEl = h('div');
     const othersEl = h('div');
-    root.append(ctx.head({ title: 'Timers', ctx: 'Rings on every device when it ends', acts: [kit.btn('Timer for later', () => ask(true), { icon: 'plus' })] }),
+    root.append(ctx.head({ title: 'Timers', ctx: 'Rings on every device when it ends', mid: [timeSeg(ctx, 'timers')], acts: [kit.btn('Timer for later', () => ask(true), { icon: 'plus', kind: 'primary' })] }),
       h('div', { class: 'page' }, h('div', { class: 'timer-stage' }, labelEl, h('div', { class: 'timer-face' }, ring, bigEl), actions, quick, othersEl, upcomingEl)));
     bigEl.addEventListener('click', () => { if (!current()) ask(false); });
 
@@ -41,6 +42,7 @@ export default {
       const frac = c ? secsOf(c) / Math.max(1, c.duration_s || secsOf(c)) : 1;
       ring.style.setProperty('--p', String(Math.max(0, Math.min(1, frac))));
       ring.classList.toggle('on', !!c && c.state === 'running');
+      ring.classList.toggle('zero', !!c && c.state === 'running' && secsOf(c) === 0);
     }
 
     let lastKey = '';
