@@ -221,3 +221,4 @@ kbd, .kbd { font: 500 var(--fs-caption)/1 var(--mono); color: var(--faint); }
 .prog.thin .bar { height: 4px; }
 .prog .ends { display: flex; justify-content: space-between; margin-top: 8px; font: 500 var(--fs-caption)/1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .prog .ends .nowlbl { color: var(--fg); }
+.sheet > .body > .seg { justify-self: start; }

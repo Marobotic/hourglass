@@ -265,7 +265,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .sound .bellbox { color: var(--gold); }
 .sound b { display: block; font: 700 var(--fs-body)/20px var(--mono); }
 .sound small { display: block; font: 400 var(--fs-small)/18px var(--mono); color: var(--muted); }
-.rail-link { display: block; margin-top: 16px; padding: 0; text-align: left; color: var(--accent-ink); font: 500 var(--fs-small) var(--mono); }
+.rail-card .rail-link { display: block; width: 100%; margin-top: 16px; padding: 0; text-align: left; color: var(--accent-ink); font: 500 var(--fs-small) var(--mono); }
 .alarm-form { display: grid; gap: 12px; padding: 20px; }
 
 /* ---- Timers: one big countdown inside a ring that drains; at zero a red bloom and Done ---- */
