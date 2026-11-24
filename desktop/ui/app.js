@@ -481,7 +481,7 @@ function onKey(e) {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
   if (mod && e.key.toLowerCase() === 'n' && state.page !== 'assistant') { e.preventDefault(); newMenu(side.querySelector('.new')); return; }
-  if (mod || e.altKey || typing(e) || kit.overlayOpen() || $('.palette') || state.app.account?.signed_in === false) return;
+  if (mod || e.altKey || typing(e) || kit.overlayOpen() || $('.palette') || (state.app.account?.signed_in === false && !state.dev.has('nologin'))) return;
   const byKey = Object.entries(PAGES).find(([, p]) => p.key && p.key.toLowerCase() === e.key.toLowerCase());
   if (byKey) { e.preventDefault(); go(byKey[0]); return; }
   if (e.key === 'n') { e.preventDefault(); noteForNow(); return; }
