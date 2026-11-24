@@ -63,9 +63,10 @@ kbd, .kbd { font: 500 var(--fs-caption)/1 var(--mono); color: var(--faint); }
 .chip.live { --c: var(--on-accent); background: var(--accent); color: var(--on-accent); }
 .chip.live::before { content: ""; width: 6px; height: 6px; background: currentColor; animation: pulse 1.6s ease-in-out infinite; }
 .chip.ok { --c: var(--teal-ink); }
+.chip.absent { --c: var(--accent-ink); }
 .chip.warn { --c: var(--orange); }
 .chip.gold { --c: var(--gold); }
-.chip.gold.solid { color: #1a1406; }
+.chip.gold.solid { color: var(--on-gold); }
 .count { min-width: 18px; height: 18px; padding: 0 5px; display: inline-grid; place-items: center; background: var(--accent); color: var(--on-accent); font: 700 var(--fs-caption) var(--mono); flex: none; box-shadow: 0 0 10px -2px var(--glow); }
 
 /* ---- section label: caps, a count, a line that fades out, an optional link on the right ---- */
@@ -215,8 +216,8 @@ kbd, .kbd { font: 500 var(--fs-caption)/1 var(--mono); color: var(--faint); }
 .prog { --p: 0%; }
 .prog .bar { position: relative; height: 8px; background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .prog .bar > i { position: absolute; left: 0; top: 0; bottom: 0; width: var(--p); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 45%, transparent), var(--accent)); transition: width 1s linear; }
-.prog .bar > b { position: absolute; top: -5px; left: var(--p); width: 3px; height: 18px; margin-left: -1px; background: #fff; box-shadow: 0 0 10px 2px color-mix(in srgb, #ff7878 75%, transparent); transition: left 1s linear; }
-.prog .bar > b::after { content: ""; position: absolute; inset: 0; box-shadow: 0 0 16px 4px color-mix(in srgb, #ff7878 95%, transparent); opacity: 0; animation: head-glow 2s ease-in-out infinite reverse; }
+.prog .bar > b { position: absolute; top: -5px; left: var(--p); width: 3px; height: 18px; margin-left: -1px; background: var(--on-accent); box-shadow: 0 0 10px 2px color-mix(in srgb, var(--glow-hot) 75%, transparent); transition: left 1s linear; }
+.prog .bar > b::after { content: ""; position: absolute; inset: 0; box-shadow: 0 0 16px 4px color-mix(in srgb, var(--glow-hot) 95%, transparent); opacity: 0; animation: head-glow 2s ease-in-out infinite reverse; }
 .prog .bar > s { position: absolute; top: 0; bottom: 0; width: 1px; background: rgb(0 0 0 / .5); text-decoration: none; }
 .prog.thin .bar { height: 4px; }
 .prog .ends { display: flex; justify-content: space-between; margin-top: 8px; font: 500 var(--fs-caption)/1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }

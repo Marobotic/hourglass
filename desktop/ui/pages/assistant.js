@@ -517,6 +517,8 @@ export default {
       const on = busy() && chat.enabled;
       statusEl.hidden = !on;
       chatEl.toggleAttribute('data-working', !!chat.busy);
+      // The sidebar's Assistant row says "working" while a reply runs.
+      if (state.assistantBusy !== !!chat.busy) { state.assistantBusy = !!chat.busy; ctx.emit('nav'); }
       if (!on) return;
       const tool = [...(cur?.tools || [])].reverse().find((t) => t.status === 'running');
       const word = tool ? (tool.label || tool.tool || 'Working') + '…' : cur?.role === 'assistant' && cur.text ? 'Writing…' : `${wordFor(cur?.id || 'next')}…`;
@@ -895,6 +897,8 @@ export default {
         clearInterval(poll);
         clearTimeout(flushTimer);
         document.removeEventListener('keydown', onKey);
+        // Off this page nothing follows the reply, so the sidebar stops saying it works.
+        if (state.assistantBusy) { state.assistantBusy = false; ctx.emit('nav'); }
       },
     };
   },

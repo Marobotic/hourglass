@@ -89,7 +89,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .ds-blk { position: absolute; top: 8px; bottom: 8px; padding: 0; border: 0; background: color-mix(in srgb, var(--c) 70%, var(--bg)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .12); cursor: pointer; transition: background-color var(--quick) var(--ease); }
 .ds-blk:hover { background: var(--c); }
 .ds-blk.past { background: color-mix(in srgb, var(--c) 35%, var(--bg)); }
-.ds-now { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 10px 1px color-mix(in srgb, #ff7878 80%, transparent); pointer-events: none; }
+.ds-now { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--on-accent); box-shadow: 0 0 10px 1px color-mix(in srgb, var(--glow-hot) 80%, transparent); pointer-events: none; }
 .ds-hours { position: relative; height: 16px; margin-top: 8px; font: 500 var(--fs-caption)/16px var(--mono); color: var(--faint); }
 .ds-hours span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .ds-hours span:first-child { transform: none; }
@@ -166,7 +166,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .blk .fill { position: absolute; left: 0; right: 0; top: 0; height: var(--p); background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent) 12%, transparent)); pointer-events: none; }
 .nowline { position: absolute; left: -8px; right: 0; height: 2px; margin-top: -1px; background: var(--accent); box-shadow: 0 0 10px var(--glow); z-index: 4; pointer-events: none; }
 .nowline::before { content: ""; position: absolute; left: -2px; top: -4px; width: 10px; height: 10px; background: var(--accent); box-shadow: 0 0 10px var(--glow); }
-.nowline span { position: absolute; right: 0; top: -9px; padding: 3px 6px; font: 700 var(--fs-caption)/1 var(--mono); color: #fff; background: var(--accent); }
+.nowline span { position: absolute; right: 0; top: -9px; padding: 3px 6px; font: 700 var(--fs-caption)/1 var(--mono); color: var(--on-accent); background: var(--accent); }
 .rail-hero { padding: 24px 24px 24px 28px; }
 .rail-hero h2 { margin-top: 14px; font-size: 30px; }
 .rail-hero .meta { font-size: 13px; }
@@ -299,7 +299,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .tl-row .tm { font: 700 var(--fs-title) var(--mono); }
 .tl-row .dot { width: 8px; height: 8px; background: var(--c); }
 .tl-row.static { cursor: default; }
-@container page (max-width: 600px) { .timer-face { width: 300px; height: 300px; } .timer-big { font-size: 64px; } .timer-ring .done { bottom: 64px; } }
+@container page (max-width: 600px) { .timer-face { width: 300px; height: 300px; } .timer-big { font-size: 64px; } .timer-ring .done { bottom: 64px; } .timer-ring .bloom { inset: 0; } }
 
 /* ---- World clock ---- */
 .zone-search { width: 340px; }
@@ -323,7 +323,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .rem-label { font: 700 var(--fs-title)/20px var(--mono); }
 .rem-row small { font: 400 var(--fs-small)/18px var(--mono); }
 .overdue { color: var(--accent-ink); }
-.tick { width: 24px; height: 24px; flex: none; display: grid; place-items: center; padding: 0; border: 0; background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); color: #fff; font-size: 12px; cursor: pointer; transition: background-color var(--quick) var(--ease), box-shadow var(--quick) var(--ease), transform var(--t-press) var(--ease); }
+.tick { width: 24px; height: 24px; flex: none; display: grid; place-items: center; padding: 0; border: 0; background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); color: var(--on-accent); font-size: 12px; cursor: pointer; transition: background-color var(--quick) var(--ease), box-shadow var(--quick) var(--ease), transform var(--t-press) var(--ease); }
 .tick:hover { box-shadow: inset 0 0 0 1.5px var(--teal); }
 .tick:active { transform: scale(.88); }
 .tick.on { background: var(--teal); box-shadow: none; }

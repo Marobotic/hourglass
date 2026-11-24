@@ -50,6 +50,7 @@
   --accent-hi: color-mix(in srgb, var(--accent) 88%, white);
   --teal-ink: color-mix(in srgb, var(--teal) 55%, #a8eaea);
   --on-accent: #fff;
+  --on-gold: #1a1406;
   --red: var(--accent-ink);
 
   /* ---- elevation: a 1 px top highlight on raised surfaces, soft shadows under floating ones ---- */
@@ -61,6 +62,7 @@
   --glow: color-mix(in srgb, var(--accent) 90%, transparent);
   --glow-soft: color-mix(in srgb, var(--accent) 60%, transparent);
   --glow-faint: color-mix(in srgb, var(--accent) 38%, transparent);
+  --glow-hot: #ff7878;  /* the live progress head and the now line: hotter than the accent */
 
   /* ---- type ---- */
   --mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;

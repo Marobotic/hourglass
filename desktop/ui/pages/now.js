@@ -30,14 +30,15 @@ export default {
 
     // Notes dated today, then the class's notes: this session's, else the last session's (what to pick up from).
     function classNotes(block) {
-      const out = allNotes.filter((n) => n.session_date === today() && (!block?.course_id || n.course_id === block.course_id));
+      // Every note dated today first (any course), as 0.3.4 did.
+      const out = allNotes.filter((n) => n.session_date === today());
       const cid = block?.course_id;
       if (cid) {
         const mine = allNotes.filter((n) => n.course_id === cid && n.session_date && n.session_date <= (block.session_date || block.date));
         const last = mine.reduce((m, n) => (n.session_date > m ? n.session_date : m), '');
         for (const n of mine) if (n.session_date === last && !out.includes(n)) out.push(n);
         for (const n of allNotes) if (n.course_id === cid && n.pinned && !out.includes(n)) out.push(n);
-      } else for (const n of allNotes) if (n.session_date === today() && !out.includes(n)) out.push(n);
+      }
       return out.sort((a, b) => (b.pinned - a.pinned) || (b.updated_at - a.updated_at)).slice(0, 6);
     }
     function sessionNotesFor(block) {
@@ -124,7 +125,7 @@ export default {
         h('div', { class: 'top' },
           live ? kit.chip('Live', { cls: 'live' }) : kit.chip('Next' + when, { cls: 'line' }),
           block.parts.map((p) => kit.chip(U.kindLabel(p.kind), { cls: 'line' })).slice(0, 3),
-          marked ? kit.chip(U.markTag(marked), { cls: marked === 'attended' ? 'ok' : marked === 'absent' ? 'live' : '' }) : null,
+          marked ? kit.chip(U.markTag(marked), { cls: marked === 'attended' ? 'ok' : marked === 'absent' ? 'absent' : '' }) : null,
           h('span', { class: 'left tnum' })),
         h('h2', { text: block.title }),
         h('div', { class: 'meta', text: meta }),
@@ -174,9 +175,11 @@ export default {
       const list = classNotes(block);
       if (!list.length) return null;
       const c = ctx.courseById(block?.course_id);
-      const title = block?.course_id ? (isLive(block) ? 'Notes for this class' : `Notes for ${block.title}`) : 'Notes for today';
+      // Only this class's notes: named for the class; today's notes of other courses too: notes for today.
+      const own = c && list.every((n) => n.course_id === c.id);
+      const title = own ? (isLive(block) ? 'Notes for this class' : `Notes for ${block.title}`) : 'Notes for today';
       return h('div', {},
-        h('div', { class: 'section' }, h('span', { text: title }), h('small', { text: c ? `${list.length} · ${c.name}` : String(list.length) }),
+        h('div', { class: 'section' }, h('span', { text: title }), h('small', { text: own ? `${list.length} · ${c.name}` : String(list.length) }),
           c ? h('button', { class: 'link', text: `All ${c.name} notes`, onclick: () => ctx.go('notes', { course: c.id }) }) : null),
         h('div', { class: `note-grid ${loadedOnce ? '' : 'stagger'}` }, list.map((n) => noteCard(ctx, n, { today: today(), lines: 4, todoMax: 4, onclick: () => ctx.openNote(n) }))));
     }

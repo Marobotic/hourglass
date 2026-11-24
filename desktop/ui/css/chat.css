@@ -134,7 +134,7 @@
 .statusline .spark { width: 14px; flex: none; text-align: center; font-weight: 700; animation: spark-shimmer 2s ease-in-out infinite; }
 .statusline .spark::before { content: "✻"; display: inline-block; animation: spark-frames 1.2s steps(1, end) infinite; }
 @keyframes spark-frames { 0% { content: "·"; } 14% { content: "✢"; } 28% { content: "✳"; } 42% { content: "✶"; } 57% { content: "✻"; } 71% { content: "✽"; } 85% { content: "✻"; } }
-@keyframes spark-shimmer { 0%, 100% { color: var(--accent-ink); } 50% { color: color-mix(in srgb, var(--accent) 45%, #fff); } }
+@keyframes spark-shimmer { 0%, 100% { color: var(--accent-ink); } 50% { color: color-mix(in srgb, var(--accent) 45%, var(--on-accent)); } }
 .statusline .sl-verb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .statusline .sl-meta { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .edit-bar { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 12px; border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border)); color: var(--accent-ink); font-size: 12px; }
@@ -146,7 +146,7 @@
 .composer textarea::placeholder { color: var(--faint); }
 .plusbtn { height: 42px; width: 34px; font-size: 16px; }
 .sendbtn { width: 40px; height: 40px; padding: 0; flex: none; font-size: 15px; }
-.sendbtn.stopping { background: var(--accent); color: #fff; box-shadow: 0 0 14px -2px var(--glow); }
+.sendbtn.stopping { background: var(--accent); color: var(--on-accent); box-shadow: 0 0 14px -2px var(--glow); }
 .sendbtn.stopping:hover { background: var(--accent-hi); }
 .sendbtn:disabled { opacity: .45; }
 .steerbtn { height: 42px; color: var(--accent-ink); }

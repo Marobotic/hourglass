@@ -125,7 +125,7 @@
 /* ---- the ring: square ripples round a rocking bell, the time breathes red, Hold to dismiss shimmers ---- */
 .ring { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: radial-gradient(90% 70% at 50% 40%, color-mix(in srgb, var(--accent) 22%, rgb(0 0 0 / .72)), rgb(0 0 0 / .86) 70%); animation: fade-in 160ms var(--ease) both; }
 .ring-card { width: min(440px, calc(100vw - 48px)); display: grid; justify-items: center; padding: 48px 24px 24px; background: radial-gradient(90% 60% at 50% 30%, color-mix(in srgb, var(--accent) 22%, var(--bg)), var(--bg) 70%); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); box-shadow: var(--float), 0 40px 80px -30px var(--glow-soft); animation: sheet-in 260ms var(--ease) both; overflow: hidden; }
-.ring-card .bellw { position: relative; width: 64px; height: 64px; display: grid; place-items: center; color: #fff; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-ink) 80%, transparent); }
+.ring-card .bellw { position: relative; width: 64px; height: 64px; display: grid; place-items: center; color: var(--on-accent); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-ink) 80%, transparent); }
 .ring-card .bellw .rp { position: absolute; inset: 0; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-ink) 70%, transparent); animation: rip 2400ms var(--ease) infinite; }
 .ring-card .bellw .rp:nth-child(2) { animation-delay: 800ms; } .ring-card .bellw .rp:nth-child(3) { animation-delay: 1600ms; }
 .ring-card .bellw .ic { font-size: 26px; animation: rock 600ms ease-in-out infinite; transform-origin: 50% 10%; }
