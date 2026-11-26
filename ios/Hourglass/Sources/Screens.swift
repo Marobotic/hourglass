@@ -960,7 +960,7 @@ struct TimeView: View {
 
 private struct AlarmItem: Identifiable { let a: Alarm; let next: Int64?; var id: String { a.id } }
 
-private func alarmRepeat(_ a: Alarm, _ store: Store) -> String {
+@MainActor private func alarmRepeat(_ a: Alarm, _ store: Store) -> String {
     if let cid = a.lead_course_id { return "Before every \(store.course(cid)?.name ?? "class") session" }
     if a.lead_event_id != nil { return "Before the event" }
     if let d = a.date { return "Once, " + Dates.short(d) }

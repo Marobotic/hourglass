@@ -270,27 +270,27 @@ struct DriveView: View {
     var body: some View {
         let view = store.drive(folderId, course: courseId)
         attach(VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
+            // Round 5 page head: where you are (Drive at the top, the folder or course inside), New folder and Upload.
+            HStack(spacing: 8) {
                 if folderId != nil || courseId != nil {
                     // Drop on the back arrow: one folder up.
-                    Button { up(view) } label: { Image(systemName: "chevron.left").foregroundStyle(H.fg).frame(width: 40, height: 40) }
+                    Button { up(view) } label: { Image(systemName: "arrow.left").font(.system(size: 18, weight: .medium)).foregroundStyle(H.fg).frame(width: 44, height: 44).contentShape(Rectangle()) }
+                    .buttonStyle(PressStyle())
                     .dropDestination(for: String.self) { keys, _ in drop(keys, into: view.path.dropLast().last?.id, course: courseId) }
                 }
-                T(view.folder?.name ?? view.course?.name ?? "All files", 14, folderId != nil || courseId != nil ? H.fg : H.muted, bold: folderId != nil || courseId != nil, lines: 1)
-                Spacer()
-                Button { ask("New folder") { n in if !n.isEmpty { store.addFolder(n, parent: folderId, course: courseId) } } } label: {
-                    Image(systemName: "folder.badge.plus").foregroundStyle(H.muted).frame(width: 40, height: 40)
-                }
-                Button { importing = true } label: { Image(systemName: "square.and.arrow.up").foregroundStyle(H.muted).frame(width: 40, height: 40) }
+                T(view.folder?.name ?? view.course?.name ?? "Drive", folderId != nil || courseId != nil ? 18 : 24, bold: true, lines: 1)
+                Spacer(minLength: 0)
+                HButton("", icon: "folder.badge.plus") { ask("New folder") { n in if !n.isEmpty { store.addFolder(n, parent: folderId, course: courseId) } } }
+                HButton("Upload", icon: "square.and.arrow.up", primary: true) { importing = true }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 8)
             if let u = usage {
                 VStack(alignment: .leading, spacing: 4) {
                     if let total = u["total"], total > 0 {
                         GeometryReader { g in
                             ZStack(alignment: .leading) {
-                                Rectangle().fill(H.surface2)
-                                Rectangle().fill(H.teal).frame(width: g.size.width * CGFloat(min(1, max(0, Double(u["used"] ?? (total - (u["free"] ?? 0))) / Double(total)))))
+                                Rectangle().fill(H.surface4)
+                                Rectangle().fill(H.accent).frame(width: (g.size.width * CGFloat(min(1, max(0, Double(u["used"] ?? (total - (u["free"] ?? 0))) / Double(total))))).rounded())
                             }
                         }
                         .frame(height: 4)
@@ -298,9 +298,9 @@ struct DriveView: View {
                     let total = u["total"] ?? 0
                     let free = u["free"] ?? 0
                     let used = u["used"] ?? (total - free)
-                    T("\(fmtBytes(used)) used of \(fmtBytes(total))  ·  \(fmtBytes(free)) free  ·  your files \(fmtBytes(u["mine"]))", 12, H.muted)
+                    T("\(fmtBytes(used)) used of \(fmtBytes(total)) · \(fmtBytes(free)) free · your files \(fmtBytes(u["mine"]))", 12, H.muted)
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 16)
             }
             if let s = status ?? opener.busy { T(s, 12, H.gold).padding(.horizontal, 18) }
             HStack(spacing: 2) {
