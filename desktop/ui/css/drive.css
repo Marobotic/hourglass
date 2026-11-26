@@ -1,10 +1,10 @@
 /* Drive and the upload panel. */
 .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
-.crumb { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: var(--muted); font: 13px var(--mono); white-space: nowrap; cursor: pointer; transition: color var(--quick) var(--ease), background-color var(--quick) var(--ease); }
+.crumb { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: var(--muted); font: 13px var(--ui); white-space: nowrap; cursor: pointer; transition: color var(--quick) var(--ease), background-color var(--quick) var(--ease); }
 .crumb:hover, .crumb.on { color: var(--fg); }
 .crumb:hover { background: var(--surface2); }
 .usage { display: grid; gap: 4px; min-width: 150px; }
-.usage small { font-size: 11px; text-align: right; }
+.usage small { font-size: 12px; text-align: right; }
 .icon-seg button { width: 32px; padding: 0; }
 .drive { max-width: 1240px; }
 .files-block { display: grid; }
@@ -23,7 +23,7 @@
 .dlist.v-details { display: grid; }
 .drow { display: grid; grid-template-columns: 1fr 190px 110px 90px 32px; align-items: center; gap: 12px; height: 46px; padding: 0 8px; border-bottom: 1px solid var(--border); font-size: 14px; }
 .drow.dhead { height: 34px; }
-.dh-btn { border: 0; background: transparent; color: var(--muted); font: 700 11px var(--mono); letter-spacing: .1em; text-align: left; cursor: pointer; padding: 0; }
+.dh-btn { border: 0; background: transparent; color: var(--muted); font: 700 12px var(--ui); letter-spacing: 1px; text-align: left; cursor: pointer; padding: 0; }
 .dh-btn.on, .dh-btn:hover { color: var(--fg); }
 .right { text-align: right; }
 .dname { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -31,7 +31,7 @@
 .drow.ditem:hover { background: var(--surface); }
 .ditem .more { opacity: 0; transition: opacity var(--quick) var(--ease); }
 .ditem:hover .more { opacity: 1; }
-.fi { width: 28px; height: 28px; flex: none; display: grid; place-items: center; color: var(--muted); font-size: 15px; }
+.fi { width: 28px; height: 28px; flex: none; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
 .fi.folder-ic { color: var(--gold); }
 img.fi.thumb { object-fit: cover; border: 1px solid var(--border); }
 .mark-sync { color: var(--teal); font-size: 12px; }
@@ -42,7 +42,7 @@ img.fi.thumb { object-fit: cover; border: 1px solid var(--border); }
 .dicon { width: 132px; height: 132px; display: grid; justify-items: center; align-content: center; gap: 8px; padding: 10px; background: var(--surface); border: 1px solid var(--border); text-align: center; }
 .dicon:hover { background: var(--surface2); border-color: var(--faint); }
 .dicon .fi { width: 56px; height: 56px; font-size: 32px; }
-.dicon .dn { font-size: 12px; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.dicon .dn { font-size: 12px; line-height: 16px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .dicon .marks { position: absolute; top: 6px; left: 8px; display: flex; gap: 4px; }
 .dicon .more { position: absolute; top: 4px; right: 4px; }
 .dgal { display: grid; background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
@@ -56,20 +56,20 @@ img.fi.thumb { object-fit: cover; border: 1px solid var(--border); }
 .drag-ghost { position: fixed; left: 0; top: 0; z-index: 120; display: flex; align-items: center; gap: 8px; max-width: 340px; height: 34px; padding: 0 12px; background: var(--surface2); border: 1px solid var(--accent); font-size: 13px; pointer-events: none; box-shadow: var(--shadow); }
 .drag-ghost .ic { color: var(--accent-ink); }
 body.dragging, body.dragging * { cursor: grabbing !important; }
-.drive-empty > .ic { font-size: 28px; color: var(--faint); }
+.drive-empty > .ic { --s: 32px; --w: 2px; color: var(--faint); }
 .drive-tip { display: block; margin-top: -8px; }
 .path-field { display: flex; align-items: center; color: var(--fg); font-size: 13px; }
 .ver-now { gap: 12px; font-size: 13px; }
 .ver { display: grid; gap: 10px; padding: 12px 14px; }
 .ver .col { gap: 2px; }
-.diff { display: grid; gap: 2px; max-height: 340px; overflow: auto; padding: 8px; background: var(--bg); border: 1px solid var(--border); font: 12.5px/1.5 var(--mono); }
+.diff { display: grid; gap: 2px; max-height: 340px; overflow: auto; padding: 8px; background: var(--bg); border: 1px solid var(--border); font: 13px/20px var(--ui); }
 .dl { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 4px; }
 .dl.add { background: color-mix(in srgb, var(--teal) 20%, transparent); }
 .dl.del { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .dl.skip { color: var(--faint); }
 .diff-pics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .diff-pics figure { margin: 0; display: grid; gap: 6px; }
-.diff-pics figcaption { font: 700 11px var(--mono); letter-spacing: .1em; color: var(--muted); }
+.diff-pics figcaption { font: 700 12px var(--ui); letter-spacing: 1px; color: var(--muted); }
 .diff-pics img { width: 100%; max-height: 260px; object-fit: contain; background: var(--surface); border: 1px solid var(--border); }
 .preview { position: fixed; inset: 0; z-index: 90; display: grid; grid-template-rows: 1fr auto; background: rgb(0 0 0 / .88); animation: fade-in 160ms var(--ease) both; }
 .pv-stage { display: grid; place-items: center; padding: 32px 80px 12px; min-height: 0; }
@@ -87,4 +87,4 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .up-list { overflow-y: auto; padding: 6px 0; }
 .up-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; font-size: 13px; }
 .up-row .col { gap: 4px; }
-.up-row small { font-size: 11px; }
+.up-row small { font-size: 12px; }

@@ -2,24 +2,24 @@
 .notes-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 288px 1fr; }
 .folders-wrap { display: flex; flex-direction: column; gap: 16px; min-height: 0; padding: 32px 8px 24px var(--pad); }
 .folders { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; }
-.folders .group { padding: 20px 12px 8px; font: 500 var(--fs-small)/16px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
-.folder { position: relative; display: flex; align-items: center; gap: 12px; height: 40px; flex: none; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs-body) var(--mono); text-align: left; cursor: pointer; transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
+.folders .group { padding: 20px 12px 8px; font: 500 var(--fs-small)/16px var(--ui); letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.folder { position: relative; display: flex; align-items: center; gap: 12px; height: 40px; flex: none; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs-body) var(--ui); text-align: left; cursor: pointer; transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
 .folder:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
 .folder.on { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), var(--surface2) 60%); color: var(--fg); font-weight: 700; box-shadow: var(--hi); }
 .folder.on::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--accent); box-shadow: 0 0 10px var(--glow); }
 .folder .swatch { width: 10px; height: 10px; margin: 0 3px; }
-.folder .ic { font-size: 15px; }
-.folder .cnt { color: var(--faint); font: 500 var(--fs-caption) var(--mono); }
+.folder .ic { --s: 16px; }
+.folder .cnt { color: var(--faint); font: 500 var(--fs-caption) var(--ui); }
 .folder-add { align-self: flex-start; margin: 8px 0 0 4px; }
 .notes-scroll { overflow-y: auto; min-height: 0; }
 .notes-main { padding: 32px var(--pad) var(--pad) 32px; display: grid; gap: 24px; align-content: start; max-width: 2200px; width: 100%; margin-inline: auto; }
 .course-line { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
-.course-line b { font: 800 20px/1 var(--mono); }
+.course-line b { font: 700 20px/1 var(--ui); }
 .course-line .link { padding: 0; color: var(--accent-ink); }
 .take { display: flex; align-items: center; height: 48px; background: var(--surface); box-shadow: var(--hi), inset 0 0 0 1px var(--border); }
-.take-main { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px; border: 0; background: transparent; color: var(--faint); font: 400 var(--fs-body) var(--mono); text-align: left; cursor: text; }
-.take-main .ic { color: var(--muted); font-size: 15px; }
-.take-ic { width: 48px; height: 100%; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; transition: color var(--quick) var(--ease); }
+.take-main { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px; border: 0; background: transparent; color: var(--faint); font: 400 var(--fs-body) var(--ui); text-align: left; cursor: text; }
+.take-main .ic { color: var(--muted); --s: 16px; }
+.take-ic { width: 48px; height: 100%; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; transition: color var(--quick) var(--ease); }
 .take-ic:hover, .take-main:hover { color: var(--fg); }
 .take:hover { box-shadow: var(--hi), inset 0 0 0 1px var(--border2); }
 .band { display: grid; gap: 16px; align-items: start; }
@@ -42,16 +42,16 @@
 .note-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .note-meta .picker { height: 32px; }
 .note-meta .field { height: 32px; }
-.note-meta .muted { font: 500 var(--fs-small) var(--mono); letter-spacing: .14em; text-transform: uppercase; }
-.note-status { font: 500 var(--fs-small) var(--mono); white-space: nowrap; }
-.note-title { width: 100%; border: 0; outline: none; background: transparent; color: var(--fg); font: 800 36px/1.2 var(--mono); letter-spacing: -.02em; padding: 4px 0 12px; }
+.note-meta .muted { font: 500 var(--fs-small) var(--ui); letter-spacing: 1px; text-transform: uppercase; }
+.note-status { font: 500 var(--fs-small) var(--ui); white-space: nowrap; }
+.note-title { width: 100%; border: 0; outline: none; background: transparent; color: var(--fg); font: 700 36px/43px var(--ui); letter-spacing: -1px; padding: 4px 0 12px; }
 .note-title::placeholder { color: var(--faint); }
 .note-tools { position: relative; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 10px 12px; background: var(--surface2); box-shadow: inset 0 -1px 0 var(--border); }
 .note-tools .picker.compact { height: 32px; font-size: 12px; }
 .note-tools .btn.subtle { width: 36px; height: 36px; padding: 0; color: var(--soft); }
-.note-tools .btn.subtle .lbl { margin-left: -6px; font-size: 11px; }
+.note-tools .btn.subtle .lbl { margin-left: -6px; font-size: 12px; }
 .note-tools .btn.subtle:has(.lbl) { width: 44px; }
-.note-tools .btn.subtle .ic { font-size: 16px; }
+.note-tools .btn.subtle .ic { --s: 20px; --w: 2px; }
 .note-tools .btn.active { background: var(--surface3); color: var(--fg); box-shadow: var(--hi), inset 0 -2px 0 var(--accent); }
 .note-tools .btn.pinned { color: var(--gold); }
 .tsep { width: 1px; height: 20px; margin: 0 6px; background: var(--border2); }
@@ -59,26 +59,26 @@
 .note-live h2 { font-size: 22px; margin-top: 12px; }
 .note-live .acts { margin-top: 16px; }
 .note-live .acts .btn { flex: 1 1 100%; min-width: 0; }
-.big-count { font: 800 28px/1 var(--mono); }
+.big-count { font: 700 28px/1 var(--ui); }
 .big-count span { font-size: 16px; color: var(--faint); }
 .check-bar { position: relative; height: 6px; margin-top: 12px; background: var(--surface4); }
 .check-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); box-shadow: 0 0 10px var(--glow-soft); transition: width 600ms var(--ease); }
 .vers { display: grid; }
-.ver-row { display: flex; align-items: center; gap: 16px; height: 36px; padding: 0; border: 0; background: transparent; color: var(--muted); font: 500 13px var(--mono); text-align: left; cursor: pointer; }
+.ver-row { display: flex; align-items: center; gap: 16px; height: 36px; padding: 0; border: 0; background: transparent; color: var(--muted); font: 500 13px var(--ui); text-align: left; cursor: pointer; }
 .ver-row > :first-child { width: 84px; flex: none; }
 .ver-row.now { color: var(--fg); cursor: default; }
 .ver-row:not(.now):hover { color: var(--fg); }
 .att-file { display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
 .att-file .fbox { width: 48px; height: 48px; flex: none; display: grid; place-items: center; background: linear-gradient(135deg, var(--surface4), var(--surface2)); box-shadow: inset 0 0 0 1px var(--border2); color: var(--muted); font-size: 16px; }
-.att-file b { display: block; font: 700 13px/18px var(--mono); }
-.att-file small { display: block; font: 400 var(--fs-small)/18px var(--mono); color: var(--muted); }
-.note-body { min-height: 50vh; padding: 0 0 120px; outline: none; font: 15px/1.7 "Inter", var(--sans); color: var(--fg); caret-color: var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; cursor: text; }
+.att-file b { display: block; font: 700 13px/18px var(--ui); }
+.att-file small { display: block; font: 400 var(--fs-small)/18px var(--ui); color: var(--muted); }
+.note-body { min-height: 50vh; padding: 0 0 120px; outline: none; font: 14px/24px "Inter", var(--prose); color: var(--fg); caret-color: var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; cursor: text; }
 .note-body.blank > .ln[data-k="p"]:first-child::after { content: "Write something…"; position: absolute; left: 0; top: 0; color: var(--faint); pointer-events: none; }
 .note-body .ln { position: relative; min-height: 1.7em; padding-left: calc(var(--ind, 0) * 24px); }
 .note-body .ln[data-i="1"] { --ind: 1; } .note-body .ln[data-i="2"] { --ind: 2; } .note-body .ln[data-i="3"] { --ind: 3; }
 .note-body .ln[data-i="4"] { --ind: 4; } .note-body .ln[data-i="5"] { --ind: 5; } .note-body .ln[data-i="6"] { --ind: 6; }
-.note-body .ln[data-h="1"] { font-size: 26px; font-weight: 700; line-height: 1.35; margin: 10px 0 4px; }
-.note-body .ln[data-h="2"] { font-size: 21px; font-weight: 700; line-height: 1.4; margin: 8px 0 2px; }
+.note-body .ln[data-h="1"] { font-size: 26px; font-weight: 700; line-height: 35px; margin: 10px 0 4px; }
+.note-body .ln[data-h="2"] { font-size: 20px; font-weight: 700; line-height: 28px; margin: 8px 0 2px; }
 .note-body .ln[data-h="3"] { font-size: 18px; font-weight: 700; }
 .note-body .ln[data-k="ul"], .note-body .ln[data-k="ol"], .note-body .ln[data-k="todo"] { padding-left: calc(var(--ind, 0) * 24px + 26px); }
 .note-body .ln[data-k="ul"]::before { content: "•"; position: absolute; left: calc(var(--ind, 0) * 24px + 8px); color: var(--muted); }
@@ -112,12 +112,12 @@
 :is(.note-body, .todo-preview) .ln[data-k="todo"][data-hot] { cursor: pointer; }
 :is(.note-body, .todo-preview) .ln[data-k="todo"][data-c="1"] { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
 /* ---- end of to-do look ---- */
-.note-body code { font: 13.5px var(--mono); background: var(--surface3); padding: 1px 5px; }
+.note-body code { font: 14px var(--ui); background: var(--surface3); padding: 1px 5px; }
 .note-body a { color: var(--fg); text-decoration-color: var(--accent); }
 .note-body .media { padding: 6px 0; cursor: pointer; user-select: none; }
 .note-body .media img { display: block; max-width: min(100%, 560px); max-height: 420px; border: 1px solid var(--border); }
 .note-body .media img.broken { width: 220px; height: 120px; background: var(--surface); }
-.note-body .file-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--border); background: var(--surface); font: 13px var(--mono); transition: border-color var(--quick) var(--ease); }
+.note-body .file-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--border); background: var(--surface); font: 13px var(--ui); transition: border-color var(--quick) var(--ease); }
 .note-body .file-chip:hover { border-color: var(--faint); }
 .version { display: grid; gap: 4px; padding: 10px 12px; text-align: left; color: var(--fg); font: inherit; }
-.version p { margin: 0; font: 13px/1.45 var(--sans); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.version p { margin: 0; font: 13px/19px var(--prose); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

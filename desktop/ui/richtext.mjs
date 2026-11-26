@@ -12,7 +12,7 @@
 // from a note in the "JetBrains Mono" note font.
 import { FONTS, DEFAULT_SIZE, HEADING_SIZES, parse, serialize, kindOf, prefixOf, lineText, mergeRuns, renumber } from "./noteformat.mjs";
 
-export const CODE_FONT = "JetBrainsMono Nerd Font";
+export const CODE_FONT = "JetBrains Mono";
 const P = "margin-top:0px; margin-bottom:0px; line-height:125%; white-space:pre-wrap;";
 // A done to-do's text; DONE_INK_S where the note itself strikes it through too.
 export const DONE_INK = "#7d7d7e";
