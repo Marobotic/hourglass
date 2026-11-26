@@ -986,15 +986,38 @@ private struct Working: View {
     }
 }
 
-// Metro's spark: the glyph steps through its frames and shimmers while a turn runs (still under Reduce Motion).
+// Metro's spark (desktop chat.css .statusline .spark): seven frames · ✢ ✳ ✶ ✻ ✽ ✻ over 1.2 s, the colour shimmering
+// between accentInk and a light red over 2 s; still (✻) under Reduce Motion. Drawn as vector spokes, never as text:
+// Reddit Sans has none of these glyphs, so iOS fell back to Apple Color Emoji and ✳ (U+2733) showed as the green
+// ✳️ emoji square.
 struct Spark: View {
-    private static let frames = ["·", "✢", "✳", "✶", "✻", "✽", "✻"]
+    // Each frame: spokes, spoke length (share of the radius), stroke width; 0 spokes is the dot.
+    private static let frames: [(Int, CGFloat, CGFloat)] = [(0, 0, 0), (4, 0.75, 2), (8, 1, 1.5), (6, 1, 2), (8, 1, 2.25), (8, 0.9, 3), (8, 1, 2.25)]
+    private static let light = H.accent.mix(.white, 0.55)
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.17)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.2 / 7)) { tl in
             let t: Double = tl.date.timeIntervalSinceReferenceDate
-            let i: Int = HMotion.allowed ? Int(t / 0.17) % Self.frames.count : 4
-            let glow: Double = HMotion.allowed ? (sin(t * .pi) + 1) / 2 : 0
-            Text(Self.frames[i]).font(H.ui(13, bold: true)).foregroundStyle(H.accentInk.opacity(1 - glow * 0.35)).frame(width: 14)
+            let i: Int = HMotion.allowed ? Int(t / (1.2 / 7)) % Self.frames.count : 4
+            let mixAmount: Double = HMotion.allowed ? (1 - cos(t * .pi)) / 2 : 0 // 0 → 1 → 0 every 2 s
+            let ink: Color = H.accentInk.mix(Self.light, mixAmount)
+            let f = Self.frames[i]
+            Canvas { ctx, size in
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                let r: CGFloat = min(size.width, size.height) / 2 - 1.5 // round caps stay inside the 14 pt box
+                if f.0 == 0 {
+                    ctx.fill(Path(ellipseIn: CGRect(x: c.x - 1.5, y: c.y - 1.5, width: 3, height: 3)), with: .color(ink))
+                    return
+                }
+                var p = Path()
+                for k in 0..<f.0 {
+                    let angle: CGFloat = CGFloat(k) / CGFloat(f.0) * 2 * .pi - .pi / 2
+                    p.move(to: c)
+                    p.addLine(to: CGPoint(x: c.x + cos(angle) * r * f.1, y: c.y + sin(angle) * r * f.1))
+                }
+                ctx.stroke(p, with: .color(ink), style: StrokeStyle(lineWidth: f.2, lineCap: .round))
+            }
+            .frame(width: 14, height: 14)
+            .accessibilityHidden(true)
         }
     }
 }
