@@ -397,14 +397,10 @@ private struct TimelineItem: View {
             T(Dates.t(b.start), 14, next ? H.fg : H.soft, bold: true, lines: 1)
                 .padding(.top, 8)
                 .frame(width: 72, alignment: .trailing)
-            // The line runs through every node; it starts at the first and ends at the last.
-            VStack(spacing: 0) {
-                Rectangle().fill(first ? Color.clear : H.border2).frame(width: 1, height: 13)
-                Rectangle().fill(color).frame(width: 10, height: 10)
-                    .shadow(color: next ? color.opacity(0.8) : .clear, radius: 6)
-                Rectangle().fill(last ? Color.clear : H.border2).frame(width: 1).frame(maxHeight: .infinity)
-            }
-            .frame(width: 20)
+            Rectangle().fill(color).frame(width: 10, height: 10)
+                .shadow(color: next ? color.opacity(0.8) : .clear, radius: 6)
+                .padding(.top, 13)
+                .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 T(b.first.title, 16, bold: true, lines: 1)
                 T(sub, 13, H.muted, lines: 1)
@@ -413,7 +409,14 @@ private struct TimelineItem: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .fixedSize(horizontal: false, vertical: true)
+        // The line runs through every node, behind it: from the first node to the last, at the row’s full height.
+        .background(alignment: .topLeading) {
+            GeometryReader { g in
+                let top: CGFloat = first ? 18 : 0
+                let bottom: CGFloat = last ? 18 : g.size.height
+                Rectangle().fill(H.border2).frame(width: 1, height: max(0, bottom - top)).offset(x: 89, y: top)
+            }
+        }
     }
 }
 
@@ -696,12 +699,6 @@ private struct DaySection: View {
             .padding(.top, 8)
             ForEach(blocks) { b in
                 BlockCard(b: b, clock: clock)
-                    .overlay(alignment: .bottomTrailing) {
-                        if let mark = b.first.mark {
-                            Chip(text: mark == "attended" ? "Attended" : mark == "absent" ? "Absent" : "Off", tint: mark == "attended" ? H.tealInk : mark == "absent" ? H.accentInk : H.muted)
-                                .padding(12)
-                        }
-                    }
                     .onTapGesture { sheets.session = b.first }
             }
         }

@@ -498,6 +498,10 @@ struct BlockCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 T(o.title, 16, bold: true, lines: 2)
                 if !sub.isEmpty { T(sub, 13, H.muted, lines: 1) }
+                if let mark = o.mark {
+                    Chip(text: mark == "attended" ? "Attended" : mark == "absent" ? "Absent" : "Off", tint: mark == "attended" ? H.tealInk : mark == "absent" ? H.accentInk : H.muted)
+                        .padding(.top, 4)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 4) {
