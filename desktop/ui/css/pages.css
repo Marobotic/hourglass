@@ -87,15 +87,15 @@ button.it:hover .h { color: var(--accent-ink); }
 /* AM/PM is its own small label, set well apart from the seconds so it never reads as part of them. */
 .now-clock .ap { margin-left: 20px; padding: 4px 8px; font: 700 20px/20px var(--ui); letter-spacing: 1px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--border2); align-self: center; }
 .daystrip { flex: 1; min-width: 0; padding-bottom: 12px; }
-.ds-bar { position: relative; height: 48px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+.ds-bar { position: relative; overflow-x: clip; overflow-clip-margin: 0; height: 48px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
 .ds-blk { position: absolute; top: 8px; bottom: 8px; padding: 0; border: 0; background: color-mix(in srgb, var(--c) 70%, var(--bg)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .12); cursor: pointer; transition: background-color var(--quick) var(--ease); }
 .ds-blk:hover { background: var(--c); }
 .ds-blk.past { background: color-mix(in srgb, var(--c) 35%, var(--bg)); }
 .ds-now { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--on-accent); box-shadow: 0 0 10px 1px color-mix(in srgb, var(--glow-hot) 80%, transparent); pointer-events: none; }
 .ds-hours { position: relative; height: 16px; margin-top: 8px; font: 500 var(--fs-caption)/16px var(--ui); color: var(--faint); }
 .ds-hours span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
-.ds-hours span:first-child { transform: none; }
-.ds-hours span:last-child { transform: translateX(-100%); }
+.ds-hours span.first { transform: none; }
+.ds-hours span.last { transform: translateX(-100%); }
 .upcoming { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px; }
 .up { display: flex; align-items: center; gap: 14px; padding: 16px; text-align: left; color: var(--fg); font: inherit; }
 .up .ibox { width: 40px; height: 40px; flex: none; display: grid; place-items: center; background: var(--surface3); color: var(--muted); font-size: 14px; }

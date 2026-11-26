@@ -2,8 +2,9 @@
 // window so it can be opened or screenshotted in a plain browser. Never touches the real Hourglass data: the data,
 // config, courses folder and HOME all live in a temp folder, the keyring is never read and sync points nowhere.
 //   node ui/dev/serve.mjs                         -> prints the URL to open
-//   node ui/dev/serve.mjs --shot out.png --page now --size 1440x900 [--dsf 1.25] [--query "x=1"] [--eval "js"]
-//   node ui/dev/serve.mjs --batch shots.json      -> [{ out, page, size, dsf?, query?, eval?, wait? }, ...]
+//   node ui/dev/serve.mjs --shot out.png --page now --size 1440x900 [--dsf 1.25] [--query "x=1"] [--eval "js"] [--now 07:22]
+//   node ui/dev/serve.mjs --batch shots.json      -> [{ out, page, size, dsf?, query?, eval?, wait?, now? }, ...]
+// --now HH:MM fakes the page's clock to that time today (local), still ticking; the service keeps the real time.
 // It serves dist/ when it has been built (node build.mjs), else ui/ itself (plain ES modules; --src forces that).
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -101,6 +102,17 @@ async function shoot(br, s) {
   await br.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: s.reduce ? 'reduce' : 'no-preference' }] });
   await br.send('Page.bringToFront');
   await br.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+  await br.send('Page.enable');
+  if (br.fake) { await br.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: br.fake }); br.fake = null; }
+  if (s.now) {
+    const [hh, mm] = String(s.now).split(':').map(Number);
+    const at = new Date(); at.setHours(hh, mm || 0, 0, 0);
+    const r = await br.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const off = ${at.getTime()} - Date.now(), R = Date, now = () => R.now() + off;
+      globalThis.Date = class extends R { constructor(...a) { super(...(a.length ? a : [now()])); } static now() { return now(); } };
+    })();` });
+    br.fake = r.result?.identifier;
+  }
   await br.send('Page.navigate', { url: url(s.page || 'now', s.query || '') });
   await wait(s.wait || 2600);
   if (s.eval) {
@@ -120,7 +132,7 @@ if (!shot && !batch) {
   console.log(`service on ${PORT} (data ${dir})\nopen ${url(opt('--page', 'now'))}`);
 } else {
   const list = batch ? JSON.parse(readFileSync(batch, 'utf8'))
-    : opt('--page', 'now').split(',').map((page, _, all) => ({ out: all.length > 1 ? shot.replace(/\.png$/, `-${page}.png`) : shot, page, size: opt('--size', '1440x900'), dsf: Number(opt('--dsf', 1)), query: opt('--query', ''), eval: opt('--eval') }));
+    : opt('--page', 'now').split(',').map((page, _, all) => ({ out: all.length > 1 ? shot.replace(/\.png$/, `-${page}.png`) : shot, page, size: opt('--size', '1440x900'), dsf: Number(opt('--dsf', 1)), query: opt('--query', ''), eval: opt('--eval'), now: opt('--now') }));
   const br = await browser();
   try { for (const s of list) await shoot(br, s); } finally { br.close(); }
   await wait(400);

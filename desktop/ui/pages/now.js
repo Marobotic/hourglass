@@ -75,26 +75,31 @@ export default {
       const d = state.now?.now?.date || today();
       dateEl.textContent = `${U.weekdaysLong[U.isoWeekday(d) - 1]} ${U.dayNum(d)} ${U.monthName(d)}`;
     }
-    // Today as one bar, 08:00 to 18:00 or wider: the sessions in their colours and a line at now.
+    // Today as one bar, 08:00 to 18:00 or wider: the sessions in their colours and a line at now. The range always
+    // holds the current hour too (7:22 AM starts it at 7 AM, 11:30 PM ends it at midnight), so the line sits inside.
     function dayStrip() {
       const list = occ.filter((o) => o.date === today() && o.mark !== 'off');
       if (!list.length) { stripEl.hidden = true; return; }
       stripEl.hidden = false;
-      const startH = Math.min(8, ...list.map((o) => Math.floor(U.minutes(o.start_time) / 60)));
-      const endH = Math.max(18, ...list.map((o) => Math.ceil(U.minutes(o.end_time) / 60)));
+      const nowH = Math.floor(U.minutesOf(state.clock) / 60);
+      const startH = Math.min(8, nowH, ...list.map((o) => Math.floor(U.minutes(o.start_time) / 60)));
+      const endH = Math.min(24, Math.max(18, nowH + 1, ...list.map((o) => Math.ceil(U.minutes(o.end_time) / 60))));
       const span = (endH - startH) * 60;
-      const at = (m) => `${((m - startH * 60) / span) * 100}%`;
+      // Clamped too, so the line can never draw outside the bar (the bar also clips it sideways).
+      const at = (m) => `${(Math.min(span, Math.max(0, m - startH * 60)) / span) * 100}%`;
       stripEl.at = at;
+      stripEl.range = [startH * 60, endH * 60];
       const mins = list.reduce((t, o) => t + U.minutes(o.end_time) - U.minutes(o.start_time), 0);
       const step = endH - startH > 12 ? 4 : 2;
       const hours = [];
-      for (let hr = startH; hr <= endH; hr += step) hours.push(hr);
+      // Labels on whole steps (even hours), the end ones pinned inside the bar.
+      for (let hr = Math.ceil(startH / step) * step; hr <= endH; hr += step) hours.push(hr);
       swap(stripEl,
         h('div', { class: 'section', style: { marginBottom: '8px' } }, h('span', { text: 'Today' }), h('small', { text: `${U.plural(list.length, 'session')} · ${Math.floor(mins / 60)} h${mins % 60 ? ` ${mins % 60} m` : ''} of class` })),
         h('div', { class: 'ds-bar' },
           list.map((o) => h('button', { class: `ds-blk ${o.end_ms <= state.clock ? 'past' : ''}`, style: { '--c': o.color || 'var(--muted)', left: at(U.minutes(o.start_time)), width: `calc(${at(U.minutes(o.end_time))} - ${at(U.minutes(o.start_time))})` }, title: `${o.title} · ${U.range(o.start_time, o.end_time)}`, onclick: () => ctx.openSession(o) })),
           h('i', { class: 'ds-now', style: { left: at(U.minutesOf(state.clock)) } })),
-        h('div', { class: 'ds-hours' }, hours.map((hr) => h('span', { style: { left: at(hr * 60) }, text: U.t(U.pad(hr) + ':00').replace(':00 ', ' ') }))));
+        h('div', { class: 'ds-hours' }, hours.map((hr) => h('span', { class: hr === startH ? 'first' : hr === endH ? 'last' : '', style: { left: at(hr * 60) }, text: U.t(U.pad(hr % 24) + ':00').replace(':00 ', ' ') }))));
     }
 
     // ---- the live class (or the next one) ----
@@ -298,7 +303,10 @@ export default {
       const cd = rail.querySelector('.cd-in'), next = windowed()[1];
       if (cd && next) cd.textContent = U.relative(Math.ceil((next.start_ms - state.clock) / 60000));
       const nowLine = stripEl.querySelector('.ds-now');
-      if (nowLine && stripEl.at) nowLine.style.left = stripEl.at(U.minutesOf(state.clock));
+      const m = U.minutesOf(state.clock);
+      // Now has left the bar's range (past its last hour, or a new day): draw the bar again around it.
+      if (stripEl.range && (m < stripEl.range[0] || m >= stripEl.range[1])) dayStrip();
+      else if (nowLine && stripEl.at) nowLine.style.left = stripEl.at(m);
     }
 
     load();
