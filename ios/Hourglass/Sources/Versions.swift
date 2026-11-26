@@ -123,7 +123,7 @@ private struct Changes: View {
                     T("+\(d.added ?? 0) lines   −\(d.removed ?? 0) lines", 12, H.muted).padding(.bottom, 4)
                     ForEach(Array((d.lines ?? []).prefix(400).enumerated()), id: \.offset) { _, l in
                         Text(l.op == "skip" ? "⋯ \(l.count ?? 0) lines the same" : (l.op == "add" ? "+ " : l.op == "del" ? "− " : "  ") + (l.text ?? ""))
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(H.ui(12))
                             .foregroundStyle(l.op == "skip" ? H.faint : H.fg)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 4)
