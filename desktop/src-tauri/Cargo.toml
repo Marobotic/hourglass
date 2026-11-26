@@ -27,3 +27,7 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# The page's WebKit view, to bring the page back if its web process dies (lib.rs, keep_page_alive).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"

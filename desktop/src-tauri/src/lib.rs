@@ -95,6 +95,37 @@ fn show(app: &tauri::AppHandle) {
     }
 }
 
+// Linux on NVIDIA's driver: when WebKitGTK's DMA-BUF renderer allocates its buffers through GBM, the page's
+// web process crashes a moment after it starts (SIGSEGV in libnvidia-eglcore on WebKit's ThreadedCompositor
+// thread; WebKitGTK 2.54, driver 620) and the window is left black. The same renderer with buffers made by
+// EGL instead draws fine and stays on the GPU, so the window asks for that before GTK and WebKit start.
+// Setting WEBKIT_DMABUF_RENDERER_DISABLE_GBM yourself (0 to use GBM) wins.
+#[cfg(target_os = "linux")]
+fn pick_webkit_renderer() {
+    if std::env::var_os("WEBKIT_DMABUF_RENDERER_DISABLE_GBM").is_none()
+        && std::path::Path::new("/sys/module/nvidia_drm").exists()
+    {
+        std::env::set_var("WEBKIT_DMABUF_RENDERER_DISABLE_GBM", "1");
+    }
+}
+
+// If the page's web process dies anyway, WebKit leaves an empty window; load the page again instead. Three
+// deaths within a minute stop it, so a page that cannot run doesn't restart forever.
+#[cfg(target_os = "linux")]
+fn keep_page_alive(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|webview| {
+        use webkit2gtk::WebViewExt;
+        let deaths = std::rc::Rc::new(std::cell::RefCell::new(Vec::<std::time::Instant>::new()));
+        webview.inner().connect_web_process_terminated(move |view, reason| {
+            let mut d = deaths.borrow_mut();
+            d.retain(|t| t.elapsed() < Duration::from_secs(60));
+            d.push(std::time::Instant::now());
+            eprintln!("hourglass: the page's web process ended ({reason:?}); {}", if d.len() <= 3 { "loading it again" } else { "giving up" });
+            if d.len() <= 3 { view.reload(); }
+        });
+    });
+}
+
 #[tauri::command]
 fn boot(state: tauri::State<'_, Boot>) -> Boot { state.inner().clone() }
 
@@ -103,6 +134,8 @@ fn show_window(app: tauri::AppHandle) { show(&app); }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    pick_webkit_renderer();
     let port: u16 = arg("--port").and_then(|p| p.parse().ok()).unwrap_or(8931);
     let token = arg("--token").unwrap_or_else(read_token);
     let started_service = !service_up(port) && start_service();
@@ -123,7 +156,7 @@ pub fn run() {
         .manage(boot_state)
         .invoke_handler(tauri::generate_handler![boot, show_window])
         .setup(move |app| {
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Hourglass")
                 .inner_size(1240.0, 820.0)
                 .min_inner_size(720.0, 520.0)
@@ -132,6 +165,8 @@ pub fn run() {
                 .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection")
                 .initialization_script(&boot_script)
                 .build()?;
+            #[cfg(target_os = "linux")]
+            keep_page_alive(&_window);
             let show_item = MenuItem::with_id(app, "show", "Show Hourglass", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Hourglass", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
