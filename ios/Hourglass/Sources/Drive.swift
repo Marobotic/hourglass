@@ -7,39 +7,48 @@ import UniformTypeIdentifiers
 private func markTint(_ m: String?) -> Color { m == "attended" ? H.teal : m == "absent" ? H.accent : m == "off" ? H.muted : H.faint }
 private func markBox(_ m: String?) -> String { m == "attended" ? "✓" : m == "absent" ? "✗" : m == "off" ? "–" : "" }
 
+// One session box with the original marks (Maro, 2026-11-23): ✓ teal, ✗ red, – muted, empty = not marked. The
+// first unmarked one is ringed in red; a box just marked pops once.
 private struct MarkCell: View {
     let mark: String?
-    var size: CGFloat = 34
+    var next = false
+    @State private var pop: CGFloat = 1
     var body: some View {
-        let tint = markTint(mark)
+        let tint: Color = markTint(mark)
         ZStack {
-            Rectangle().fill(mark != nil ? tint.opacity(0.25) : .clear)
-            Rectangle().stroke(mark != nil ? tint : H.faint, lineWidth: 1)
-            T(markBox(mark), size > 20 ? 17 : 12, tint, bold: true)
+            Rectangle().fill(mark != nil ? tint.opacity(0.22) : H.surface)
+            Rectangle().strokeBorder(mark != nil ? tint : next ? H.accent : H.border2, lineWidth: next && mark == nil ? 2 : 1)
+            Text(markBox(mark)).font(H.ui(16, .bold)).foregroundStyle(mark == "absent" ? H.accentInk : mark == "attended" ? H.tealInk : tint)
         }
-        .frame(width: size, height: size)
+        .frame(width: 40, height: 40)
+        .scaleEffect(pop)
+        .onChange(of: mark) { _, _ in
+            guard HMotion.allowed else { return }
+            pop = 0.85
+            withAnimation(HMotion.sheet) { pop = 1 }
+        }
     }
 }
 
-// Every subject with every session to the end of term: ✓ attended, ✗ absent,
-// – off (no class), empty = not marked yet. Tap a box to change it; upcoming
-// sessions are faded. Same page as the desktop's Attendance tab.
+// Attendance (desktop attendance.js): every course with every session so far and to come, as cards: the rate, the
+// counts, the session boxes, and "Mark the n unmarked as attended". Tap a box to cycle it. No legend, no term
+// summary, no warnings (Maro, 2026-11-25).
 struct AttendanceView: View {
     @EnvironmentObject var store: Store
 
     var body: some View {
-        let list = store.attendanceSessions()
+        let list = store.attendanceSessions().filter { !$0.1.isEmpty }
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 14) {
-                    ForEach([("attended", "attended"), ("absent", "absent"), ("off", "off"), ("", "not marked")], id: \.1) { m, label in
-                        HStack(spacing: 6) { MarkCell(mark: m.isEmpty ? nil : m, size: 18); T(label, 12, H.muted) }
+            VStack(alignment: .leading, spacing: 16) {
+                if store.courses.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        T("No courses yet", 18, bold: true)
+                        T("Add a course with its weekly times and its sessions show up here to mark.", 14, H.muted)
                     }
                 }
-                if list.isEmpty { T("No courses yet.", 14, H.faint) }
-                ForEach(list, id: \.0.id) { course, sessions in CourseAttendance(course: course, sessions: sessions) }
+                ForEach(Array(list.enumerated()), id: \.element.0.id) { i, item in CourseAttendance(course: item.0, sessions: item.1).rise(i) }
             }
-            .padding(18)
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 96)
         }
         .background(H.bg)
     }
@@ -53,34 +62,53 @@ private struct CourseAttendance: View {
     private func count(_ m: String?) -> Int { sessions.filter { $0.mark == m && (m != nil || !$0.future) }.count }
 
     var body: some View {
-        let past = sessions.filter { !$0.future }.count
-        let yes = count("attended"), no = count("absent"), off = count("off"), open = count(nil)
+        let past: Int = sessions.filter { !$0.future }.count
+        let yes: Int = count("attended"), no: Int = count("absent"), off: Int = count("off"), open: Int = count(nil)
         let pct: Int? = yes + no > 0 ? Int((100.0 * Double(yes) / Double(yes + no)).rounded()) : nil
-        Card(stripe: Color(hex: course.color)) {
-            HStack {
-                T(course.name, 17, bold: true, lines: 1)
-                Spacer()
-                T(pct.map { "\($0)%" } ?? "—", 20, (pct ?? 100) < 75 ? H.accent : H.teal, bold: true)
+        let firstOpen: String? = sessions.first { $0.mark == nil && !$0.future }?.id
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                T(course.name, 16, bold: true, lines: 1)
+                Spacer(minLength: 8)
+                T(pct.map { "\($0)%" } ?? "—", 24, pct == nil ? H.faint : H.tealInk, bold: true)
             }
-            T("✓ \(yes)  ✗ \(no)  – \(off)" + (open > 0 ? "  · \(open) not marked" : "") + "  ·  \(past) so far, \(sessions.count - past) to come", 12, H.muted)
-                .padding(.top, 4)
-            if sessions.isEmpty { T("No sessions scheduled.", 13, H.faint).padding(.top, 10) }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 40), spacing: 8)], alignment: .leading, spacing: 8) {
+            // The counts, wrapping on a narrow screen.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { stats(yes, no, off, open, past) }
+                VStack(alignment: .leading, spacing: 4) { stats(yes, no, off, open, past) }
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 44, maximum: 52), spacing: 4)], alignment: .leading, spacing: 8) {
                 ForEach(sessions) { s in
-                    VStack(spacing: 3) {
-                        Button { store.cycleMark(s) } label: { MarkCell(mark: s.mark) }.buttonStyle(.plain)
-                        T(Dates.short(s.date).split(separator: " ").dropFirst().joined(separator: " "), 10, H.faint)
+                    VStack(spacing: 4) {
+                        Button { store.cycleMark(s) } label: { MarkCell(mark: s.mark, next: s.id == firstOpen) }.buttonStyle(PressStyle())
+                        T(Dates.short(s.date).split(separator: " ").dropFirst().joined(separator: " "), 12, H.faint, lines: 1).fixedSize()
                     }
                     .opacity(s.future && s.mark == nil ? 0.35 : 1)
                 }
             }
-            .padding(.top, 10)
             if open > 0 {
-                HButton("Mark the \(open) unmarked as attended") {
+                HButton("Mark the \(open) unmarked as attended", icon: "checkmark", subtle: true, compact: true) {
                     store.setMarks(sessions.filter { $0.mark == nil && !$0.future }.map(\.occ), "attended")
                 }
-                .padding(.top, 10)
             }
+        }
+        .padding(.vertical, 20).padding(.leading, 23).padding(.trailing, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(H.surface)
+        .overlay(alignment: .top) { H.hi.frame(height: 1) }
+        .overlay(alignment: .leading) { Color(hex: course.color).frame(width: 3) }
+        .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
+    }
+
+    @ViewBuilder private func stats(_ yes: Int, _ no: Int, _ off: Int, _ open: Int, _ past: Int) -> some View {
+        HStack(spacing: 12) {
+            T("✓ \(yes) attended", 13, H.tealInk, lines: 1).fixedSize()
+            T("✗ \(no) absent", 13, no > 0 ? H.accentInk : H.muted, lines: 1).fixedSize()
+            T("– \(off) off", 13, H.muted, lines: 1).fixedSize()
+        }
+        HStack(spacing: 12) {
+            if open > 0 { T("● \(open) to mark", 13, H.gold, lines: 1).fixedSize() }
+            T("of \(past) so far, \(sessions.count - past) to come", 13, H.faint, lines: 1).fixedSize()
         }
     }
 }
@@ -248,7 +276,7 @@ struct DriveView: View {
                     Button { up(view) } label: { Image(systemName: "chevron.left").foregroundStyle(H.fg).frame(width: 40, height: 40) }
                     .dropDestination(for: String.self) { keys, _ in drop(keys, into: view.path.dropLast().last?.id, course: courseId) }
                 }
-                T(view.folder?.name ?? view.course?.name ?? "All files", 15, folderId != nil || courseId != nil ? H.fg : H.muted, bold: folderId != nil || courseId != nil, lines: 1)
+                T(view.folder?.name ?? view.course?.name ?? "All files", 14, folderId != nil || courseId != nil ? H.fg : H.muted, bold: folderId != nil || courseId != nil, lines: 1)
                 Spacer()
                 Button { ask("New folder") { n in if !n.isEmpty { store.addFolder(n, parent: folderId, course: courseId) } } } label: {
                     Image(systemName: "folder.badge.plus").foregroundStyle(H.muted).frame(width: 40, height: 40)
@@ -270,7 +298,7 @@ struct DriveView: View {
                     let total = u["total"] ?? 0
                     let free = u["free"] ?? 0
                     let used = u["used"] ?? (total - free)
-                    T("\(fmtBytes(used)) used of \(fmtBytes(total))  ·  \(fmtBytes(free)) free  ·  your files \(fmtBytes(u["mine"]))", 11, H.muted)
+                    T("\(fmtBytes(used)) used of \(fmtBytes(total))  ·  \(fmtBytes(free)) free  ·  your files \(fmtBytes(u["mine"]))", 12, H.muted)
                 }
                 .padding(.horizontal, 18)
             }
@@ -305,7 +333,7 @@ struct DriveView: View {
                     H.accent.opacity(0.12)
                     T("Drop to upload here", 18, bold: true)
                 }
-                .overlay(Rectangle().stroke(H.accent, lineWidth: 2))
+                .overlay(Rectangle().strokeBorder(H.accent, lineWidth: 2))
                 .allowsHitTesting(false)
             }
         })
@@ -384,7 +412,7 @@ struct DriveView: View {
                                     Spacer(minLength: 0)
                                     if shares[d.id] != nil { Image(systemName: "link").font(.system(size: 12)).foregroundStyle(H.teal) }
                                 }
-                                .padding(.horizontal, 12).frame(height: 48).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                                .padding(.horizontal, 12).frame(height: 48).background(H.surface).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
                             } else {
                                 tile(icon: "folder", tint: H.gold, name: d.name, shared: shares[d.id] != nil, picture: nil)
                             }
@@ -410,7 +438,7 @@ struct DriveView: View {
                                     }
                                     .padding(.horizontal, 10).frame(height: 34)
                                 }
-                                .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                                .background(H.surface).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
                             } else {
                                 tile(icon: icon(f), tint: H.muted, name: f.name, shared: shares[f.id] != nil, picture: hasPreview(f) ? f : nil)
                             }
@@ -434,12 +462,12 @@ struct DriveView: View {
                 else { Image(systemName: icon).font(.system(size: 38)).foregroundStyle(tint) }
             }
             .frame(width: 60, height: 60).clipped()
-            Text(name).font(H.mono(11)).foregroundStyle(H.fg).lineLimit(2).multilineTextAlignment(.center)
+            Text(name).font(H.ui(12)).foregroundStyle(H.fg).lineLimit(2).multilineTextAlignment(.center)
         }
         .padding(.horizontal, 6).padding(.vertical, 10)
         .frame(maxWidth: .infinity, minHeight: 124, alignment: .top)
         .background(H.surface)
-        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
         .overlay(alignment: .topLeading) { if shared { Image(systemName: "link").font(.system(size: 11)).foregroundStyle(H.teal).padding(6) } }
     }
 
@@ -556,7 +584,7 @@ extension DriveView {
             HStack(spacing: 14) {
                 if let f = picture { DriveThumb(file: f, big: false, icon: icon, show: true).frame(width: 34, height: 34).clipped() }
                 else { Image(systemName: icon).font(.system(size: 20)).foregroundStyle(tint).frame(width: 26) }
-                VStack(alignment: .leading, spacing: 2) { T(name, 15, lines: 1); T(detail, 12, H.muted) }
+                VStack(alignment: .leading, spacing: 2) { T(name, 14, lines: 1); T(detail, 12, H.muted) }
                 Spacer(minLength: 0)
                 if shared { Image(systemName: "link").foregroundStyle(H.teal) }
             }
@@ -592,7 +620,7 @@ struct ShareSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("Anyone with the link can open it in a browser, no account needed.").font(.system(size: 13)).foregroundStyle(H.muted)
+                    Text("Anyone with the link can open it in a browser, no account needed.").font(H.ui(13)).foregroundStyle(H.muted)
                 }
                 Section("Who can see it") {
                     Picker("Access", selection: $access) {
@@ -607,7 +635,7 @@ struct ShareSheet: View {
                 }
                 if link != nil {
                     Section("The link") {
-                        Text(url).font(H.mono(13)).textSelection(.enabled)
+                        Text(url).font(H.ui(13)).textSelection(.enabled)
                         Button("Copy") { UIPasteboard.general.string = url; note = "Link copied." }
                         if let u = URL(string: url) { ShareLink("Share link", item: u) }
                         Button("Stop sharing", role: .destructive) {

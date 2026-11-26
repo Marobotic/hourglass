@@ -191,11 +191,11 @@ struct NoteBodyView: View {
                 case .picture(let name, let id): NotePicture(id: id, name: name, open: open)
                 case .file(let name, let id): FileChip(name: name) { if let f = store.file(id) { open(f) } }
                 case .gap: Spacer().frame(height: 4)
-                case .heading(let level, let t): Text(inlineMd(t)).font(H.mono(level == 1 ? 24 : level == 2 ? 20 : 17, bold: true)).foregroundStyle(H.fg)
-                case .bullet(let indent, let t): HStack(alignment: .top, spacing: 0) { T("•  ", 15, H.muted); Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg) }.padding(.leading, CGFloat(indent * 6))
-                case .numbered(let indent, let n, let t): HStack(alignment: .top, spacing: 0) { T(n + " ", 15, H.muted); Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg) }.padding(.leading, CGFloat(indent * 6))
+                case .heading(let level, let t): Text(inlineMd(t)).font(H.ui(level == 1 ? 24 : level == 2 ? 20 : 17, bold: true)).foregroundStyle(H.fg)
+                case .bullet(let indent, let t): HStack(alignment: .top, spacing: 0) { T("•  ", 14, H.muted); Text(inlineMd(t)).font(H.ui(14)).foregroundStyle(H.fg) }.padding(.leading, CGFloat(indent * 6))
+                case .numbered(let indent, let n, let t): HStack(alignment: .top, spacing: 0) { T(n + " ", 14, H.muted); Text(inlineMd(t)).font(H.ui(14)).foregroundStyle(H.fg) }.padding(.leading, CGFloat(indent * 6))
                 case .task(let indent, let done, let t): TaskRow(done: done, text: t, toggle: onToggle.map { f in { f(index) } }).padding(.leading, CGFloat(indent * 6))
-                case .text(let t): Text(inlineMd(t)).font(H.mono(15)).foregroundStyle(H.fg)
+                case .text(let t): Text(inlineMd(t)).font(H.ui(14)).foregroundStyle(H.fg)
                 }
             }
         }
@@ -224,7 +224,7 @@ struct CodeBlockView: View {
                 Button(action: copy) {
                     HStack(spacing: 4) {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 11))
-                        T(copied ? "Copied" : "Copy", 11, copied ? H.teal : H.muted)
+                        T(copied ? "Copied" : "Copy", 12, copied ? H.teal : H.muted)
                     }
                     .foregroundStyle(copied ? H.teal : H.muted)
                     .padding(.horizontal, 8).padding(.vertical, 5)
@@ -232,7 +232,7 @@ struct CodeBlockView: View {
                 .buttonStyle(.plain)
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code).font(H.mono(13)).foregroundStyle(H.fg)
+                Text(code).font(H.ui(13)).foregroundStyle(H.fg)
                     .fixedSize(horizontal: true, vertical: true)
                     .textSelection(.enabled)
                     .padding(.horizontal, 10).padding(.bottom, 10)
@@ -240,7 +240,7 @@ struct CodeBlockView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(H.surface)
-        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
     }
 }
 
@@ -252,11 +252,11 @@ struct TableBlockView: View {
     private func cell(_ r: Int, _ c: Int) -> some View {
         let value: String = c < rows[r].count ? rows[r][c] : ""
         let fill: Color = r == 0 ? H.surface2 : Color.clear
-        return Text(inlineMd(value)).font(H.mono(13, bold: r == 0)).foregroundStyle(H.fg)
+        return Text(inlineMd(value)).font(H.ui(13, bold: r == 0)).foregroundStyle(H.fg)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(fill)
-            .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+            .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
     }
 
     var body: some View {
@@ -272,28 +272,25 @@ struct TableBlockView: View {
     }
 }
 
-// One to-do: a square box (filled and ticked when done), then the item.
+// One to-do: the 0.3.4 box (TodoBox, the same as the note editor), then the item; wrapped text hangs under the text,
+// never under the box.
 private struct TaskRow: View {
     let done: Bool
     let text: String
     let toggle: (() -> Void)?
     @State private var frame = CGRect.zero
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 8) {
             Button { if !done && toggle != nil { Motion.shared.burst(in: frame) }; toggle?() } label: {
-                ZStack {
-                    Rectangle().fill(done ? H.accent : .clear)
-                        .overlay(Rectangle().stroke(done ? H.accent : H.muted, lineWidth: 1))
-                    if done { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(H.bg) }
-                }
-                .frame(width: 20, height: 20)
-                .burstAnchor($frame)
-                .padding(.top, 1)
-                .contentShape(Rectangle().inset(by: -8)) // a bigger target than the box
+                TodoBox(done: done, animated: true)
+                    .burstAnchor($frame)
+                    .padding(.top, 3)
+                    .contentShape(Rectangle().inset(by: -12)) // a bigger target than the box
             }
             .buttonStyle(.plain)
             .disabled(toggle == nil)
-            Text(inlineMd(text)).font(H.mono(15)).foregroundStyle(done ? H.muted : H.fg).strikethrough(done)
+            Text(inlineMd(text)).font(H.ui(14)).foregroundStyle(done ? H.muted : H.fg).strikethrough(done, color: H.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -331,7 +328,7 @@ private struct FileChip: View {
         Button(action: tap) {
             HStack(spacing: 8) { Image(systemName: "paperclip").foregroundStyle(H.muted); T(name, 14, lines: 1) }
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                .background(H.surface).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }

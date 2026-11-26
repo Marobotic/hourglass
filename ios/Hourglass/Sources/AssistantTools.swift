@@ -30,7 +30,7 @@ struct ToolRow: View {
     private var header: some View {
         HStack(spacing: 6) {
             ToolLine(label: tool["label"] as? String ?? tool["tool"] as? String ?? "", status: tool["status"] as? String ?? "")
-            if !duration.isEmpty { T(duration, 10, H.faint) }
+            if !duration.isEmpty { T(duration, 12, H.faint) }
             if hasDetail { Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 9)).foregroundStyle(H.faint) }
         }
     }
@@ -44,7 +44,7 @@ struct ToolRow: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(H.surface)
-        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
     }
 }
 
@@ -54,8 +54,8 @@ private struct ToolText: View {
     var body: some View {
         if !text.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                T(title, 9, H.faint)
-                Text(text).font(H.mono(11)).foregroundStyle(H.muted).textSelection(.enabled)
+                T(title, 12, H.faint)
+                Text(text).font(H.ui(12)).foregroundStyle(H.muted).textSelection(.enabled)
             }
         }
     }
@@ -76,12 +76,12 @@ struct DiffLines: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            T(summary, 11, H.teal)
+            T(summary, 12, H.teal)
             if (diff["tooBig"] as? Bool) == true {
-                T("Too many changes to show here.", 11, H.faint)
+                T("Too many changes to show here.", 12, H.faint)
             } else {
                 ForEach(0..<min(lines.count, Self.cap), id: \.self) { i in row(lines[i]) }
-                if lines.count > Self.cap { T("… \(lines.count - Self.cap) more lines", 10, H.faint) }
+                if lines.count > Self.cap { T("… \(lines.count - Self.cap) more lines", 12, H.faint) }
             }
         }
     }
@@ -92,8 +92,8 @@ struct DiffLines: View {
         let mark: String = op == "add" ? "+ " : op == "del" ? "− " : "  "
         let color: Color = op == "add" ? H.teal : op == "del" ? H.accent : H.faint
         if op == "skip" {
-            return AnyView(T("  … \(Int(assistantNumber(line["count"]) ?? 0)) unchanged lines", 10, H.faint))
+            return AnyView(T("  … \(Int(assistantNumber(line["count"]) ?? 0)) unchanged lines", 12, H.faint))
         }
-        return AnyView(Text(mark + text).font(H.mono(11)).foregroundStyle(color).lineLimit(2))
+        return AnyView(Text(mark + text).font(H.ui(12)).foregroundStyle(color).lineLimit(2))
     }
 }

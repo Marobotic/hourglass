@@ -2,29 +2,50 @@ import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
 
+// A sheet (round 5): surface2, a drag handle, the title 18 bold with an optional line under it, a 44 close. fullPage:
+// a whole page with "← Back" top-left instead (Settings and every other secondary page, never a small sheet).
 struct SheetFrame<Content: View>: View {
     let title: String
     var subtitle: String? = nil
+    var fullPage = false
     @ViewBuilder var content: () -> Content
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        T(title, 20, bold: true)
-                        if let subtitle { T(subtitle, 12, H.muted) }
-                    }
-                    Spacer()
-                    Button { dismiss() } label: { Image(systemName: "xmark").foregroundStyle(H.muted).frame(width: 36, height: 36) }
+        if fullPage {
+            VStack(spacing: 0) {
+                PageHeader(title: title, subtitle: subtitle, back: { dismiss() }) { EmptyView() }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) { content() }
+                        .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 48)
+                        .frame(maxWidth: 720, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                 }
-                content()
+                .scrollDismissesKeyboard(.interactively)
             }
-            .padding(20)
+            .background(H.bg.ignoresSafeArea())
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            T(title, 18, bold: true)
+                            if let subtitle { T(subtitle, 13, H.muted) }
+                        }
+                        Spacer()
+                        Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 16, weight: .medium)).foregroundStyle(H.muted).frame(width: 44, height: 44).contentShape(Rectangle()) }
+                            .buttonStyle(PressStyle())
+                            .padding(.top, -10).padding(.trailing, -10)
+                    }
+                    content()
+                }
+                .padding(20)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(H.surface2)
+            .presentationBackground(H.surface2)
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(0)
         }
-        .background(H.surface)
-        .presentationBackground(H.surface)
-        .presentationDragIndicator(.visible)
     }
 }
 
@@ -58,19 +79,19 @@ struct EventSheet: View {
 
     var body: some View {
         SheetFrame(title: draft.event == nil ? "New event" : "Edit event", subtitle: draft.event?.repeat != nil ? "Changes apply to every session of this series." : nil) {
-            T("COURSE", 11, H.muted)
+            T("COURSE", 12, H.muted)
             Segmented(options: [("None", String?.none)] + store.courses.map { ($0.name, Optional($0.id)) }, value: $courseId)
-            T("KIND", 11, H.muted)
+            T("KIND", 12, H.muted)
             Segmented(options: KINDS.map { (kindLabel($0), $0) }, value: $kind)
             Field(label: courseId != nil ? "Title (optional)" : "Title", text: $title)
             DateField(label: repeatMode == "none" ? "Date" : "First date", value: $date)
             HStack(spacing: 16) { TimeField(label: "Start", value: $start); TimeField(label: "End", value: $end) }
             Field(label: "Room (optional)", text: $room)
-            T("REPEAT", 11, H.muted)
+            T("REPEAT", 12, H.muted)
             Segmented(options: [("Once", "none"), ("Daily", "daily"), ("Weekly", "weekly"), ("Monthly", "monthly"), ("Yearly", "yearly")], value: $repeatMode)
             if repeatMode == "weekly" { DayToggles(days: $days) }
             if repeatMode != "none" {
-                T("ENDS", 11, H.muted)
+                T("ENDS", 12, H.muted)
                 Segmented(options: [("Never", true), ("On a date", false)], value: $forever)
                 if !forever { DateField(label: "Last date", value: $until) }
                 T(repeatText(Event(start_date: date ?? Dates.today(), repeat: rule)), 12, H.faint)
@@ -138,16 +159,16 @@ struct CourseSheet: View {
             Field(label: "Name", text: $name, placeholder: "e.g. Algorithms")
             HStack(spacing: 10) { Field(label: "Code", text: $code); Field(label: "Room", text: $room) }
             Field(label: "Lecturer", text: $teacher)
-            T("COLOUR", 11, H.muted)
+            T("COLOUR", 12, H.muted)
             HStack(spacing: 8) {
                 ForEach(PALETTE, id: \.self) { p in
                     Rectangle().fill(Color(hex: p)).frame(width: 32, height: 32)
-                        .overlay(Rectangle().stroke(p == color ? H.fg : .clear, lineWidth: 2))
+                        .overlay(Rectangle().strokeBorder(p == color ? H.fg : .clear, lineWidth: 2))
                         .onTapGesture { color = p }
                 }
             }
             if draft.course == nil {
-                T("WEEKLY TIMES", 11, H.muted)
+                T("WEEKLY TIMES", 12, H.muted)
                 ForEach(slots.indices, id: \.self) { i in
                     Card {
                         Segmented(options: Dates.weekdays.enumerated().map { ($0.element, $0.offset + 1) }, value: $slots[i].day)
@@ -278,7 +299,7 @@ struct AlarmSheet: View {
                 Field(label: "Label", text: $label)
             } else {
                 Field(label: "Minutes before", text: $lead)
-                T("COURSE", 11, H.muted)
+                T("COURSE", 12, H.muted)
                 Segmented(options: store.courses.map { ($0.name, Optional($0.id)) }, value: $course)
             }
             HButton("Add alarm", icon: "alarm", primary: true, enabled: mode == "time" || (course != nil && Int(lead) != nil)) {
@@ -321,7 +342,7 @@ struct LoginView: View {
             VStack(spacing: 0) {
                 PixelLogo(cell: 7)
                 Spacer().frame(height: 16)
-                text("Hourglass", 22, H.fg, bold: true)
+                text("Hourglass", 24, H.fg, bold: true)
                 Spacer().frame(height: 6)
                 text("Your schedule and notes, on every device", 14, H.muted)
                 Spacer().frame(height: 28)
@@ -371,11 +392,13 @@ struct LoginView: View {
                 Button(action: submit) {
                     HStack(spacing: 10) {
                         if busy { ProgressView().tint(.white) }
-                        text(buttonTitle, 16, .white, bold: true)
+                        text(buttonTitle, 14, .white, bold: true)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(H.accent.opacity(busy ? 0.45 : 1), in: RoundedRectangle(cornerRadius: 10))
+                    .frame(height: 48)
+                    .background(LinearGradient(colors: [H.accentHi, H.accent], startPoint: .top, endPoint: .bottom).opacity(busy ? 0.45 : 1))
+                    .overlay(alignment: .top) { Color.white.opacity(0.14).frame(height: 1) }
+                    .shadow(color: H.accent.opacity(0.45), radius: 10, y: 6)
                 }
                 .buttonStyle(.plain)
                 .disabled(busy)
@@ -455,7 +478,7 @@ struct LoginView: View {
     }
 
     private func text(_ s: String, _ size: CGFloat, _ color: Color, bold: Bool = false, align: TextAlignment = .center) -> some View {
-        Text(s).font(H.mono(size, bold: bold)).foregroundColor(color).multilineTextAlignment(align)
+        Text(s).font(H.ui(size, bold: bold)).foregroundColor(color).multilineTextAlignment(align)
     }
 
     /** The two-way Sign in / Create account switch. */
@@ -466,16 +489,17 @@ struct LoginView: View {
                 Button { setMode(creating: value, forgot: false) } label: {
                     text(label, 14, on ? H.fg : H.muted, bold: on)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(on ? H.surface2 : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                        .background(on ? H.surface3 : Color.clear)
+                        .overlay { if on { Rectangle().strokeBorder(H.border2, lineWidth: 1) } }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(4)
+        .padding(2)
         .frame(height: 44)
-        .background(H.surface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(H.border, lineWidth: 1))
+        .background(H.bg)
+        .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
     }
 
     private func field(_ label: String, _ value: Binding<String>, secure: Bool, keyboard: UIKeyboardType = .default,
@@ -486,7 +510,7 @@ struct LoginView: View {
                 Group {
                     if secure { SecureField("", text: value) } else { TextField("", text: value).keyboardType(keyboard) }
                 }
-                .font(H.mono(16))
+                .font(H.ui(14))
                 .foregroundColor(H.fg)
                 .tint(H.accent)
                 .textInputAutocapitalization(.never)
@@ -498,10 +522,10 @@ struct LoginView: View {
                     Button(action: onTrailing) { text(trailing, 13, H.muted) }.buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 14)
-            .frame(height: 52)
-            .background(H.surface, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(H.border, lineWidth: 1))
+            .padding(.horizontal, 12)
+            .frame(height: 44)
+            .background(H.bg)
+            .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
         }
     }
 }
@@ -579,11 +603,11 @@ struct SettingsSheet: View {
     @State private var alarmStatus = ""
 
     var body: some View {
-        SheetFrame(title: "Settings") {
+        SheetFrame(title: "Settings", fullPage: true) {
             SectionLabel(text: "Account")
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    T(store.account ?? "", 15)
+                    T(store.account ?? "", 14)
                     T(store.syncState == "synced" ? "Jukebox account · synced \(Dates.clock(store.lastSync))" : store.syncState == "offline" ? "Offline. Changes are kept on the phone and sent later." : "Jukebox account", 12, H.muted)
                     T("Hourglass \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")", 12, H.faint)
                 }
@@ -593,12 +617,12 @@ struct SettingsSheet: View {
             AiSection()
 
             SectionLabel(text: "Alarms")
-            T("LECTURE REMINDERS", 11, H.muted)
+            T("LECTURE REMINDERS", 12, H.muted)
             Segmented(options: [("Off", 0), ("10 min", 10), ("15 min", 15), ("30 min", 30), ("60 min", 60)],
                       value: Binding(get: { store.reminderMin }, set: { store.setLectureReminders($0) }))
             T(alarmStatus, 12, H.faint)
             HStack {
-                T("RINGTONE", 11, H.muted)
+                T("RINGTONE", 12, H.muted)
                 Spacer()
                 HButton(uploading ? "Uploading…" : "Upload", enabled: !uploading) { importing = true }
             }
@@ -610,11 +634,11 @@ struct SettingsSheet: View {
             }
             if let error { T(error, 13, H.accent) }
             T("Add songs from Jukebox: open a song's menu and pick Set as alarm.", 12, H.faint)
-            HStack { T("Alarm sound", 15); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
+            HStack { T("Alarm sound", 14); Spacer(); SquareToggle(on: sound) { sound = $0; Notifications.reschedule(store) } }
             // A real alarm in 5 seconds: lock the phone to see it ring like any alarm.
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    T("Test alarm", 15)
+                    T("Test alarm", 14)
                     T(testing ? "Rings in 5 seconds. Lock the phone to see the full alarm." : "Rings like a real alarm in 5 seconds, even with the sound off.", 12, H.muted)
                 }
                 Spacer()
@@ -623,7 +647,7 @@ struct SettingsSheet: View {
             // Every ring on this iPhone and how it ended.
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    T("Alarm history", 15)
+                    T("Alarm history", 14)
                     T("What each alarm did on this iPhone: stopped, snoozed, answered on another device, or no answer.", 12, H.muted)
                 }
                 Spacer()
@@ -634,9 +658,9 @@ struct SettingsSheet: View {
                 ForEach(history.prefix(60)) { e in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
-                            T(Dates.short(Dates.dayOf(e.at)) + " " + Dates.clock(e.at), 11, H.muted)
+                            T(Dates.short(Dates.dayOf(e.at)) + " " + Dates.clock(e.at), 12, H.muted)
                             Spacer()
-                            T(e.event.uppercased(), 11, e.broke ? H.accent : H.muted, bold: e.broke)
+                            T(e.event.uppercased(), 12, e.broke ? H.accent : H.muted, bold: e.broke)
                         }
                         T(e.label, 13, lines: 1)
                         if !e.detail.isEmpty { T(e.detail, 12, e.broke ? H.accent : H.faint) }
@@ -648,9 +672,9 @@ struct SettingsSheet: View {
             ReminderSettings()
 
             SectionLabel(text: "Time")
-            T("CLOCK", 11, H.muted)
+            T("CLOCK", 12, H.muted)
             Segmented(options: [("12-hour", "12h"), ("24-hour", "24h")], value: $timeFormat)
-            T("WEEK STARTS ON", 11, H.muted)
+            T("WEEK STARTS ON", 12, H.muted)
             Segmented(options: [("Saturday", 6), ("Sunday", 7), ("Monday", 1)], value: $weekStart)
             HStack {
                 T(store.syncState == "offline" ? "Offline" : "Synced with marobotic.dev", 13, H.muted)
@@ -689,9 +713,9 @@ struct SettingsSheet: View {
         let on = store.ringtone == id
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Rectangle().fill(on ? H.accent : .clear).frame(width: 14, height: 14).overlay(Rectangle().stroke(on ? H.accent : H.faint, lineWidth: 1))
+                Rectangle().fill(on ? H.accent : .clear).frame(width: 14, height: 14).overlay(Rectangle().strokeBorder(on ? H.accent : H.faint, lineWidth: 1))
                 VStack(alignment: .leading, spacing: 2) {
-                    T(name, 15, bold: on, lines: 1)
+                    T(name, 14, bold: on, lines: 1)
                     T(sub, 12, H.muted, lines: 1)
                 }
                 Spacer()

@@ -266,18 +266,18 @@ struct AssistantView: View {
                 Spacer(minLength: 60)
                 T(text, 14, H.muted)
                     .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(H.surface).overlay(Rectangle().stroke(H.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                    .background(H.surface).overlay(Rectangle().strokeBorder(H.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
             }
             // Metro's tag: gold "Queued · after this reply", Send now (engines that take a steer), and a cancel.
             HStack(spacing: 8) {
-                T("Queued · after this reply", 11, H.gold)
+                T("Queued · after this reply", 12, H.gold)
                 if steer {
                     Button {
                         cancelQueued(id)
                         Task { _ = try? await store.assistant("POST", "/message", ["text": text, "steer": true]); await load() }
                     } label: {
-                        T("Send now", 11, H.fg).padding(.horizontal, 8).padding(.vertical, 2)
-                            .background(H.accent.opacity(0.14)).overlay(Rectangle().stroke(H.accent.opacity(0.6), lineWidth: 1))
+                        T("Send now", 12, H.fg).padding(.horizontal, 8).padding(.vertical, 2)
+                            .background(H.accent.opacity(0.14)).overlay(Rectangle().strokeBorder(H.accent.opacity(0.6), lineWidth: 1))
                     }.buttonStyle(.plain)
                 }
                 Button { cancelQueued(id) } label: {
@@ -285,7 +285,7 @@ struct AssistantView: View {
                 }.buttonStyle(.plain)
             }
             .padding(.leading, 8)
-            .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+            .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
@@ -297,25 +297,26 @@ struct AssistantView: View {
     private var modeBar: some View {
         let modeInk: Color = mode == "dangerous" ? H.accentInk : mode == "plan" ? H.teal : H.muted
         let modelName: String = engineLabel.components(separatedBy: " · ").last ?? engineLabel
-        return HStack(spacing: 4) {
-            if mode == "dangerous" { T("Changes apply without asking", 11, H.accentInk, lines: 1) }
-            else if mode == "plan" { T("Reads and plans, changes nothing", 11, H.teal, lines: 1) }
+        return HStack(spacing: 8) {
+            if mode == "dangerous" { T("Changes apply without asking", 12, H.accentInk, lines: 1) }
+            else if mode == "plan" { T("Reads and plans, changes nothing", 12, H.teal, lines: 1) }
             else if let p = contextPercent { Button { usageOpen = true } label: { ContextMeter(percent: p) }.buttonStyle(.plain) }
             Spacer(minLength: 0)
             Button { modelOpen = true } label: {
-                HStack(spacing: 3) { T(modelName + effortSuffix.capitalized, 11, H.muted, lines: 1); T("⌄", 12, H.faint) }.padding(.horizontal, 6).padding(.vertical, 6)
-            }.buttonStyle(.plain)
-            Rectangle().fill(H.border).frame(width: 1, height: 16)
+                HStack(spacing: 6) { T(modelName + effortSuffix, 13, H.soft, weight: .medium, lines: 1); Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(H.muted) }
+                    .padding(.horizontal, 10).frame(height: 36).background(H.bg).overlay(Rectangle().strokeBorder(H.border2, lineWidth: 1))
+            }.buttonStyle(PressStyle())
             Menu {
                 ForEach(Self.modes, id: \.0) { pair in
                     Button { setMode(pair.0) } label: { if mode == pair.0 { Label(pair.1, systemImage: "checkmark") } else { Text(pair.1) } }
                 }
             } label: {
-                HStack(spacing: 3) { T(mode.capitalized, 11, modeInk, lines: 1); T("⌄", 12, H.faint) }.padding(.horizontal, 6).padding(.vertical, 6)
+                HStack(spacing: 6) { T(mode.capitalized, 13, modeInk, weight: .medium, lines: 1); Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(H.muted) }
+                    .padding(.horizontal, 10).frame(height: 36).background(H.bg).overlay(Rectangle().strokeBorder(H.border2, lineWidth: 1))
             }
             .disabled(serverBusy)
         }
-        .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, inTab ? 6 : 2)
+        .padding(.horizontal, 16).padding(.vertical, 8)
     }
     private func modeChip(_ value: String, _ title: String) -> some View {
         let on: Bool = mode == value
@@ -323,17 +324,17 @@ struct AssistantView: View {
         let ink: Color = on && danger ? Color.white : on ? H.accent : H.muted
         let fill: Color = on && danger ? H.accent : Color.clear
         return Button { setMode(value) } label: {
-            T(title, 11, ink, bold: on)
+            T(title, 12, ink, bold: on)
                 .padding(.horizontal, 9).padding(.vertical, 5)
                 .background(fill)
-                .overlay(Rectangle().stroke(on ? H.accent : H.border, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(on ? H.accent : H.border, lineWidth: 1))
         }.disabled(serverBusy)
     }
 
     private var editBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "pencil").font(.system(size: 12)).foregroundStyle(H.accent)
-            T("Editing a message: sending reruns the chat from here", 11, H.muted, lines: 1)
+            T("Editing a message: sending reruns the chat from here", 12, H.muted, lines: 1)
             Spacer(minLength: 0)
             Button { editing = nil; input = "" } label: { Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(H.muted) }
         }.padding(.horizontal, 14).padding(.top, 4)
@@ -358,13 +359,13 @@ struct AssistantView: View {
             TextField("", text: $input, prompt: Text(composerPrompt).foregroundStyle(H.faint), axis: .vertical)
                 .lineLimit(1...6)
                 .focused($typing)
-                .font(H.mono(15)).foregroundStyle(H.fg).tint(H.accent)
+                .font(H.ui(14)).foregroundStyle(H.fg).tint(H.accent)
                 .padding(.horizontal, 4).padding(.vertical, 10)
                 .disabled(!enabled)
             actionButton
         }
         .padding(6)
-        .background(H.surface).overlay(Rectangle().stroke(typing ? H.faint : H.border, lineWidth: 1))
+        .background(H.surface).overlay(Rectangle().strokeBorder(typing ? H.faint : H.border, lineWidth: 1))
         .padding(.horizontal, 16).padding(.top, 8)
     }
     @ViewBuilder private var actionButton: some View {
@@ -377,7 +378,7 @@ struct AssistantView: View {
             Image(systemName: stopping ? "stop.fill" : "arrow.right").font(.system(size: 15, weight: .semibold)).foregroundStyle(H.fg)
                 .frame(width: 42, height: 42)
                 .background(stopping ? H.surface3 : H.accent.opacity(canSend ? 1 : 0.45))
-                .overlay(Rectangle().stroke(stopping ? H.faint : Color.clear, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(stopping ? H.faint : Color.clear, lineWidth: 1))
         }
         .buttonStyle(PressStyle())
         .disabled(!stopping && !canSend)
@@ -393,29 +394,43 @@ struct AssistantView: View {
     }
     private var chatHead: some View {
         let st: String = stateWord
-        let ink: Color = st == "working" ? H.accentInk : (st == "queued" || st == "limit") ? H.gold : H.faint
+        let ink: Color = st == "working" ? H.accentInk : (st == "queued" || st == "limit") ? H.gold : H.muted
+        let canNew: Bool = !shown.isEmpty && !busy
         return VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if !inTab {
-                    Button { dismiss() } label: { Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium)).foregroundStyle(H.fg).frame(width: 40, height: 44) }
+                    Button { dismiss() } label: { Image(systemName: "arrow.left").font(.system(size: 18, weight: .medium)).foregroundStyle(H.fg).frame(width: 44, height: 44).contentShape(Rectangle()) }
+                        .buttonStyle(PressStyle())
                 }
-                T("✦", 18, H.accentInk)
                 Button { settingsOpen = true } label: {
-                    VStack(alignment: .leading, spacing: 1) {
-                        T("Assistant", 15, bold: true)
-                        T(engineLabel + effortSuffix, 11, H.muted, lines: 1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        T("Assistant", 18, bold: true, lines: 1)
+                        T(engineLabel + effortSuffix + " · " + mode, 12, H.muted, lines: 1)
                     }
-                }.buttonStyle(.plain)
+                }
+                .buttonStyle(.plain)
+                .layoutPriority(1)
                 Spacer(minLength: 0)
                 // Puts the keyboard away (dragging the list down does too).
                 if typing {
-                    Button { typing = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.system(size: 16)).foregroundStyle(H.muted).frame(width: 36, height: 44) }
+                    Button { typing = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.system(size: 16)).foregroundStyle(H.muted).frame(width: 44, height: 44) }
                 }
-                T(st, 11, ink).padding(.horizontal, 8).padding(.vertical, 3)
-                    .overlay(Rectangle().stroke(st == "working" ? H.accent.opacity(0.6) : H.border, lineWidth: 1))
-                Button { Task { _ = try? await store.assistant("POST", "/new"); pending = nil; await load() } } label: {
-                    Image(systemName: "plus").font(.system(size: 17)).foregroundStyle(!shown.isEmpty && !busy ? H.muted : H.faint).frame(width: 40, height: 44)
-                }.disabled(shown.isEmpty || busy)
+                HStack(spacing: 6) {
+                    if st == "working" { Rectangle().fill(H.accentInk).frame(width: 6, height: 6) }
+                    Text(st.uppercased()).font(H.ui(12, .bold)).tracking(1).lineLimit(1)
+                }
+                .foregroundStyle(ink)
+                .padding(.horizontal, 8).frame(height: 20)
+                .background(st == "working" ? H.accent.opacity(0.18) : H.surface3)
+                .fixedSize()
+                Menu {
+                    Button { Task { _ = try? await store.assistant("POST", "/new"); pending = nil; await load() } } label: { Label("New chat", systemImage: "plus") }
+                        .disabled(!canNew)
+                    Button { settingsOpen = true } label: { Label("Assistant settings", systemImage: "gearshape") }
+                    Button { usageOpen = true } label: { Label("Usage", systemImage: "chart.bar") }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 17, weight: .medium)).foregroundStyle(H.muted).frame(width: 44, height: 44).contentShape(Rectangle())
+                }
             }
             .padding(.leading, inTab ? 16 : 4).padding(.trailing, 4).frame(height: 56)
             Rectangle().fill(H.border).frame(height: 1)
@@ -434,7 +449,7 @@ struct AssistantView: View {
                 ScrollView {
                 VStack(spacing: 12) {
                     PixelLogo(cell: 5)
-                    T(enabled ? "Ask Hourglass to do it for you" : (chat["reason"] as? String ?? "The assistant is not available."), 17, bold: true)
+                    T(enabled ? "Ask Hourglass to do it for you" : (chat["reason"] as? String ?? "The assistant is not available."), 18, bold: true)
                         .multilineTextAlignment(.center)
                     if enabled {
                         T("It can read and change your notes, schedule, alarms, timers and Drive.", 13, H.muted).multilineTextAlignment(.center)
@@ -442,7 +457,7 @@ struct AssistantView: View {
                             ForEach(Self.suggestions, id: \.self) { s in
                                 Button { send(s) } label: {
                                     T(s, 13, lines: 2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-                                        .padding(.horizontal, 12).overlay(Rectangle().stroke(H.border, lineWidth: 1)).contentShape(Rectangle())
+                                        .padding(.horizontal, 12).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1)).contentShape(Rectangle())
                                 }.buttonStyle(PressStyle())
                             }
                         }.padding(.top, 8)
@@ -484,7 +499,7 @@ struct AssistantView: View {
 
             if let problem { T(problem, 13, H.accent).padding(.horizontal, 16).padding(.vertical, 4) }
             if let notice { T(notice, 12, H.teal).padding(.horizontal, 16).padding(.vertical, 2) }
-            if let quota { T(quotaLine(quota), 11, H.faint).padding(.horizontal, 16).padding(.vertical, 2) }
+            if let quota { T(quotaLine(quota), 12, H.faint).padding(.horizontal, 16).padding(.vertical, 2) }
 
             // Attached, waiting to be sent
             if !attachments.isEmpty {
@@ -633,7 +648,7 @@ private struct Message: View {
                     Spacer(minLength: 60)
                     T(text, 14)
                         .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(H.surface2).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                        .background(H.surface3).overlay(alignment: .top) { H.hi.frame(height: 1) }.overlay(Rectangle().strokeBorder(H.border2, lineWidth: 1))
                         .contextMenu { copyMenu(text) }
                 }
             }
@@ -653,7 +668,7 @@ private struct Message: View {
                     }
                     if !text.isEmpty { NoteBodyView(text: text, open: { opener.open($0, store) }) }
                     if let usage = m["usage"] as? [String: Any], !Self.usageCaption(usage).isEmpty {
-                        T(Self.usageCaption(usage), 10, H.faint)
+                        T(Self.usageCaption(usage), 12, H.faint)
                     }
                     if let e = m["error"] as? String, !e.isEmpty { T(e, 13, H.accent) }
                     // How it got there.
@@ -782,7 +797,7 @@ private struct ModelPickerSheet: View {
 
     private var effortBar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("EFFORT").font(H.mono(11)).tracking(1).foregroundStyle(H.muted)
+            Text("EFFORT").font(H.ui(12)).tracking(1).foregroundStyle(H.muted)
             HStack(spacing: 6) {
                 ForEach(efforts, id: \.self) { level in effortChip(level) }
                 Spacer(minLength: 0)
@@ -796,7 +811,7 @@ private struct ModelPickerSheet: View {
             T(level.capitalized, 12, on ? H.accent : H.muted, bold: on)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(on ? H.surface2 : Color.clear)
-                .overlay(Rectangle().stroke(on ? H.accent : H.border, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(on ? H.accent : H.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .disabled(saving)
@@ -810,7 +825,7 @@ private struct ModelPickerSheet: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 1) {
                     T(name, 14, on ? H.accent : H.fg, bold: on, lines: 1)
-                    if name != id { T(id, 11, H.faint, lines: 1) }
+                    if name != id { T(id, 12, H.faint, lines: 1) }
                 }
                 Spacer(minLength: 0)
                 if on { Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(H.accent) }
@@ -818,7 +833,7 @@ private struct ModelPickerSheet: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(on ? H.surface2 : Color.clear)
-            .overlay(Rectangle().stroke(on ? H.accent : H.border, lineWidth: 1))
+            .overlay(Rectangle().strokeBorder(on ? H.accent : H.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .disabled(saving)
@@ -826,9 +841,9 @@ private struct ModelPickerSheet: View {
 
     private var searchBox: some View {
         TextField("", text: $query, prompt: Text("Search models").foregroundStyle(H.faint))
-            .font(H.mono(14)).foregroundStyle(H.fg).tint(H.accent)
+            .font(H.ui(14)).foregroundStyle(H.fg).tint(H.accent)
             .textInputAutocapitalization(.never).autocorrectionDisabled()
-            .padding(10).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+            .padding(10).background(H.surface).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
     }
 
     var body: some View {
@@ -873,8 +888,8 @@ private struct AssistantActionCard: View {
                     HButton("Apply", primary: true) { onAction(info["id"] as? String ?? "", "apply") }
                     HButton("Skip") { onAction(info["id"] as? String ?? "", "skip") }
                 }
-            } else { T((info["status"] as? String ?? "").uppercased(), 10, H.muted) }
-        }.padding(10).background(H.surface).overlay(Rectangle().stroke((info["status"] as? String) == "pending" ? H.accent : H.border, lineWidth: 1))
+            } else { T((info["status"] as? String ?? "").uppercased(), 12, H.muted) }
+        }.padding(10).background(H.surface).overlay(Rectangle().strokeBorder((info["status"] as? String) == "pending" ? H.accent : H.border, lineWidth: 1))
     }
 }
 
@@ -900,14 +915,14 @@ struct AttachmentChip: View {
             Image(systemName: mime.hasPrefix("image/") ? "photo" : "doc").foregroundStyle(H.muted)
             VStack(alignment: .leading, spacing: 1) {
                 T(name, 13, lines: 1)
-                if let note { T(note, 11, note == "Uploading…" ? H.muted : H.accent, lines: 1) }
+                if let note { T(note, 12, note == "Uploading…" ? H.muted : H.accent, lines: 1) }
             }
             if let onRemove { Button(action: onRemove) { Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(H.muted) } }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .frame(maxWidth: 260, alignment: .leading)
         .background(H.surface2)
-        .overlay(Rectangle().stroke(note != nil && note != "Uploading…" ? H.accent : H.border, lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(note != nil && note != "Uploading…" ? H.accent : H.border, lineWidth: 1))
     }
 }
 
@@ -932,7 +947,7 @@ struct ToolLine: View {
         let done: Bool = status == "completed" || status == "error"
         HStack(spacing: 8) {
             Text(status == "completed" ? "✓" : status == "error" ? "✕" : "●")
-                .font(H.mono(13, bold: true))
+                .font(H.ui(13, bold: true))
                 .foregroundStyle(status == "completed" ? H.teal : H.accentInk)
                 .frame(width: 14)
                 .opacity(!done && pulse ? 0.35 : 1)
@@ -979,7 +994,7 @@ struct Spark: View {
             let t: Double = tl.date.timeIntervalSinceReferenceDate
             let i: Int = HMotion.allowed ? Int(t / 0.17) % Self.frames.count : 4
             let glow: Double = HMotion.allowed ? (sin(t * .pi) + 1) / 2 : 0
-            Text(Self.frames[i]).font(H.mono(13, bold: true)).foregroundStyle(H.accentInk.opacity(1 - glow * 0.35)).frame(width: 14)
+            Text(Self.frames[i]).font(H.ui(13, bold: true)).foregroundStyle(H.accentInk.opacity(1 - glow * 0.35)).frame(width: 14)
         }
     }
 }

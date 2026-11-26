@@ -66,13 +66,13 @@ private struct Lively: ViewModifier {
         self.sig = sig
         // Never seen: starts hidden and small, so it never flashes before popping in.
         let fresh = !key.isEmpty && !Motion.shared.known(key)
-        _scale = State(initialValue: fresh ? 0.9 : 1)
-        _opacity = State(initialValue: fresh ? 0 : 1)
+        _scale = State(initialValue: fresh && HMotion.allowed ? 0.985 : 1)
+        _opacity = State(initialValue: fresh && HMotion.allowed ? 0 : 1)
     }
     func body(content: Content) -> some View {
         content
             .overlay { Rectangle().fill(H.gold.opacity(0.14 * glow)).allowsHitTesting(false) }
-            .overlay { Rectangle().stroke(H.gold.opacity(glow), lineWidth: 2).allowsHitTesting(false) }
+            .overlay { Rectangle().strokeBorder(H.gold.opacity(glow), lineWidth: 2).allowsHitTesting(false) }
             .scaleEffect(scale)
             .opacity(opacity)
             .onAppear(perform: check)
@@ -83,14 +83,13 @@ private struct Lively: ViewModifier {
         let m = Motion.shared
         switch m.track(key, sig) {
         case "new":
-            scale = 0.9; opacity = 0
+            guard HMotion.allowed else { scale = 1; opacity = 1; return }
+            scale = 0.985; opacity = 0
             let d = m.nextDelay()
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.55).delay(d)) { scale = 1 }
-            withAnimation(.easeOut(duration: 0.24).delay(d)) { opacity = 1 }
+            withAnimation(HMotion.sheet.delay(d)) { scale = 1; opacity = 1 }
         case "changed":
             guard !m.isLocal else { return }
-            withAnimation(.easeOut(duration: 0.16)) { glow = 1; scale = 1.02 }
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.5).delay(0.16)) { scale = 1 }
+            withAnimation(.easeOut(duration: 0.16)) { glow = 1 }
             withAnimation(.easeOut(duration: 1.5).delay(0.76)) { glow = 0 }
         case "glowing":
             let left = m.glowLeft(key)
@@ -156,16 +155,48 @@ struct BurstLayer: View {
 }
 
 
-// The one motion set (docs/REDESIGN.md §4), the same curves as the desktop's motion.css and Android's HMotion.
-// SwiftUI drops these when Reduce Motion is on through `HMotion.allowed`.
+// The one motion set (desktop/ui/css/tokens.css, round 5), the same curves as the desktop and Android. Things arrive
+// with a fast-out curve; nothing bounces except the tab indicator. Off under Reduce Motion through `HMotion.allowed`.
 enum HMotion {
     static var allowed: Bool { !UIAccessibility.isReduceMotionEnabled }
-    static let ease = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.26)
-    static let quick = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.12)
-    static let press = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.08)
-    static let sheet = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.22)
-    static let exit = Animation.timingCurve(0.4, 0, 1, 1, duration: 0.12)
-    static let indicator = Animation.timingCurve(0.34, 1.4, 0.64, 1, duration: 0.24)
-    static let meter = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.6)
+    static let ease = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.26)       // --ease, --t-tab
+    static let screen = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.28)     // --t-screen: page switch
+    static let quick = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.12)      // --quick: colour
+    static let press = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.08)      // --t-press: scale .975
+    static let sheet = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.22)      // --t-sheet: sheet, toast, toggle
+    static let exit = Animation.timingCurve(0.4, 0, 1, 1, duration: 0.12)           // --t-exit, --ease-in
+    static let indicator = Animation.timingCurve(0.34, 1.4, 0.64, 1, duration: 0.24) // nav / tab indicator spring
+    static let meter = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.6)       // progress and meters
     static func on(_ a: Animation) -> Animation? { allowed ? a : nil }
+}
+
+// List rows on first show: rise 6 pt and fade in, 220 ms, 20 ms apart, at most the first 10 rows (REDESIGN §4).
+private struct RiseIn: ViewModifier {
+    let index: Int
+    @State private var shown = false
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || !HMotion.allowed ? 1 : 0)
+            .offset(y: shown || !HMotion.allowed ? 0 : 6)
+            .onAppear {
+                guard !shown else { return }
+                withAnimation(HMotion.on(HMotion.sheet.delay(Double(min(index, 9)) * 0.02))) { shown = true }
+            }
+    }
+}
+
+// Live things breathe: the accent wash of a live card goes 0 → 9 % and back over 2.4 s.
+struct Breathing: ViewModifier {
+    var on: Bool
+    @State private var phase = false
+    func body(content: Content) -> some View {
+        content
+            .background(H.accent.opacity(on && HMotion.allowed ? (phase ? 0.09 : 0) : 0))
+            .onAppear { if on && HMotion.allowed { withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { phase = true } } }
+    }
+}
+
+extension View {
+    func rise(_ index: Int) -> some View { modifier(RiseIn(index: index)) }
+    func breathing(_ on: Bool) -> some View { modifier(Breathing(on: on)) }
 }

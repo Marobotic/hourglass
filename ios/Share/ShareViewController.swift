@@ -26,13 +26,15 @@ final class ShareViewController: UIViewController {
 // MARK: - colours (Hourglass's)
 
 private enum C {
-    static let bg = Color(red: 0.07, green: 0.07, blue: 0.07)
-    static let surface = Color(red: 0.106, green: 0.106, blue: 0.106)
-    static let surface2 = Color(red: 0.141, green: 0.141, blue: 0.141)
-    static let border = Color(red: 0.18, green: 0.18, blue: 0.18)
-    static let fg = Color(red: 0.96, green: 0.96, blue: 0.96)
-    static let muted = Color(red: 0.64, green: 0.64, blue: 0.64)
-    static let faint = Color(red: 0.42, green: 0.42, blue: 0.42)
+    // Round 5 (desktop/ui/css/tokens.css): bg #121212, surface #181818, surface2 #1E1E1E, border #2A2A2A,
+    // fg #F5F5F5, muted #969696, faint #646464.
+    static let bg = Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255)
+    static let surface = Color(red: 24 / 255, green: 24 / 255, blue: 24 / 255)
+    static let surface2 = Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255)
+    static let border = Color(red: 42 / 255, green: 42 / 255, blue: 42 / 255)
+    static let fg = Color(red: 245 / 255, green: 245 / 255, blue: 245 / 255)
+    static let muted = Color(red: 150 / 255, green: 150 / 255, blue: 150 / 255)
+    static let faint = Color(red: 100 / 255, green: 100 / 255, blue: 100 / 255)
     static let accent = Color(red: 0.694, green: 0.259, blue: 0.259)
     static let gold = Color(red: 0.941, green: 0.745, blue: 0.4)
     static func hex(_ s: String?) -> Color {
@@ -41,7 +43,10 @@ private enum C {
     }
 }
 
-private func mono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font { .system(size: size, weight: weight, design: .monospaced) }
+// The UI font: Reddit Sans (bundled in this extension too), whole sizes, tabular figures.
+private func mono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+    Font.custom(weight == .bold ? "RedditSans-Bold" : weight == .semibold ? "RedditSans-SemiBold" : weight == .medium ? "RedditSans-Medium" : "RedditSans-Regular", fixedSize: size.rounded()).monospacedDigit()
+}
 
 // MARK: - model
 
@@ -282,7 +287,7 @@ private struct Message: View {
     var body: some View {
         VStack(spacing: 18) {
             Spacer()
-            Text(text).font(mono(15)).foregroundStyle(C.muted).multilineTextAlignment(.center)
+            Text(text).font(mono(14)).foregroundStyle(C.muted).multilineTextAlignment(.center)
             PrimaryButton(title: button, action: action)
             Spacer()
         }.padding(24)
@@ -299,7 +304,7 @@ private struct PrimaryButton: View {
             Text(title).font(mono(14, primary ? .bold : .regular)).foregroundStyle(primary ? .white : C.fg)
                 .padding(.horizontal, 16).padding(.vertical, 11)
                 .background(primary ? C.accent : Color.clear)
-                .overlay(Rectangle().stroke(primary ? Color.clear : C.border, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(primary ? Color.clear : C.border, lineWidth: 1))
         }
         .disabled(!enabled).opacity(enabled ? 1 : 0.4)
     }
@@ -354,7 +359,7 @@ private struct UploadView: View {
                         HStack(spacing: 14) {
                             Image(systemName: e.isCourse ? "graduationcap" : "folder.fill").foregroundStyle(e.isCourse ? C.hex(e.color) : C.gold).frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(e.name).font(mono(15)).foregroundStyle(C.fg).lineLimit(1)
+                                Text(e.name).font(mono(14)).foregroundStyle(C.fg).lineLimit(1)
                                 Text(e.detail).font(mono(12)).foregroundStyle(C.muted)
                             }
                             Spacer()
@@ -455,10 +460,10 @@ private struct NoteView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
                             label("TITLE")
-                            TextField("", text: $title).font(mono(15)).foregroundStyle(C.fg).padding(10).background(C.surface).overlay(Rectangle().stroke(C.border))
+                            TextField("", text: $title).font(mono(14)).foregroundStyle(C.fg).padding(10).background(C.surface).overlay(Rectangle().strokeBorder(C.border))
                             label("NOTE")
                             TextEditor(text: $body_).font(mono(14)).foregroundStyle(C.fg).scrollContentBackground(.hidden)
-                                .frame(minHeight: 200).padding(6).background(C.surface).overlay(Rectangle().stroke(C.border))
+                                .frame(minHeight: 200).padding(6).background(C.surface).overlay(Rectangle().strokeBorder(C.border))
                             if !model.courses.isEmpty {
                                 label("COURSE")
                                 ScrollView(.horizontal, showsIndicators: false) {
@@ -505,7 +510,7 @@ private struct NoteView: View {
             Text(name).font(mono(13)).foregroundStyle(on ? C.fg : C.muted).lineLimit(1)
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(on ? tint.opacity(0.2) : Color.clear)
-                .overlay(Rectangle().stroke(on ? tint : C.border, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(on ? tint : C.border, lineWidth: 1))
         }
     }
 }

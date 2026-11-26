@@ -72,7 +72,7 @@ struct AssistantSettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     T("Pick who answers. Keys are stored encrypted on your account.", 12, H.muted)
-                    if (engine == "claude" || engine == "anthropic") && (s?["claude_model_source"] as? String) == "fallback" { T("Using the default Claude model list.", 11, H.muted) }
+                    if (engine == "claude" || engine == "anthropic") && (s?["claude_model_source"] as? String) == "fallback" { T("Using the default Claude model list.", 12, H.muted) }
                     ForEach(Array(list("engines").enumerated()), id: \.offset) { _, e in
                         let id = e["id"] as? String ?? ""
                         let on = engine == id && (id != "openai" || baseUrl == (e["base_url"] as? String ?? ""))
@@ -83,7 +83,7 @@ struct AssistantSettingsSheet: View {
                         } label: {
                             HStack(spacing: 12) {
                                 ZStack {
-                                    Rectangle().stroke(on ? H.accent : H.muted, lineWidth: 2).frame(width: 14, height: 14)
+                                    Rectangle().strokeBorder(on ? H.accent : H.muted, lineWidth: 2).frame(width: 14, height: 14)
                                     if on { Rectangle().fill(H.accent).frame(width: 6, height: 6) }
                                 }
                                 VStack(alignment: .leading, spacing: 1) {
@@ -94,7 +94,7 @@ struct AssistantSettingsSheet: View {
                             }
                             .padding(12)
                             .background(on ? H.surface2 : .clear)
-                            .overlay(Rectangle().stroke(on ? H.accent : H.border, lineWidth: 1))
+                            .overlay(Rectangle().strokeBorder(on ? H.accent : H.border, lineWidth: 1))
                         }
                         .animation(.easeOut(duration: 0.15), value: engine)
                     }
@@ -108,7 +108,7 @@ struct AssistantSettingsSheet: View {
                                     Button { baseUrl = url; key = ""; model = (s?["models"] as? [String: Any])?["openai:" + url] as? String ?? ""; Task { await loadModels() } } label: {
                                         T(p["name"] as? String ?? "", 12, baseUrl == url ? H.fg : H.muted)
                                             .padding(.horizontal, 10).padding(.vertical, 6)
-                                            .overlay(Rectangle().stroke(baseUrl == url ? H.accent : H.border, lineWidth: 1))
+                                            .overlay(Rectangle().strokeBorder(baseUrl == url ? H.accent : H.border, lineWidth: 1))
                                     }
                                 }
                             }
@@ -153,8 +153,8 @@ struct AssistantSettingsSheet: View {
                         label(engine == "claude" ? "CLAUDE TOKEN" : "API KEY")
                         if engine == "claude" { T("On your own PC, run claude setup-token in a terminal with Claude Code installed. Sign in, then paste the sk-ant-oat token it prints.", 12, H.faint) }
                         SecureField("", text: $key, prompt: Text(hasKey ? "•••••••• (saved; paste to replace)" : engine == "anthropic" ? "sk-ant-api…" : engine == "claude" ? "sk-ant-oat…" : isDeepSeek ? "DeepSeek API key" : "Your API key").foregroundStyle(H.faint))
-                            .font(H.mono(14)).foregroundStyle(H.fg).padding(10).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
-                        if isDeepSeek, let url = URL(string: "https://platform.deepseek.com/api_keys") { Link("Get a DeepSeek API key", destination: url).font(H.mono(11)).foregroundStyle(H.muted) }
+                            .font(H.ui(14)).foregroundStyle(H.fg).padding(10).background(H.surface).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
+                        if isDeepSeek, let url = URL(string: "https://platform.deepseek.com/api_keys") { Link("Get a DeepSeek API key", destination: url).font(H.ui(12)).foregroundStyle(H.muted) }
                     }
 
                     label("MODEL")
@@ -166,10 +166,10 @@ struct AssistantSettingsSheet: View {
                             Spacer()
                             Image(systemName: "chevron.up.chevron.down").font(.system(size: 11)).foregroundStyle(H.muted)
                         }
-                        .padding(12).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                        .padding(12).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
                     }
                     .disabled(options.isEmpty)
-                    if isDeepSeek && !deepSeekPriceLine.isEmpty { T(deepSeekPriceLine, 11, H.faint) }
+                    if isDeepSeek && !deepSeekPriceLine.isEmpty { T(deepSeekPriceLine, 12, H.faint) }
 
                     if engine == "free", (s?["free_model_discovery"] as? [String: Any])?["status"] as? String == "discovery failed" {
                         T("Model discovery failed; showing the configured fallback models.", 12, H.faint)
@@ -227,10 +227,10 @@ struct AssistantSettingsSheet: View {
         .onDisappear { if !signin.isEmpty { Task { _ = try? await store.assistant("POST", "/claude/login/cancel") } } }
     }
 
-    private func label(_ t: String) -> some View { Text(t).font(H.mono(11)).tracking(1).foregroundStyle(H.muted) }
+    private func label(_ t: String) -> some View { Text(t).font(H.ui(12)).tracking(1).foregroundStyle(H.muted) }
     private func field(_ placeholder: String, text: Binding<String>) -> some View {
         TextField("", text: text, prompt: Text(placeholder).foregroundStyle(H.faint))
-            .font(H.mono(14)).foregroundStyle(H.fg).textInputAutocapitalization(.never).autocorrectionDisabled()
-            .padding(10).background(H.surface).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+            .font(H.ui(14)).foregroundStyle(H.fg).textInputAutocapitalization(.never).autocorrectionDisabled()
+            .padding(10).background(H.surface).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
     }
 }

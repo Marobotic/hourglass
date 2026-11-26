@@ -30,7 +30,7 @@ struct MediaViewer: View {
                 HStack(spacing: 4) {
                     VStack(alignment: .leading, spacing: 2) {
                         T(f.name, 14, .white, lines: 1)
-                        T(fmtBytes(f.size) + (set.files.count > 1 ? "  ·  \(index + 1) of \(set.files.count)" : ""), 11, .white.opacity(0.7))
+                        T(fmtBytes(f.size) + (set.files.count > 1 ? "  ·  \(index + 1) of \(set.files.count)" : ""), 12, .white.opacity(0.7))
                     }
                     Spacer(minLength: 0)
                     Button { dismiss(); opener.quickLook(f, store) } label: {

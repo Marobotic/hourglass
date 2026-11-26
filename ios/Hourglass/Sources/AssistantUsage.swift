@@ -12,8 +12,8 @@ struct ContextMeter: View {
                 Rectangle().fill(H.surface2).frame(width: 30, height: 5)
                 Rectangle().fill(color).frame(width: 30 * clamped / 100, height: 5)
             }
-            .overlay(Rectangle().stroke(H.border, lineWidth: 1))
-            T(String(format: "%.0f%%", clamped), 11, H.muted)
+            .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
+            T(String(format: "%.0f%%", clamped), 12, H.muted)
         }
         .padding(.horizontal, 6).frame(height: 44)
     }
@@ -67,7 +67,7 @@ struct AssistantUsageSheet: View {
         }
     }
     private func section(_ title: String) -> some View {
-        Text(title).font(H.mono(11)).tracking(1).foregroundStyle(H.muted).padding(.top, 8)
+        Text(title).font(H.ui(12)).tracking(1).foregroundStyle(H.muted).padding(.top, 8)
     }
 
     private var contextBlock: some View {

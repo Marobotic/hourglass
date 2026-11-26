@@ -15,10 +15,19 @@ struct RemindersView: View {
             let all = store.reminders(clock)
             let open = all.filter { !$0.1.done }
             let done = Array(all.filter { $0.1.done }.prefix(20))
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        if open.isEmpty { T("No reminders. Tap the bell to add one, or ask the assistant: \"remind me to call mom at 6\".", 13, H.muted) }
+            ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            SectionLabel(text: "Reminders", detail: open.isEmpty ? nil : "\(open.count)")
+                            HButton("New", icon: "plus") { sheets.reminder = ReminderDraft(reminder: nil) }
+                        }
+                        .padding(.bottom, 8)
+                        if open.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                T("No reminders", 18, bold: true)
+                                T("Add one, or ask the assistant: \"remind me to call mom at 6\".", 14, H.muted)
+                            }
+                        }
                         ForEach(open, id: \.0.id) { item in row(item.0, item.1, clock) }
                         if !done.isEmpty {
                             HStack {
@@ -33,11 +42,8 @@ struct RemindersView: View {
                             Spacer()
                             HButton("Settings") { sheets.settings = true }
                         }
-                        Spacer(minLength: 72)
                     }
-                    .padding(.horizontal, 18).padding(.vertical, 12)
-                }
-                Fab(icon: "bell.badge") { sheets.reminder = ReminderDraft(reminder: nil) }
+                    .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 96)
             }
             .background(H.bg)
         }
@@ -46,16 +52,18 @@ struct RemindersView: View {
     private func row(_ r: Reminder, _ s: ReminderState, _ clock: Int64) -> some View {
         Card(stripe: s.overdue ? H.accent : nil, live: ("reminder:\(r.id)", "\(r.updated_at)")) {
             HStack(spacing: 12) {
+                // The 0.3.4 to-do box: a reminder is ticked off like a to-do.
                 Button { store.reminderDone(r.id, !s.done) } label: {
-                    Image(systemName: s.done ? "checkmark.circle.fill" : "circle").font(.system(size: 24)).foregroundStyle(s.done ? H.teal : H.muted)
+                    TodoBox(done: s.done, animated: true).frame(width: 44, height: 44).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 2) {
-                    T(r.label, 15, bold: !s.done, lines: 2)
-                    T(whenText(r, s, clock), 11, s.overdue ? H.accent : H.muted, lines: 1)
+                    T(r.label, 16, bold: !s.done, lines: 2)
+                    T(whenText(r, s, clock), 13, s.overdue ? H.accentInk : H.muted, lines: 1)
                 }
                 Spacer()
-                if s.overdue { Button { store.snoozeReminder(r.id) } label: { Image(systemName: "zzz").foregroundStyle(H.muted) } }
-                Button { store.removeReminder(r.id) } label: { Image(systemName: "trash").foregroundStyle(H.faint) }
+                if s.overdue { Button { store.snoozeReminder(r.id) } label: { Image(systemName: "zzz").font(.system(size: 16)).foregroundStyle(H.muted).frame(width: 44, height: 44) } }
+                Button { store.removeReminder(r.id) } label: { Image(systemName: "trash").font(.system(size: 16)).foregroundStyle(H.faint).frame(width: 44, height: 44) }
             }
             .contentShape(Rectangle())
             .onTapGesture { sheets.reminder = ReminderDraft(reminder: r) }
@@ -127,13 +135,13 @@ struct ReminderSettings: View {
     var body: some View {
         SectionLabel(text: "Reminders")
         T("Not alarms: a notification with Done and Snooze when one is due. Same on all your devices.", 12, H.faint)
-        T("ALERT", 11, H.muted)
+        T("ALERT", 12, H.muted)
         Segmented(options: [("With a tone", "tone"), ("Notification only", "silent")], value: Binding(get: { store.reminderStyle }, set: { store.setPref("reminder_style", $0) }))
         if store.reminderStyle == "tone" {
-            T("TONE", 11, H.muted)
+            T("TONE", 12, H.muted)
             Segmented(options: Reminders.tones.map { ($0.capitalized, $0) }, value: Binding(get: { store.reminderTone }, set: { store.setPref("reminder_tone", $0); player.play("remind_\($0)") }))
         }
-        T("SNOOZE", 11, H.muted)
+        T("SNOOZE", 12, H.muted)
         Segmented(options: [("5 min", 5), ("10 min", 10), ("15 min", 15), ("30 min", 30), ("1 hour", 60)], value: Binding(get: { store.reminderSnooze }, set: { store.setPref("reminder_snooze", String($0)) }))
     }
 }

@@ -55,7 +55,7 @@ struct VersionsSheet: View {
                     if let problem { T(problem, 13, H.accent) }
                     if let d = data {
                         HStack(alignment: .top, spacing: 10) {
-                            T("NOW", 11, H.teal, bold: true).padding(.horizontal, 6).padding(.vertical, 2).background(H.teal.opacity(0.18))
+                            T("NOW", 12, H.teal, bold: true).padding(.horizontal, 6).padding(.vertical, 2).background(H.teal.opacity(0.18))
                             VStack(alignment: .leading, spacing: 2) {
                                 T("\(when(d.current.at))   \(fmtBytes(d.current.size))", 13)
                                 T(who(d.current.device, d.current.by) + (d.current.restored_from != nil ? "  ·  put back from an older version" : ""), 12, H.muted, lines: 1)
@@ -97,7 +97,7 @@ struct VersionsSheet: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
     }
 }
 
@@ -120,10 +120,10 @@ private struct Changes: View {
                 } else if d.tooBig == true {
                     T("Too many changes to show here (\(d.added ?? 0) lines in, \(d.removed ?? 0) out).", 12, H.muted)
                 } else {
-                    T("+\(d.added ?? 0) lines   −\(d.removed ?? 0) lines", 11, H.muted).padding(.bottom, 4)
+                    T("+\(d.added ?? 0) lines   −\(d.removed ?? 0) lines", 12, H.muted).padding(.bottom, 4)
                     ForEach(Array((d.lines ?? []).prefix(400).enumerated()), id: \.offset) { _, l in
                         Text(l.op == "skip" ? "⋯ \(l.count ?? 0) lines the same" : (l.op == "add" ? "+ " : l.op == "del" ? "− " : "  ") + (l.text ?? ""))
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(l.op == "skip" ? H.faint : H.fg)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 4)
@@ -137,7 +137,7 @@ private struct Changes: View {
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(H.bg)
-        .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
         .task(id: vid) {
             do { diff = try await store.versionDiff(file, vid) } catch { failed = error.localizedDescription }
         }
@@ -154,7 +154,7 @@ private struct PicturesThenNow: View {
         HStack(spacing: 8) {
             ForEach([("THEN", then), ("NOW", now)], id: \.0) { label, img in
                 VStack(alignment: .leading, spacing: 4) {
-                    T(label, 11, H.muted, bold: true)
+                    T(label, 12, H.muted, bold: true)
                     ZStack {
                         H.bg
                         if let img { Image(uiImage: img).resizable().scaledToFit() } else { ProgressView().tint(H.accent) }

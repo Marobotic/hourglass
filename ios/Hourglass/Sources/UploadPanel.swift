@@ -61,7 +61,7 @@ struct UploadPanel: View {
                     }
                 }
                 .background(H.surface)
-                .overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
                 .padding(.horizontal, 12)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -117,7 +117,7 @@ struct UploadPanel: View {
             VStack(alignment: .leading, spacing: 6) {
                 T(u.name, 13, lines: 1)
                 bar(part, u.state == "done" ? H.teal : going ? H.accent : H.faint, height: 3)
-                T(detail, 11, u.state == "failed" ? H.accent : H.muted, lines: 1)
+                T(detail, 12, u.state == "failed" ? H.accent : H.muted, lines: 1)
             }
             Group {
                 if going {

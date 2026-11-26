@@ -79,7 +79,7 @@ enum RingSync {
     static let device = "iPhone"
     private static func key(_ id: String) -> String { "ring_stop:\(id)" }
 
-    struct Stop: Codable { var at: Int64; var action: String; var device: String; var ts: Int64? }
+    struct Stop: Codable { var at: Int64; var action: String; var device: String; var ts: Int64?; var skipped: Bool? = nil }
 
     @MainActor
     static func stoppedElsewhere(_ store: Store, _ id: String, _ at: Int64) -> Stop? {
@@ -102,6 +102,28 @@ enum RingSync {
     static func stoppedAt(_ store: Store, _ id: String) -> Int64? {
         guard let v = store.pref(key(id)), let s = try? JSONDecoder().decode(Stop.self, from: Data(v.utf8)), s.at > 0 else { return nil }
         return s.at
+    }
+
+    // A ring skipped ahead of time (Skip once here, "skip my alarm today" to the assistant), still to come: its time.
+    @MainActor
+    static func skippedAt(_ store: Store, _ id: String) -> Int64? {
+        guard let v = store.pref(key(id)), let s = try? JSONDecoder().decode(Stop.self, from: Data(v.utf8)), s.skipped == true, s.at > nowMs() else { return nil }
+        return s.at
+    }
+
+    // Skip one ring (core/node/service.js skipAlarm): the same synced pref, so every device passes over it and the
+    // alarm stays on. One skip per alarm; a new one replaces the old.
+    @MainActor
+    static func skip(_ store: Store, _ id: String, _ at: Int64) {
+        let s = Stop(at: at, action: "dismissed", device: device, ts: nowMs(), skipped: true)
+        store.setPref(key(id), String(data: (try? JSONEncoder().encode(s)) ?? Data(), encoding: .utf8) ?? "")
+    }
+
+    // Undo a skip (unskipAlarm): overwritten, not deleted, as older desktop apps read a deleted pref row too.
+    @MainActor
+    static func unskip(_ store: Store, _ id: String) {
+        let s = Stop(at: 0, action: "unskipped", device: device, ts: nowMs())
+        store.setPref(key(id), String(data: (try? JSONEncoder().encode(s)) ?? Data(), encoding: .utf8) ?? "")
     }
 
     // Why this ring must not come back as a snooze, or nil (core/alarms.js

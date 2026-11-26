@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: "0.3.4"
-    CURRENT_PROJECT_VERSION: "35"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "36"
 targets:
   Hourglass:
     type: application
@@ -49,6 +49,14 @@ targets:
           NSAllowsArbitraryLoads: true
         # Resource groups are flattened into the bundle root.
         UIAppFonts:
+          - RedditSans-Regular.ttf
+          - RedditSans-Medium.ttf
+          - RedditSans-SemiBold.ttf
+          - RedditSans-Bold.ttf
+          - NotoSans-Regular.ttf
+          - NotoSans-Medium.ttf
+          - NotoSans-Bold.ttf
+          # Code inside notes only (JetBrainsMonoNF), never the UI.
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Bold.ttf
           - Inter-Regular.ttf
@@ -69,6 +77,10 @@ targets:
     sources:
       - Share
       - path: Hourglass/Sources/SharedBox.swift
+      - path: Hourglass/Resources/Fonts/RedditSans-Regular.ttf
+      - path: Hourglass/Resources/Fonts/RedditSans-Medium.ttf
+      - path: Hourglass/Resources/Fonts/RedditSans-SemiBold.ttf
+      - path: Hourglass/Resources/Fonts/RedditSans-Bold.ttf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.marobotic.hourglass.share
@@ -80,6 +92,11 @@ targets:
         CFBundleDisplayName: Hourglass
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIAppFonts:
+          - RedditSans-Regular.ttf
+          - RedditSans-Medium.ttf
+          - RedditSans-SemiBold.ttf
+          - RedditSans-Bold.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController

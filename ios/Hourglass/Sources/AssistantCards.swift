@@ -56,7 +56,7 @@ struct ResultCard: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(H.surface)
-        .overlay(Rectangle().stroke(gone ? H.border : accent.opacity(0.55), lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(gone ? H.border : accent.opacity(0.55), lineWidth: 1))
         .opacity((appeared ? 1 : 0) * (gone ? 0.75 : 1))
         .scaleEffect(appeared ? 1 : 0.92)
         .onAppear {
@@ -74,12 +74,12 @@ struct ResultCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text(kind == "alarm" ? (info["time"] as? String ?? "") : kind == "timer" ? ((info["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Timer") : (info["label"] as? String ?? ""))
-                        .font(H.mono(kind == "alarm" ? 22 : 15, bold: true)).foregroundStyle(H.fg).lineLimit(1)
+                        .font(H.ui(kind == "alarm" ? 22 : 15, bold: true)).foregroundStyle(H.fg).lineLimit(1)
                         .strikethrough(st == "removed")
                     if let b = badge {
                         HStack(spacing: 3) {
                             if b.0 == "SET" || b.0 == "ADDED" { Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)) }
-                            Text(b.0).font(H.mono(10, bold: true)).tracking(1)
+                            Text(b.0).font(H.ui(12, bold: true)).tracking(1)
                         }
                         .foregroundStyle(b.1).padding(.horizontal, 6).padding(.vertical, 2).background(b.1.opacity(0.2))
                         .scaleEffect(badgeIn ? 1 : 0.01)
@@ -125,26 +125,26 @@ struct ResultCard: View {
                 Circle().trim(from: 0, to: st == "running" ? min(1, CGFloat(secsLeft) / CGFloat(max(1, info["duration_s"] as? Int ?? 1))) : 0)
                     .stroke(H.teal, style: StrokeStyle(lineWidth: 6, lineCap: .round)).rotationEffect(.degrees(-90)).padding(5)
                     .animation(.linear(duration: 1), value: secsLeft)
-                Text(st == "running" ? countdown(secsLeft) : "–").font(H.mono(secsLeft >= 3600 ? 10 : 12, bold: true)).foregroundStyle(H.fg)
+                Text(st == "running" ? countdown(secsLeft) : "–").font(H.ui(secsLeft >= 3600 ? 10 : 12, bold: true)).foregroundStyle(H.fg)
             }
         case "event":
             let parts = (info["when"] as? String ?? "").split(separator: " ").map(String.init)
             VStack(spacing: 0) {
                 Text((parts.count >= 3 ? parts[2] : (info["when"] as? String ?? "")).uppercased())
-                    .font(H.mono(10, bold: true)).foregroundStyle(Color(hex: "#121212")).lineLimit(1)
+                    .font(H.ui(12, bold: true)).foregroundStyle(Color(hex: "#121212")).lineLimit(1)
                     .frame(maxWidth: .infinity).frame(height: 18).background(accent)
                 ZStack {
                     if info["birthday"] as? Bool ?? false {
                         Cake().padding(4)
                     } else {
-                        Text(parts.count >= 2 ? parts[1] : (daysUntil == 0 ? "★" : "")).font(H.mono(24, bold: true)).foregroundStyle(H.fg)
+                        Text(parts.count >= 2 ? parts[1] : (daysUntil == 0 ? "★" : "")).font(H.ui(24, bold: true)).foregroundStyle(H.fg)
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(H.bg).overlay(Rectangle().stroke(accent, lineWidth: 2))
+            .background(H.bg).overlay(Rectangle().strokeBorder(accent, lineWidth: 2))
         default:
             Image(systemName: kind == "note" ? "note.text" : kind == "reminder" && st != "done" ? "bell.badge" : "checkmark").font(.system(size: 24)).foregroundStyle(kind == "reminder" ? H.gold : H.teal)
-                .frame(maxWidth: .infinity, maxHeight: .infinity).background(H.bg).overlay(Rectangle().stroke(H.border, lineWidth: 1))
+                .frame(maxWidth: .infinity, maxHeight: .infinity).background(H.bg).overlay(Rectangle().strokeBorder(H.border, lineWidth: 1))
         }
     }
 
@@ -155,7 +155,7 @@ struct ResultCard: View {
         let to = items.compactMap { $0["to"] as? Int }.max() ?? 18 * 60
         let span = Double(max(1, to - from))
         return VStack(alignment: .leading, spacing: 8) {
-            Text((info["label"] as? String ?? "").uppercased()).font(H.mono(11, bold: true)).tracking(1.5).foregroundStyle(H.muted)
+            Text((info["label"] as? String ?? "").uppercased()).font(H.ui(12, bold: true)).tracking(1.5).foregroundStyle(H.muted)
             if items.isEmpty { T("Nothing on.", 14) } else {
                 GeometryReader { g in
                     ZStack(alignment: .leading) {
@@ -229,8 +229,8 @@ struct StepList: View {
             ForEach(Array(steps.enumerated()), id: \.offset) { _, s in
                 let text = s["text"] as? String ?? ""
                 HStack(alignment: .top, spacing: 8) {
-                    Text(String(format: "+%.1f s", (at(s) - start) / 1000)).font(H.mono(11)).foregroundStyle(H.faint).frame(width: 58, alignment: .trailing)
-                    Text(text).font(H.mono(12)).italic(text.hasPrefix("Thinking"))
+                    Text(String(format: "+%.1f s", (at(s) - start) / 1000)).font(H.ui(12)).foregroundStyle(H.faint).frame(width: 58, alignment: .trailing)
+                    Text(text).font(H.ui(12)).italic(text.hasPrefix("Thinking"))
                         .foregroundStyle(text.range(of: "went quiet|failed|stalled|not connected", options: .regularExpression) != nil ? H.accent : text.hasPrefix("Thinking") ? H.faint : H.muted)
                 }
             }
