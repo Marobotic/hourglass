@@ -1,5 +1,5 @@
 // Notes: courses are folders (REDESIGN §5 Notes; NotesPage.qml). Round 5: the folders as a rail with counts and the
-// search, then "Take a note", the class that is live now with today's notes, and the rest as a masonry of cards
+// "Take a note" (red) over the folders, search, the class that is live now with today's notes, and the rest as a masonry of cards
 // tinted by course (to-dos previewed with the real 0.3.4 boxes).
 import { h, icon, swap } from '../dom.js';
 import { noteCard } from './parts.js';
@@ -22,8 +22,8 @@ export default {
     const liveEl = h('div');
     const grid = h('div', { class: 'masonry' });
     const gridHead = h('div');
-    const main = h('div', { class: 'notes-main' }, courseLine, take, liveEl, h('div', {}, gridHead, grid));
-    root.append(head, h('div', { class: 'page flush' }, h('div', { class: 'notes-split' }, h('div', { class: 'folders-wrap' }, searchBox, folders), h('div', { class: 'notes-scroll' }, main))));
+    const main = h('div', { class: 'notes-main' }, courseLine, searchBox, liveEl, h('div', {}, gridHead, grid));
+    root.append(head, h('div', { class: 'page flush' }, h('div', { class: 'notes-split' }, h('div', { class: 'folders-wrap' }, take, folders), h('div', { class: 'notes-scroll' }, main))));
 
     const course = () => state.courses.find((c) => c.id === sel) || null;
     const today = () => state.now?.now?.date || U.dayOf(state.clock);
@@ -68,9 +68,10 @@ export default {
       const lv = sel === 'all' && !q().length ? live() : null;
       ctxLine.textContent = sel === 'all' ? `${U.plural(notes.length, 'note')} · ${U.plural(state.courses.length, 'course')}` : sel === 'inbox' ? 'Notes without a course' : sel === 'pinned' ? 'Pinned notes show in every session of their course' : c ? [c.code, c.location, U.lead(c.teacher)].filter(Boolean).join(' · ') : '';
       const forName = c ? c.name : lv ? lv.title : '';
+      // Take a note is the red primary button, as the sidebar's New; the square one beside it starts a to-do list.
       take.replaceChildren(
-        h('button', { class: 'take-main', onclick: () => newNote() }, icon('edit'), h('span', { class: 'grow', text: forName ? `Take a note for ${forName}…` : 'Take a note…' })),
-        h('button', { class: 'take-ic', title: 'A to-do list', onclick: () => newNote({ body: '- [ ] ' }) }, icon('checklist')));
+        kit.btn('Take a note', () => newNote(), { kind: 'primary', icon: 'plus', cls: 'take-main', title: forName ? `Take a note for ${forName}` : 'Take a note' }),
+        kit.btn('', () => newNote({ body: '- [ ] ' }), { icon: 'checklist', title: 'A to-do list', cls: 'take-ic' }));
       swap(courseLine, c ? [h('b', { text: c.name }), h('button', { class: 'link', onclick: () => ctx.editCourse(c), text: 'Edit course' }), h('button', { class: 'link', onclick: () => ctx.go('drive', { course: c.id }), text: 'Files' })] : null);
       courseLine.hidden = !c;
       let list = shown();

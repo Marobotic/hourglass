@@ -16,12 +16,10 @@
 .course-line { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
 .course-line b { font: 700 20px/1 var(--ui); }
 .course-line .link { padding: 0; color: var(--accent-ink); }
-.take { display: flex; align-items: center; height: 48px; background: var(--surface); box-shadow: var(--hi), inset 0 0 0 1px var(--border); }
-.take-main { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px; border: 0; background: transparent; color: var(--faint); font: 400 var(--fs-body) var(--ui); text-align: left; cursor: text; }
-.take-main .ic { color: var(--muted); --s: 16px; }
-.take-ic { width: 48px; height: 100%; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; transition: color var(--quick) var(--ease); }
-.take-ic:hover, .take-main:hover { color: var(--fg); }
-.take:hover { box-shadow: var(--hi), inset 0 0 0 1px var(--border2); }
+.take { display: flex; align-items: center; gap: 8px; }
+.take-main { flex: 1; min-width: 0; justify-content: flex-start; }
+.take-main .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.take-ic { flex: none; }
 .band { display: grid; gap: 16px; align-items: start; }
 .masonry { display: grid; gap: 16px; align-items: start; }
 .mcol { display: grid; gap: 16px; align-content: start; min-width: 0; }
