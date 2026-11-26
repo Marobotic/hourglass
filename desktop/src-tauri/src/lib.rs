@@ -162,6 +162,8 @@ pub fn run() {
         .setup(move |app| {
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Hourglass")
+                // No native title bar: the page draws its own minimize / maximize / close (ui/window.js).
+                .decorations(false)
                 .inner_size(1240.0, 820.0)
                 .min_inner_size(720.0, 520.0)
                 .background_color(Color(18, 18, 18, 255))

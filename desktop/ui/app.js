@@ -8,6 +8,7 @@ import { PAGES, NAV } from './pages/index.js';
 import * as dialogs from './pages/dialogs.js';
 import { startUploadPanel } from './uploads.js';
 import './native.js';
+import { windowControls, dragRegion } from './window.js';
 
 const TAURI = globalThis.__TAURI__;
 const invoke = (cmd, args) => TAURI?.core?.invoke(cmd, args);
@@ -39,13 +40,17 @@ const ctx = {
   // The page header every page draws (REDESIGN §3): title, a muted context line or controls, actions.
   // Every header ends with Search or ask (the command palette, Ctrl K).
   head({ title, ctx: line, mid, acts = [], back, ask = true } = {}) {
-    return h('div', { class: 'head' },
+    const bar = h('div', { class: 'head' },
       back ? kit.btn('Back', back, { kind: 'subtle', icon: 'back', title: 'Back (Esc)', cls: 'back' }) : null,
       h('h1', { text: title }),
       line != null ? h('span', { class: 'ctx', text: line }) : null,
       mid ? h('div', { class: 'mid' }, mid) : null,
       h('div', { class: 'acts' }, acts),
-      ask ? h('button', { class: 'ask', type: 'button', title: 'Search or ask Hourglass (Ctrl K)', onclick: () => openPalette() }, icon('search'), h('span', { class: 'lbl', text: 'Search or ask Hourglass' }), h('kbd', { text: 'Ctrl K' })) : null);
+      ask ? h('button', { class: 'ask', type: 'button', title: 'Search or ask Hourglass (Ctrl K)', onclick: () => openPalette() }, icon('search'), h('span', { class: 'lbl', text: 'Search or ask Hourglass' }), h('kbd', { text: 'Ctrl K' })) : null,
+      windowControls());
+    // The bar's empty parts drag the window (a double-click maximizes); buttons, fields and links stay clickable.
+    dragRegion(bar, ...bar.querySelectorAll(':scope > h1, :scope > .ctx, :scope > .mid, :scope > .acts'));
+    return bar;
   },
   courseById: (id) => state.courses.find((c) => c.id === id) || null,
   courseColor: (id) => ctx.courseById(id)?.color || 'var(--teal)',
@@ -330,7 +335,7 @@ function renderSide(animate = false) {
     syncLine());
 
   side.replaceChildren(
-    h('div', { class: 'brand' }, logo(2.6, { alive: true }), h('b', { text: 'Hourglass' }), h('span', { class: 'ver', text: VERSION })),
+    dragRegion(h('div', { class: 'brand' }, logo(2.6, { alive: true }), h('b', { text: 'Hourglass' }), h('span', { class: 'ver', text: VERSION }))),
     kit.btn('New', (e) => newMenu(e.currentTarget), { kind: 'primary', icon: 'plus', kbd: 'Ctrl N', cls: 'new', title: 'New' }),
     navs, h('span', { class: 'grow' }), foot);
   placeNavBar(animate);
@@ -548,7 +553,9 @@ let loginEl = null;
 function renderLogin() {
   const out = state.dev.has('login') || (state.loaded && state.app.account && !state.app.account.signed_in && !state.dev.has('nologin'));
   if (out && !loginEl) {
+    // Signed out there is no page header: a slim bar at the top carries the drag region and the window buttons.
     loginEl = h('div', { class: 'login-wrap' });
+    loginEl.append(dragRegion(h('div', { class: 'wbar' }, windowControls())));
     document.body.append(loginEl);
     PAGES.login.mount(loginEl, ctx);
   } else if (!out && loginEl) {

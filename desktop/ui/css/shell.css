@@ -170,3 +170,25 @@
 /* Burst of pixels for finishing things. */
 .burst { position: fixed; z-index: 150; width: 5px; height: 5px; pointer-events: none; }
 @container page (max-width: 700px) { .section small { display: none; } }
+
+/* ---- window frame: drag regions, the three window buttons, the edge handles (window.js) ---- */
+.brand > * { pointer-events: none; }
+.wctl { display: flex; align-items: center; gap: 4px; flex: none; margin-left: 8px; margin-right: calc(12px - var(--pad)); }
+.head:not(:has(.ask)):not(:has(.acts:not(:empty))) > .wctl { margin-left: auto; }
+.wbtn { width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex: none; border: 0; border-radius: 0; background: transparent; color: var(--muted); cursor: pointer; transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
+.wbtn:hover { background: var(--surface3); color: var(--fg); }
+.wbtn:active { background: var(--surface4); }
+.wbtn svg { display: block; }
+.wbtn .w-restore { display: none; }
+.wbtn.maximized .w-max { display: none; }
+.wbtn.maximized .w-restore { display: block; }
+.wbtn.wclose:hover, .wbtn.wclose:active { background: var(--accent); color: var(--on-accent); }
+.wbar { position: fixed; top: 0; left: 0; right: 0; height: 48px; display: flex; justify-content: flex-end; align-items: center; padding: 0 12px; z-index: 1; }
+#rz .rz { position: fixed; z-index: 200; }
+body.maxed #rz { display: none; }
+#rz .rz-North, #rz .rz-South { left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+#rz .rz-East, #rz .rz-West { top: 8px; bottom: 8px; width: 5px; cursor: ew-resize; }
+#rz .rz-North { top: 0; } #rz .rz-South { bottom: 0; } #rz .rz-East { right: 0; } #rz .rz-West { left: 0; }
+#rz .rz-NorthEast, #rz .rz-NorthWest, #rz .rz-SouthEast, #rz .rz-SouthWest { width: 8px; height: 8px; }
+#rz .rz-NorthEast { top: 0; right: 0; cursor: nesw-resize; } #rz .rz-SouthWest { bottom: 0; left: 0; cursor: nesw-resize; }
+#rz .rz-NorthWest { top: 0; left: 0; cursor: nwse-resize; } #rz .rz-SouthEast { bottom: 0; right: 0; cursor: nwse-resize; }
