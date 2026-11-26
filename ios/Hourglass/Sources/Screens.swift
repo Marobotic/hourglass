@@ -644,6 +644,11 @@ struct ScheduleView: View {
             }
             .background(H.bg)
             .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { first = false } }
+            // A new event from the New menu starts on the day picked in the month view (today in the week view).
+            .onAppear { sheets.eventDay = month ? picked : nil }
+            .onChange(of: picked) { _, d in sheets.eventDay = mode == "month" ? d : nil }
+            .onChange(of: mode) { _, m in sheets.eventDay = m == "month" ? picked : nil }
+            .onDisappear { sheets.eventDay = nil }
         }
     }
 

@@ -65,6 +65,8 @@ final class Sheets: ObservableObject {
     @Published var alarm = false
     @Published var reminder: ReminderDraft?
     @Published var settings = false
+    // The day the Schedule month view has picked: New → Event starts on it (nil: today), as the old Schedule + did.
+    @Published var eventDay: String?
 }
 
 struct EventDraft: Identifiable { let id = UUID(); var event: Event?; var date: String?; var course: String?; var weekly = false }
@@ -240,7 +242,7 @@ struct NewMenu: View {
                     Rectangle().fill(H.surface4).frame(width: 36, height: 4).frame(maxWidth: .infinity).padding(.top, 8).padding(.bottom, 12)
                     Text("NEW").font(H.ui(12, .bold)).tracking(1).foregroundStyle(H.faint).padding(.horizontal, 20).padding(.bottom, 4)
                     row("Note", "doc.text") { path.append(.note(store.addNote(course: nil, date: Dates.today(), event: nil).id)) }
-                    row("Event", "calendar.badge.plus") { sheets.event = EventDraft() }
+                    row("Event", "calendar.badge.plus") { sheets.event = EventDraft(date: tab == 1 ? sheets.eventDay : nil) }
                     row("Course", "folder") { sheets.course = CourseDraft() }
                     row("Alarm", "alarm") { sheets.alarm = true }
                     row("Reminder", "bell") { sheets.reminder = ReminderDraft() }
