@@ -142,6 +142,10 @@ pub fn run() {
     let boot_state = Boot { port, token: token.clone(), started_service, dev: arg("--dev"), hidden: flag("--hidden") };
     // Handed to the page before its scripts run, so it draws without a round trip to ask for it.
     let boot_script = format!("window.__HG_BOOT = {};", serde_json::to_string(&boot_state).unwrap_or_else(|_| "null".into()));
+    #[cfg(target_os = "linux")]
+    let show_when_loaded = !boot_state.hidden;
+    #[cfg(target_os = "linux")]
+    let shown_once = std::sync::atomic::AtomicBool::new(false);
 
     tauri::Builder::default()
         // Another start (the Start menu, the service) shows this window; the service's
@@ -156,15 +160,28 @@ pub fn run() {
         .manage(boot_state)
         .invoke_handler(tauri::generate_handler![boot, show_window])
         .setup(move |app| {
-            let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Hourglass")
                 .inner_size(1240.0, 820.0)
                 .min_inner_size(720.0, 520.0)
                 .background_color(Color(18, 18, 18, 255))
                 .visible(false)
                 .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection")
-                .initialization_script(&boot_script)
-                .build()?;
+                .initialization_script(&boot_script);
+            // WebKitGTK runs no animation frames for a window that has never been mapped, so the page's own
+            // "show me once drawn" (a requestAnimationFrame in app.js) can wait forever and Hourglass never
+            // appears. On Linux the window shows itself when the page first finishes loading instead; the
+            // --hidden warm-up start still stays in the tray, and later reloads don't pop it up.
+            #[cfg(target_os = "linux")]
+            let builder = builder.on_page_load(move |window, payload| {
+                if show_when_loaded
+                    && payload.event() == tauri::webview::PageLoadEvent::Finished
+                    && !shown_once.swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    show(window.app_handle());
+                }
+            });
+            let _window = builder.build()?;
             #[cfg(target_os = "linux")]
             keep_page_alive(&_window);
             let show_item = MenuItem::with_id(app, "show", "Show Hourglass", true, None::<&str>)?;
