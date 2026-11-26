@@ -179,8 +179,6 @@ button.it:hover .h { color: var(--accent-ink); }
 .fact > .ic { color: var(--muted); --s: 16px; margin-top: 2px; }
 .fact b { display: block; font: 700 var(--fs-body)/20px var(--ui); }
 .fact small { display: block; font: 400 var(--fs-small)/18px var(--ui); color: var(--muted); }
-.mark-seg { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; height: 44px; }
-.mark-seg button { font-weight: 700; }
 .agenda .page-col { max-width: 880px; }
 .agenda-item { display: grid; gap: 4px; padding: 12px 16px 12px 19px; text-align: left; color: var(--fg); font: inherit; }
 .agenda-item b { font: 700 var(--fs-title)/20px var(--ui); }
@@ -220,25 +218,8 @@ button.it:hover .h { color: var(--accent-ink); }
 .att-box.on:hover { background: color-mix(in srgb, var(--c) 36%, transparent); }
 .att-box.next { outline: 2px solid var(--accent); outline-offset: 2px; }
 .att-box.pop { animation: pop var(--t-sheet) var(--ease); }
-.att-box.sm { width: 20px; height: 20px; font-size: 12px; cursor: default; flex: none; }
-.att-warn { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; font: 400 var(--fs-small)/18px var(--ui); color: var(--soft); background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
-.att-warn .ic { color: var(--accent-ink); --s: 16px; margin-top: 1px; }
-.att-sum { padding: 24px; }
-.att-sum .big-row { align-items: flex-end; gap: 16px; }
-.att-sum .big { font: 700 56px/1 var(--ui); letter-spacing: -2px; }
-.att-sum b { display: block; font: 700 var(--fs-body)/20px var(--ui); }
-.att-sum small { display: block; font: 400 var(--fs-small)/18px var(--ui); color: var(--muted); padding-bottom: 4px; }
-.stackbar { display: flex; height: 10px; gap: 2px; margin-top: 20px; }
-.stackbar i { display: block; height: 100%; }
-.stackbar .a { background: var(--teal); } .stackbar .x { background: var(--accent); } .stackbar .o { background: var(--surface4); }
-.stackbar .u { box-shadow: inset 0 0 0 1px var(--muted); }
-.att-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 16px; font: 500 13px/1 var(--ui); color: var(--soft); }
-.att-legend span { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
-.rail-card > .section + .att-legend { margin-top: 0; grid-template-columns: 1fr; }
-.tomark { display: grid; gap: 12px; }
-.tomark .dot { width: 10px; height: 10px; flex: none; background: var(--c); align-self: flex-start; margin-top: 5px; }
-.tomark b { display: block; font: 700 var(--fs-title)/20px var(--ui); }
-.tomark small { display: block; font: 400 var(--fs-small)/18px var(--ui); color: var(--muted); }
+.mark-seg { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; height: 44px; }
+.mark-seg button { font-weight: 700; }
 .rail-card .more { display: block; margin-top: 16px; font-size: var(--fs-small); }
 
 /* ---- Alarms: the next ring first, then the cards; a skipped ring is gold ---- */

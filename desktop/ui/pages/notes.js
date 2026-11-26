@@ -14,7 +14,7 @@ export default {
 
     const searchBox = kit.search({ placeholder: 'Search notes', oninput: (v) => { query = v; renderGrid(); } });
     const ctxLine = h('span', { class: 'ctx' });
-    const head = ctx.head({ title: 'Notes' });
+    const head = ctx.head({ title: 'Notes', ask: false });
     head.insertBefore(ctxLine, head.querySelector('.acts'));
     const folders = h('nav', { class: 'folders' });
     const take = h('div', { class: 'take' });
