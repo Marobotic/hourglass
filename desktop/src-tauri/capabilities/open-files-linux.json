@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "open-files-linux",
+  "description": "Opening a Drive file in its app on Linux: the service keeps the copies under ~/.local/share/hourglass/drive (a dot folder, which a bare ** never matches on Unix) and course folders under ~/Documents/Courses.",
+  "windows": ["main"],
+  "platforms": ["linux", "macOS"],
+  "permissions": [
+    { "identifier": "opener:allow-open-path", "allow": [{ "path": "$HOME/.local/share/hourglass/drive/**" }, { "path": "$DOCUMENT/Courses/**" }] }
+  ]
+}
