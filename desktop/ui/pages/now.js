@@ -71,7 +71,7 @@ export default {
       const p = U.clockParts(state.clock);
       const hm = h('span', { class: 'hm' }, ...[...p.hm].map((ch, i) => h('span', { class: clockEl.dataset.hm && clockEl.dataset.hm[i] !== ch ? 'roll' : '', text: ch })));
       clockEl.dataset.hm = p.hm;
-      swap(clockEl, hm, h('small', { class: 'sec', text: p.s }), p.ap ? h('small', { class: 'ap', text: p.ap }) : null);
+      swap(clockEl, hm, h('small', { class: 'sec', text: ':' + p.s }), p.ap ? h('small', { class: 'ap', text: p.ap }) : null);
       const d = state.now?.now?.date || today();
       dateEl.textContent = `${U.weekdaysLong[U.isoWeekday(d) - 1]} ${U.dayNum(d)} ${U.monthName(d)}`;
     }

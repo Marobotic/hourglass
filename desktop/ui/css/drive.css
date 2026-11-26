@@ -9,7 +9,7 @@
 .drive { max-width: 1240px; }
 .files-block { display: grid; }
 .sort-row { margin-bottom: 12px; }
-.course-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.course-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .course-tile { display: grid; gap: 4px; padding: 14px 14px 14px 18px; text-align: left; color: var(--fg); font: inherit; }
 .course-tile small { font-size: 12px; }
 .ok-ink { color: var(--teal); }
@@ -38,7 +38,7 @@ img.fi.thumb { object-fit: cover; border: 1px solid var(--border); }
 .mark-share { color: var(--muted); font-size: 12px; }
 .dgrid { display: grid; gap: 12px; margin-bottom: 12px; }
 .dgrid.v-icons { grid-template-columns: repeat(auto-fill, 132px); }
-.dgrid.v-gallery { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.dgrid.v-gallery { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .dicon { width: 132px; height: 132px; display: grid; justify-items: center; align-content: center; gap: 8px; padding: 10px; background: var(--surface); border: 1px solid var(--border); text-align: center; }
 .dicon:hover { background: var(--surface2); border-color: var(--faint); }
 .dicon .fi { width: 56px; height: 56px; font-size: 32px; }

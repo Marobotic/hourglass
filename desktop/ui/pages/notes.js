@@ -94,7 +94,9 @@ export default {
       swap(grid, list.length
         ? out.map((col) => h('div', { class: `mcol ${first ? 'stagger' : ''}` }, col.map(card)))
         : band.length ? null : h('div', { class: 'empty notes-empty' }, h('h2', { text: query ? 'No notes match' : 'Nothing here yet' }), h('p', { text: query ? 'Try other words.' : 'Notes you take will show up here.' })));
-      liveEl.querySelector('.band')?.style.setProperty('grid-template-columns', `repeat(${cols}, minmax(0, 1fr))`);
+      const bandEl = liveEl.querySelector('.band');
+      // The live class's notes fill the row: as many equal columns as there are cards, up to the grid's own.
+      if (bandEl) bandEl.style.setProperty('grid-template-columns', `repeat(${Math.max(1, Math.min(cols, bandEl.children.length))}, minmax(0, 1fr))`);
       first = false;
     }
 

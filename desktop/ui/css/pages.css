@@ -23,7 +23,7 @@
 .hero.off .meta { color: var(--muted); font-size: 14px; }
 .hero.off .acts .btn { flex: none; min-width: 0; }
 
-.note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+.note-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
 .note-card { display: block; width: 100%; padding: 16px 16px 16px 19px; text-align: left; color: var(--fg); font: inherit; overflow: hidden; }
 .note-card .edge { position: absolute; left: -1px; top: -1px; bottom: -1px; width: 3px; background: var(--c); }
 .note-card.active { background: var(--surface3); border-color: var(--border2); box-shadow: var(--lift); }
@@ -82,8 +82,10 @@ button.it:hover .h { color: var(--accent-ink); }
 .now-date { font: 500 var(--fs-small)/16px var(--ui); letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
 .now-clock { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; font: 700 120px/1 var(--ui); letter-spacing: -6px; }
 .now-clock .hm > span { display: inline-block; }
-.now-clock small { font: 700 40px/1 var(--ui); color: var(--faint); letter-spacing: -1px; }
-.now-clock .ap { margin-left: 8px; color: var(--muted); }
+.now-clock small { font: 700 40px/1 var(--ui); color: var(--faint); letter-spacing: 0; }
+.now-clock .sec { margin-left: 4px; }
+/* AM/PM is its own small label, set well apart from the seconds so it never reads as part of them. */
+.now-clock .ap { margin-left: 20px; padding: 4px 8px; font: 700 20px/20px var(--ui); letter-spacing: 1px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--border2); align-self: center; }
 .daystrip { flex: 1; min-width: 0; padding-bottom: 12px; }
 .ds-bar { position: relative; height: 48px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
 .ds-blk { position: absolute; top: 8px; bottom: 8px; padding: 0; border: 0; background: color-mix(in srgb, var(--c) 70%, var(--bg)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .12); cursor: pointer; transition: background-color var(--quick) var(--ease); }
@@ -94,7 +96,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .ds-hours span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .ds-hours span:first-child { transform: none; }
 .ds-hours span:last-child { transform: translateX(-100%); }
-.upcoming { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 16px; }
+.upcoming { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px; }
 .up { display: flex; align-items: center; gap: 14px; padding: 16px; text-align: left; color: var(--fg); font: inherit; }
 .up .ibox { width: 40px; height: 40px; flex: none; display: grid; place-items: center; background: var(--surface3); color: var(--muted); font-size: 14px; }
 .up .grow { display: grid; gap: 4px; }
@@ -110,7 +112,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .term .tbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c); transition: width 600ms var(--ease); }
 .term .tbar s { position: absolute; left: 75%; top: -4px; bottom: -4px; width: 1px; background: var(--muted); }
 @container page (max-width: 1100px) { .now-top { flex-wrap: wrap; gap: 16px 48px; } .daystrip { flex-basis: 100%; } }
-@container page (max-width: 700px) { .now-clock { font-size: 80px; } .now-clock small { font-size: 28px; } .hero { padding: 24px 20px 24px 24px; } .hero h2 { font-size: 30px; } .hero .acts .btn:not(.sq) { flex: 1 1 0; min-width: 0; } .hero .acts .btn.primary { flex-basis: 100%; } }
+@container page (max-width: 700px) { .now-clock { font-size: 80px; } .now-clock small { font-size: 28px; } .now-clock .ap { font-size: 14px; line-height: 16px; margin-left: 12px; } .hero { padding: 24px 20px 24px 24px; } .hero h2 { font-size: 30px; } .hero .acts .btn:not(.sq) { flex: 1 1 0; min-width: 0; } .hero .acts .btn.primary { flex-basis: 100%; } }
 
 /* ---- sign-in (whole window) ---- */
 .login-wrap { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: grid; place-items: center; overflow-y: auto; animation: fade-in 200ms var(--ease) both; }
@@ -197,7 +199,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .mitem i { width: 3px; height: 14px; background: var(--c); flex: none; }
 
 /* ---- Attendance: course cards side by side, the term on the right. Marks are the original ✓ ✗ – glyph boxes. ---- */
-.att-grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(520px, 100%), 1fr)); gap: 16px; align-items: start; }
+.att-grid-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(520px, 100%), 1fr)); gap: 16px; align-items: start; }
 .att-card { display: grid; gap: 12px; padding: 20px 20px 20px 23px; }
 .att-card .edge { position: absolute; left: -1px; top: -1px; bottom: -1px; width: 3px; background: var(--c); }
 .att-name { font: 700 16px/20px var(--ui); }
@@ -306,7 +308,7 @@ button.it:hover .h { color: var(--accent-ink); }
 .zone-drop { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30; padding: 4px; background: var(--surface3); border: 1px solid var(--border2); border-radius: 4px; box-shadow: var(--float); animation: menu-in 140ms var(--ease) both; }
 .zone-drop button { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 0; border-radius: 3px; background: transparent; color: var(--fg); font: 500 13px var(--ui); text-align: left; cursor: pointer; }
 .zone-drop button:hover, .zone-drop button.kb { background: color-mix(in srgb, var(--accent) 26%, transparent); }
-.clock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 16px; max-width: 2400px; margin-inline: auto; }
+.clock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 16px; max-width: 2400px; margin-inline: auto; }
 .clock-card { display: grid; gap: 6px; align-content: start; padding: 20px 20px 20px 23px; min-height: 184px; }
 .clock-card.home { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%), var(--surface); }
 .clock-card .row b { font: 700 16px/20px var(--ui); }
