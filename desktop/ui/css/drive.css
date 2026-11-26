@@ -1,10 +1,23 @@
 /* Drive and the upload panel. */
-.crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
-.crumb { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: var(--muted); font: 13px var(--ui); white-space: nowrap; cursor: pointer; transition: color var(--quick) var(--ease), background-color var(--quick) var(--ease); }
-.crumb:hover, .crumb.on { color: var(--fg); }
-.crumb:hover { background: var(--surface2); }
-.usage { display: grid; gap: 4px; min-width: 150px; }
-.usage small { font-size: 12px; text-align: right; }
+/* The path bar under Drive's header: the path (folds in the middle, drive.js fitCrumbs) and the storage meter. */
+.crumbs { flex: 1 1 0; display: flex; align-items: center; min-width: 0; overflow: hidden; margin-left: -8px; }
+.cg { display: inline-flex; align-items: center; flex: none; min-width: 0; }
+.cg .sep { width: 16px; flex: none; text-align: center; color: var(--faint); font: 400 var(--fs-small)/1 var(--ui); }
+.crumb { display: inline-flex; align-items: center; gap: 6px; height: 28px; max-width: 240px; min-width: 0; padding: 0 8px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs-small)/1 var(--ui); white-space: nowrap; cursor: pointer; transition: color var(--quick) var(--ease), background-color var(--quick) var(--ease); }
+.crumb .ic { --s: 16px; }
+.crumb .cl { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: 16px; }
+.crumb.static { cursor: default; }
+.crumb:hover:not(.static), .crumb.on { color: var(--fg); }
+.crumb:hover:not(.static) { background: var(--surface2); }
+.crumb.on { font-weight: 700; }
+.crumbs.tight .cg.last { flex: 0 1 auto; }
+.crumbs.tight .cg.last .crumb { max-width: none; }
+.crumbs.tight .cg.first .cl { display: none; }
+.usage { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
+.usage small { font-size: var(--fs-small); white-space: nowrap; }
+.usage .meter { width: 96px; flex: none; }
+@container main (max-width: 599px) { .usage .meter { display: none; } }
+@container main (max-width: 459px) { .usage { display: none; } }
 .icon-seg button { width: 32px; padding: 0; }
 .drive { max-width: 1240px; }
 .files-block { display: grid; }

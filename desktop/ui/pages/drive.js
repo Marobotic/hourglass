@@ -23,7 +23,10 @@ export default {
     const crumbs = h('div', { class: 'crumbs' });
     const viewSeg = kit.seg([{ value: 'icons', icon: 'grid', title: 'Icons' }, { value: 'details', icon: 'list', title: 'Details' }, { value: 'gallery', icon: 'gallery', title: 'Gallery' }], view, (v) => { view = v; localStorage.setItem(VIEW_KEY, v); render(); }, { cls: 'icon-seg' });
     const usageEl = h('div', { class: 'usage' });
-    const head = ctx.head({ title: 'Drive', mid: [crumbs], acts: [usageEl, viewSeg, kit.btn('Sync folder', () => syncFolderFlow(), { icon: 'sync' }), kit.btn('New folder', () => nameSheet(null), { icon: 'plus' }), kit.btn('Upload', () => uploadPick(), { kind: 'primary', icon: 'upload' })] });
+    // The header holds the tools; the path and the storage meter get their own bar under it, so a deep folder never
+    // crowds the buttons (head.js folds those by priority as the window narrows).
+    const head = ctx.head({ title: 'Drive', acts: [viewSeg, kit.btn('Sync folder', () => syncFolderFlow(), { icon: 'sync', title: 'Keep a folder on this computer in sync' }), kit.btn('New folder', () => nameSheet(null), { icon: 'plus' }), kit.btn('Upload', () => uploadPick(), { kind: 'primary', icon: 'upload' })], sub: [crumbs, usageEl] });
+    new ResizeObserver(() => fitCrumbs()).observe(crumbs);
     const body = h('div', { class: 'page-col drive' });
     const pageEl = h('div', { class: 'page' }, body);
     root.append(head, pageEl);
@@ -476,13 +479,56 @@ export default {
       swap(usageEl, h('small', { class: 'muted tnum', text: total ? `${size(used)} of ${size(total)}` : size(used) }), total ? kit.meter(frac, { cls: frac > 0.92 ? 'warn thin' : 'thin' }) : null);
       usageEl.dataset.tip = usage.free != null ? `${size(usage.free)} free on the server` : '';
     }
+    // The path: Drive / … / the open folder. When it doesn't fit, the folders in between fold into "…" (a menu), from
+    // the top down; the first and the last always show, and at the very narrowest the last one ends in an ellipsis.
     function paintCrumbs() {
-      const parts = [h('button', { class: `crumb ${!folder && !course ? 'on' : ''}`, 'data-drop': '', onclick: () => go('', '') }, icon('drive'), 'Drive')];
-      if (course) parts.push(h('span', { class: 'faint', text: '/' }), h('span', { class: 'faint', text: 'Courses' }));
+      const sep = () => h('span', { class: 'sep', text: '/' });
+      const group = (label, nav, props = {}, ic) => {
+        const el = nav
+          ? h('button', { class: 'crumb', onclick: nav, ...props }, ic ? icon(ic) : null, h('span', { class: 'cl', text: label }))
+          : h('span', { class: 'crumb static' }, h('span', { class: 'cl', text: label }));
+        const g = h('span', { class: 'cg' }, el);
+        g.label = label; g.nav = nav;
+        return g;
+      };
+      const groups = [group('Drive', () => go('', ''), { 'data-drop': '' }, 'drive')];
+      if (course) groups.push(group('Courses', null));
       for (const p of drive.path || []) {
-        parts.push(h('span', { class: 'faint', text: '/' }), h('button', { class: 'crumb', 'data-drop': p.course ? '' : p.id, 'data-drop-course': p.course ? p.id : null, onclick: () => (p.course ? go('', p.id) : go(p.id, course)) }, p.name));
+        groups.push(group(p.name, () => (p.course ? go('', p.id) : go(p.id, course)), { 'data-drop': p.course ? '' : p.id, 'data-drop-course': p.course ? p.id : null }));
       }
-      swap(crumbs, parts);
+      groups[0].classList.add('first');
+      groups.at(-1).classList.add('last');
+      groups.at(-1).firstChild.classList.add('on');
+      for (const g of groups.slice(1)) g.prepend(sep());
+      const gap = h('span', { class: 'cg gap', hidden: true }, sep(), h('button', { class: 'crumb', 'aria-label': 'Folders in between', 'data-tip': 'Folders in between',
+        onclick: async (e) => {
+          const hidden = groups.filter((g) => g.hidden && g.nav);
+          const k = await kit.menuAt(e.currentTarget, '', hidden.map((g, i) => ({ key: i, label: g.label, icon: 'folder' })), { width: 320 });
+          if (k != null) hidden[k].nav();
+        } }, h('span', { class: 'cl', text: '…' })));
+      groups.splice(1, 0, gap);
+      swap(crumbs, groups);
+      fitCrumbs();
+    }
+    function fitCrumbs() {
+      const groups = [...crumbs.children];
+      const gap = crumbs.querySelector('.gap');
+      if (!gap) return;
+      const over = () => crumbs.scrollWidth > crumbs.clientWidth + 1;
+      crumbs.classList.remove('tight');
+      for (const g of groups) g.hidden = g === gap;
+      if (over()) {
+        gap.hidden = false;
+        const middle = groups.filter((g) => !g.matches('.first, .last, .gap'));
+        for (const g of middle) { g.hidden = true; if (!over()) break; }
+        if (over()) crumbs.classList.add('tight');
+      }
+      if (gap.hidden === false && !groups.some((g) => g.hidden && g.nav)) gap.hidden = true;
+      // A name cut short says itself on hover.
+      for (const c of crumbs.querySelectorAll('.cg:not(.gap) .crumb')) {
+        const l = c.querySelector('.cl');
+        if (l && l.scrollWidth > l.clientWidth + 1) c.dataset.tip = l.textContent; else delete c.dataset.tip;
+      }
     }
 
     function syncCard(p) {

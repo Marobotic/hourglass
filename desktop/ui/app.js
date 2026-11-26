@@ -9,6 +9,7 @@ import * as dialogs from './pages/dialogs.js';
 import { startUploadPanel } from './uploads.js';
 import './native.js';
 import { windowControls, dragRegion } from './window.js';
+import { pageHead } from './head.js';
 
 const TAURI = globalThis.__TAURI__;
 const invoke = (cmd, args) => TAURI?.core?.invoke(cmd, args);
@@ -37,21 +38,9 @@ const state = {
 const ctx = {
   api, state, on, emit, U, kit,
   go, toast: kit.toast,
-  // The page header every page draws (REDESIGN §3): title, a muted context line or controls, actions.
-  // Every header ends with Search or ask (the command palette, Ctrl K).
-  head({ title, ctx: line, mid, acts = [], back, ask = true } = {}) {
-    const bar = h('div', { class: 'head' },
-      back ? kit.btn('Back', back, { kind: 'subtle', icon: 'back', title: 'Back (Esc)', cls: 'back' }) : null,
-      h('h1', { text: title }),
-      line != null ? h('span', { class: 'ctx', text: line }) : null,
-      mid ? h('div', { class: 'mid' }, mid) : null,
-      h('div', { class: 'acts' }, acts),
-      ask ? h('button', { class: 'ask', type: 'button', title: 'Search or ask Hourglass (Ctrl K)', onclick: () => openPalette() }, icon('search'), h('span', { class: 'lbl', text: 'Search or ask Hourglass' }), h('kbd', { text: 'Ctrl K' })) : null,
-      windowControls());
-    // The bar's empty parts drag the window (a double-click maximizes); buttons, fields and links stay clickable.
-    dragRegion(bar, ...bar.querySelectorAll(':scope > h1, :scope > .ctx, :scope > .mid, :scope > .acts'));
-    return bar;
-  },
+  // The page header every page draws (REDESIGN §3; head.js): title, a muted context line or controls, actions,
+  // Search or ask (the command palette, Ctrl K) and the window controls. It gives way by priority as the window narrows.
+  head: (o = {}) => pageHead({ ...o, onAsk: () => openPalette() }),
   courseById: (id) => state.courses.find((c) => c.id === id) || null,
   courseColor: (id) => ctx.courseById(id)?.color || 'var(--teal)',
   courseOptions: (withNone) => {

@@ -64,42 +64,70 @@
 
 /* ---- main column ---- */
 .main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; container: main / inline-size; }
-/* The page header: title, a muted context line, the page's tools, its actions, then Search or ask. */
-.head { height: 72px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 var(--pad); box-shadow: inset 0 -1px 0 var(--border); min-width: 0; }
-.head h1 { margin: 0; font: 700 var(--fs-head)/1 var(--ui); letter-spacing: 0; white-space: nowrap; flex: none; }
-.head .ctx { color: var(--muted); font: 500 13px/16px var(--ui); min-width: 120px; max-width: 360px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex: 0 1 auto; }
-.head .mid { display: flex; align-items: center; gap: 8px; flex: none; margin-left: 8px; }
-.head .acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; }
-.head .acts > * { flex: none; }
-.head .acts > .search { flex: 0 1 340px; min-width: 180px; }
-.head .acts:empty { display: none; }
-.head .btn { height: 32px; padding: 0 12px; font-size: 12px; }
-.head .btn.sq { width: 32px; padding: 0; }
+/* The page header (head.js): the title block, the page's tools and actions, Search or ask, the window controls.
+   head.js measures the bar and gives way by priority (classes below); nothing here is sized for one window width.
+   Every control in the bar is 36 px tall, so one row is always 72 px. */
+.head { position: relative; flex: none; display: flex; flex-wrap: wrap; align-items: center; align-content: center; gap: 12px 16px; min-height: 72px; padding: 0 var(--pad); box-shadow: inset 0 -1px 0 var(--border); min-width: 0; }
+.head > * { flex: none; }
+.head > .push { margin-left: auto; }
+.head .ttl { display: flex; align-items: center; gap: 16px; min-width: 0; max-width: 100%; }
+.head h1 { margin: 0; font: 700 var(--fs-head)/30px var(--ui); letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 40cqi; flex: none; }
+.head .ctx { color: var(--muted); font: 500 var(--fs-small)/16px var(--ui); max-width: 360px; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex: none; }
+.head .mid, .head .acts { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.head .mid > *, .head .acts > * { flex: none; }
+.head .acts:empty, .head .acts:not(:has(> :not(.hc-over, .hc-hide))) { display: none; }
+.head .btn { height: 36px; padding: 0 12px; font-size: var(--fs-small); }
+.head .btn.sq, .head .btn.hc-icon { width: 36px; padding: 0; }
+.head .btn.hc-icon > .lbl, .head .btn.hc-icon > .kbd, .head.nokbd .btn .kbd { display: none; }
+/* Key chips sit in their own box inside the button, after the label. */
+.head .btn .kbd, .head .btn.primary .kbd { padding: 3px 5px; box-shadow: inset 0 0 0 1px var(--border2); }
+.head .btn.primary .kbd { box-shadow: inset 0 0 0 1px rgb(255 255 255 / .25); }
+.head .hc-over, .head .hc-hide { display: none !important; }
 .head .back { margin-left: -12px; }
-.head .ask { margin-left: auto; display: flex; align-items: center; gap: 10px; width: 420px; min-width: 0; height: 44px; padding: 0 14px; border: 0; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); color: var(--faint); font: 400 var(--fs-body) var(--ui); cursor: text; flex: none; transition: box-shadow var(--quick) var(--ease), color var(--quick) var(--ease); }
+.head.back-icon .back { width: 36px; padding: 0; margin-left: -8px; }
+.head.back-icon .back .lbl { display: none; }
+
+/* Search or ask: a field, narrower, then its own 36 px square (never laid over the buttons). */
+.head .ask { display: flex; align-items: center; gap: 10px; width: 420px; height: 36px; padding: 0 12px; border: 0; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); color: var(--faint); font: 400 var(--fs-body) var(--ui); cursor: text; transition: box-shadow var(--quick) var(--ease), color var(--quick) var(--ease); }
 .head .ask:hover { box-shadow: inset 0 0 0 1px var(--border2); color: var(--muted); }
 .head .ask .ic { --s: 16px; }
 .head .ask .lbl { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.head .ask kbd { padding: 4px 6px; box-shadow: inset 0 0 0 1px var(--border2); }
-.head .acts:not(:empty) + .ask { margin-left: 0; }
-/* The header sizes itself by the main column, not the window: the title is never cut; Search or ask shrinks to its
-   icon first, then the context line goes, and on a phone-wide column the page's tools move to a second row. */
-@container main (max-width: 1400px) { .head .ask { width: 300px; } }
-@container main (max-width: 1200px) { .head .ask { width: 44px; padding: 0; justify-content: center; } .head .ask .lbl, .head .ask kbd { display: none; } }
-@container main (max-width: 1000px) { .head .ctx { display: none; } }
-@container main (max-width: 760px) {
-  .head { height: auto; min-height: 60px; flex-wrap: wrap; gap: 5px 10px; padding-block: 8px; }
-  .head h1 { font-size: 20px; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  /* A zero-height break after Search or ask: the tools always start the second row. */
-  .head:has(> .mid, > .acts:not(:empty))::after { content: ""; order: 1; flex-basis: 100%; height: 0; }
-  .head .ask { order: 1; width: 40px; height: 40px; }
-  .head .mid, .head .acts { order: 2; margin-left: 0; min-width: 0; max-width: 100%; flex-wrap: wrap; }
-  .head .mid { flex: 0 1 auto; }
-  .head .acts { flex: 1 1 auto; }
-  .head .acts .search { flex: 1; min-width: 0; }
-  .head .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .head .back { margin-left: -8px; } .head .back .lbl { display: none; }
-}
+.head .ask kbd { padding: 3px 5px; box-shadow: inset 0 0 0 1px var(--border2); }
+.head.ask-mid .ask { width: 300px; }
+.head.nokbd .ask kbd { display: none; }
+.head.ask-icon .ask { width: 36px; padding: 0; justify-content: center; cursor: pointer; }
+.head.ask-icon .ask .lbl, .head.ask-icon .ask kbd { display: none; }
+
+/* A page search (World clock): 340, then 220, then an icon in its own slot that opens over the toolbar. */
+.head .search { width: 340px; }
+.head .search.hc-mid { width: 220px; }
+.head .search .field { height: 36px; }
+.head .search.hc-icon:not(.hc-open) { width: 36px; }
+.head .search.hc-icon:not(.hc-open) > .ic { left: 10px; color: var(--muted); }
+.head .search.hc-icon:not(.hc-open) .field { padding: 0 0 0 36px; cursor: pointer; }
+.head .search.hc-icon:not(.hc-open) .field::placeholder { color: transparent; }
+.head .search.hc-open { position: absolute; z-index: 5; width: auto; animation: fade-in var(--quick) var(--ease) both; }
+.head .search.hc-open .field { background: var(--surface); box-shadow: inset 0 0 0 1px var(--faint), var(--float); }
+.head .hc-ph { width: 36px; height: 36px; flex: none; }
+
+/* The context line moves under the title. */
+.head.stack .ttl { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; }
+.head.stack h1 { font-size: 20px; line-height: 24px; }
+.head.stack .ctx { display: block; white-space: nowrap; text-overflow: ellipsis; max-width: 320px; }
+.head.noctx .ctx { display: none; }
+
+/* Two rows: the title, Search or ask and the window controls on top; the tools and actions underneath (a zero-height
+   break forces the line; with it the two 6 px row gaps make 12). */
+.head.two { padding-block: 14px; row-gap: 6px; }
+.head.two::after { content: ""; order: 1; flex-basis: 100%; height: 0; }
+.head.two > .mid, .head.two > .acts, .head.two > .hmore { order: 2; }
+.head.two h1 { max-width: 60cqi; }
+.head.tshrink > .ttl { flex: 1 1 0; }
+.head.tshrink h1 { max-width: 100%; flex: 0 1 auto; }
+
+/* A second bar under the header (Drive's path and storage). */
+.head-stack { flex: none; display: flex; flex-direction: column; min-width: 0; }
+.hsub { display: flex; align-items: center; gap: 16px; height: 44px; padding: 0 var(--pad); box-shadow: inset 0 -1px 0 var(--border); min-width: 0; }
 #page { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 32px var(--pad) var(--pad); scroll-behavior: smooth; container: page / inline-size; }
 .page.flush { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -173,8 +201,7 @@
 
 /* ---- window frame: drag regions, the three window buttons, the edge handles (window.js) ---- */
 .brand > * { pointer-events: none; }
-.wctl { display: flex; align-items: center; gap: 4px; flex: none; margin-left: 8px; margin-right: calc(12px - var(--pad)); }
-.head:not(:has(.ask)):not(:has(.acts:not(:empty))) > .wctl { margin-left: auto; }
+.wctl { display: flex; align-items: center; gap: 4px; flex: none; margin-right: calc(12px - var(--pad)); }
 .wbtn { width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex: none; border: 0; border-radius: 0; background: transparent; color: var(--muted); cursor: pointer; transition: background-color var(--quick) var(--ease), color var(--quick) var(--ease); }
 .wbtn:hover { background: var(--surface3); color: var(--fg); }
 .wbtn:active { background: var(--surface4); }

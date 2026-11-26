@@ -195,7 +195,7 @@ export function prompt(title, { value = '', placeholder = '', confirmText = 'Sav
   });
 }
 
-// Right-click menu: items [{ key, label, icon?, danger?, checked?, disabled?, sub?: [...], separator?, color?, hint? }].
+// Right-click menu: items [{ key, label, icon?, iconEl? (an icon to copy), danger?, checked?, disabled?, sub?: [...], separator?, color?, hint? }].
 // Opens down-right from (x, y) and flips when there is no room. Resolves the picked key, or undefined.
 export function menu(x, y, title, items, { width = 240 } = {}) {
   return new Promise((resolve) => {
@@ -215,7 +215,7 @@ export function menu(x, y, title, items, { width = 240 } = {}) {
             picked = it.key;
             close();
           } },
-        it.color ? h('i', { class: 'swatch', style: { '--c': it.color } }) : it.icon ? icon(it.icon) : null,
+        it.color ? h('i', { class: 'swatch', style: { '--c': it.color } }) : it.iconEl ? it.iconEl.cloneNode(true) : it.icon ? icon(it.icon) : null,
         h('span', { class: 'lbl', text: it.label }),
         it.hint ? h('span', { class: 'sub', text: it.hint }) : null,
         it.checked ? h('span', { class: 'chk', text: '✓' }) : it.sub ? h('span', { class: 'sub', text: '›' }) : null));
@@ -255,9 +255,11 @@ export function menu(x, y, title, items, { width = 240 } = {}) {
     });
   });
 }
-// A menu at an element (below it, right-aligned when asked).
+// A menu at an element (below it, right-aligned when asked). A header button folded into the ⋯ menu has no box:
+// its menu opens at the ⋯ button.
 export function menuAt(anchor, title, items, opts = {}) {
-  const r = anchor.getBoundingClientRect();
+  const at = anchor.getClientRects().length ? anchor : anchor.closest('.head')?.querySelector(':scope > .hmore') || anchor;
+  const r = at.getBoundingClientRect();
   const width = opts.width || 240;
   return menu(opts.right ? r.right - width : r.left, r.bottom + 4, title, items, { width });
 }
