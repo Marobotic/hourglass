@@ -95,28 +95,32 @@ fn show(app: &tauri::AppHandle) {
     }
 }
 
-// Linux on NVIDIA's driver: when WebKitGTK's DMA-BUF renderer allocates its buffers through GBM, the page's
-// web process crashes a moment after it starts (SIGSEGV in libnvidia-eglcore on WebKit's ThreadedCompositor
-// thread; WebKitGTK 2.54, driver 620) and the window is left black. The same renderer with buffers made by
-// EGL instead draws fine and stays on the GPU, so the window asks for that before GTK and WebKit start.
-// Setting WEBKIT_DMABUF_RENDERER_DISABLE_GBM yourself (0 to use GBM) wins.
-#[cfg(target_os = "linux")]
-fn pick_webkit_renderer() {
-    if std::env::var_os("WEBKIT_DMABUF_RENDERER_DISABLE_GBM").is_none()
-        && std::path::Path::new("/sys/module/nvidia_drm").exists()
-    {
-        std::env::set_var("WEBKIT_DMABUF_RENDERER_DISABLE_GBM", "1");
-    }
-}
-
-// If the page's web process dies anyway, WebKit leaves an empty window; load the page again instead. Three
-// deaths within a minute stop it, so a page that cannot run doesn't restart forever.
+// If the page's web process dies, WebKit leaves an empty (black) window. The first time, Hourglass starts
+// again with WebKit's DMA-BUF renderer off: on NVIDIA, once the driver can no longer hand out GPU channels
+// (kernel log "KernelChannelGroupApi alloc RPC ... failed"), every new web process crashes in
+// libnvidia-eglcore when that renderer starts, while the other renderer still draws (WebKitGTK 2.54, driver
+// 620). The renderer is picked when WebKit starts, so changing it needs a fresh process. After that, the page
+// is loaded again, at most three times a minute, so a page that cannot run doesn't restart forever.
 #[cfg(target_os = "linux")]
 fn keep_page_alive(window: &tauri::WebviewWindow) {
-    let _ = window.with_webview(|webview| {
+    let app = window.app_handle().clone();
+    let win = window.clone();
+    let _ = window.with_webview(move |webview| {
         use webkit2gtk::WebViewExt;
         let deaths = std::rc::Rc::new(std::cell::RefCell::new(Vec::<std::time::Instant>::new()));
         webview.inner().connect_web_process_terminated(move |view, reason| {
+            if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+                eprintln!("hourglass: the page's web process ended ({reason:?}); starting again without WebKit's DMA-BUF renderer");
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+                // Same arguments, except that a window already on screen comes back on screen.
+                let visible = win.is_visible().unwrap_or(false);
+                let args: Vec<String> = std::env::args().skip(1).filter(|a| !(visible && a == "--hidden")).collect();
+                app.cleanup_before_exit(); // lets go of the single-instance name first
+                if let Ok(exe) = std::env::current_exe() {
+                    let _ = Command::new(exe).args(args).spawn();
+                }
+                std::process::exit(0);
+            }
             let mut d = deaths.borrow_mut();
             d.retain(|t| t.elapsed() < Duration::from_secs(60));
             d.push(std::time::Instant::now());
@@ -134,8 +138,6 @@ fn show_window(app: tauri::AppHandle) { show(&app); }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "linux")]
-    pick_webkit_renderer();
     let port: u16 = arg("--port").and_then(|p| p.parse().ok()).unwrap_or(8931);
     let token = arg("--token").unwrap_or_else(read_token);
     let started_service = !service_up(port) && start_service();
