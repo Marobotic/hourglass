@@ -310,7 +310,7 @@ struct SubTabs: View {
 
 // Our own headers hide the navigation bar, which also turns off iOS's edge swipe back. This turns it on again, so a
 // swipe from the left edge leaves the note, the assistant or a course page (REDESIGN §3 Phones: Back).
-extension UINavigationController: UIGestureRecognizerDelegate {
+extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     override open func viewDidLoad() {
         super.viewDidLoad()
         interactivePopGestureRecognizer?.delegate = self

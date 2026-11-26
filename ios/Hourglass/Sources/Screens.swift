@@ -163,8 +163,7 @@ struct NowHero: View {
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
                 if live { Chip(text: "Live", style: .live) } else { Chip(text: "Next" + (b.first.date == today ? "" : " · " + Dates.short(b.first.date)), style: .line) }
-                ForEach(Array(b.parts.prefix(2).enumerated()), id: \.offset) { _, p in Chip(text: kindLabel(p.kind), style: .line) }
-                if let m = b.first.mark { Chip(text: m == "attended" ? "Attended" : m == "absent" ? "Absent" : "Off", tint: m == "attended" ? H.tealInk : m == "absent" ? H.accentInk : H.muted) }
+                Chip(text: kindLabel(b.first.kind), style: .line)
                 Spacer(minLength: 0)
                 left(b, live)
             }
@@ -211,6 +210,8 @@ struct NowHero: View {
                 .frame(maxWidth: .infinity)
             }
             HStack(spacing: 8) {
+                // Marked already: the mark, where the Mark attended button was.
+                if let m = o.mark { Chip(text: m == "attended" ? "Attended" : m == "absent" ? "Absent" : "Off", tint: m == "attended" ? H.tealInk : m == "absent" ? H.accentInk : H.muted) }
                 if o.course_id != nil && live && o.mark != "attended" {
                     HButton("Mark attended", icon: "person.crop.circle.badge.checkmark") {
                         Motion.shared.burst(in: markFrame)
@@ -435,7 +436,7 @@ private struct ClassNotes: View {
             let live: Bool = block.map { clock >= $0.startMs && clock < $0.endMs } ?? false
             let title: String = own ? (live ? "Notes for this class" : "Notes for \(block?.first.title ?? "")") : "Notes for today"
             VStack(alignment: .leading, spacing: 8) {
-                SectionLabel(text: title, detail: "\(list.count)", link: c.map { "All \($0.name) notes" }, action: courseAction(c))
+                SectionLabel(text: title, detail: "\(list.count)", link: c.map { _ in "All notes" }, action: courseAction(c))
                 ForEach(Array(list.enumerated()), id: \.element.id) { i, n in
                     NoteCard(note: n, today: today, clock: clock, lines: 4, todoMax: 4) { path.append(.note(n.id)) }
                         .lively("note:\(n.id)", "\(n.updated_at)")
@@ -1037,23 +1038,10 @@ private struct AlarmCard: View {
             } else if on, let n = next {
                 T("Next ring " + ringWords(n, clock), 13, H.tealInk, weight: .semibold, lines: 1).padding(.top, 8)
             }
-            HStack(spacing: 8) {
-                if !lead && a.date == nil {
-                    HStack(spacing: 4) { ForEach(1...7, id: \.self) { d in DayBox(letter: String(Array("MTWTFSS")[d - 1]), on: a.days.isEmpty || a.days.contains(d)) } }
-                }
-                Spacer(minLength: 0)
-                if on {
-                    if skipped != nil {
-                        HButton("Undo skip", icon: "arrow.uturn.backward", ghost: true, compact: true) { RingSync.unskip(store, a.id) }
-                    } else if let n = next {
-                        HButton("Skip once", icon: "forward.end", ghost: true, compact: true) { RingSync.skip(store, a.id, n) }
-                    }
-                }
-                Menu {
-                    Button(role: .destructive) { confirmDelete = true } label: { Label("Delete alarm", systemImage: "trash") }
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 15, weight: .medium)).foregroundStyle(H.muted).frame(width: 36, height: 36).contentShape(Rectangle())
-                }
+            // The days and the buttons on one row when they fit, else the buttons under the days.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { days(lead); Spacer(minLength: 0); buttons(on, skipped) }
+                VStack(alignment: .leading, spacing: 8) { days(lead); HStack(spacing: 8) { Spacer(minLength: 0); buttons(on, skipped) } }
             }
             .padding(.top, 16)
         }
@@ -1069,6 +1057,29 @@ private struct AlarmCard: View {
         .confirmationDialog("Delete alarm?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { store.removeAlarm(a) }
         } message: { Text("\"\(Alarms.displayLabel(a, store.db.courses, store.db.events))\" will be removed from every device.") }
+    }
+
+    @ViewBuilder private func days(_ lead: Bool) -> some View {
+        if !lead && a.date == nil {
+            HStack(spacing: 4) { ForEach(1...7, id: \.self) { d in DayBox(letter: String(Array("MTWTFSS")[d - 1]), on: a.days.isEmpty || a.days.contains(d)) } }
+        }
+    }
+
+    @ViewBuilder private func buttons(_ on: Bool, _ skipped: Int64?) -> some View {
+        HStack(spacing: 8) {
+                if on {
+                    if skipped != nil {
+                        HButton("Undo skip", icon: "arrow.uturn.backward", ghost: true, compact: true) { RingSync.unskip(store, a.id) }
+                    } else if let n = next {
+                        HButton("Skip once", icon: "forward.end", ghost: true, compact: true) { RingSync.skip(store, a.id, n) }
+                    }
+                }
+                Menu {
+                    Button(role: .destructive) { confirmDelete = true } label: { Label("Delete alarm", systemImage: "trash") }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 15, weight: .medium)).foregroundStyle(H.muted).frame(width: 36, height: 36).contentShape(Rectangle())
+                }
+        }
     }
 }
 
