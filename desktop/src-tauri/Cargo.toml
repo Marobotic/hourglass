@@ -28,6 +28,7 @@ opt-level = "s"
 panic = "abort"
 strip = true
 
-# The page's WebKit view, to bring the page back if its web process dies (lib.rs, keep_page_alive).
+# The page's WebKit view (lib.rs, keep_page_alive) and its GTK window (take_activation_token).
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
+gtk = "0.18"

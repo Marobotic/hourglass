@@ -21,7 +21,11 @@ fi
 up || { notify-send -a Hourglass "Hourglass" "The Hourglass service did not start. Check: journalctl --user -u hourglassd" 2>/dev/null; exit 1; }
 
 if [ -x "$ROOT/window/hourglass" ]; then
-  exec "$ROOT/window/hourglass" --port "$PORT" --token "$(cat "$CONF/token")" "$@"
+  # The menu's activation token (Wayland) or startup id (X11) goes along as an argument: when Hourglass is
+  # already running, this start only hands its arguments to that window, which needs the token to come forward.
+  ACTIVATION=()
+  [ -n "${XDG_ACTIVATION_TOKEN:-${DESKTOP_STARTUP_ID:-}}" ] && ACTIVATION=(--activation-token "${XDG_ACTIVATION_TOKEN:-$DESKTOP_STARTUP_ID}")
+  exec "$ROOT/window/hourglass" --port "$PORT" --token "$(cat "$CONF/token")" "${ACTIVATION[@]}" "$@"
 fi
 export QT_QUICK_CONTROLS_STYLE=Basic
 exec qml6 -I "$ROOT/app" "$ROOT/app/Main.qml" -- --port "$PORT" --token "$(cat "$CONF/token")" "$@"

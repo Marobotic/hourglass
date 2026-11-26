@@ -95,6 +95,29 @@ fn show(app: &tauri::AppHandle) {
     }
 }
 
+// Opening Hourglass from the menu while it already runs: the new start exits and hands its arguments over,
+// and the launcher puts its activation token among them (--activation-token; XDG_ACTIVATION_TOKEN on Wayland,
+// DESKTOP_STARTUP_ID on X11). Without that token KWin's focus-stealing prevention ignores the request, so a
+// minimized window stays minimized. GDK uses the token for the next focus request, which show() makes.
+#[cfg(target_os = "linux")]
+fn take_activation_token(app: &tauri::AppHandle, token: &str) {
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::{GtkWindowExt, ObjectExt, WidgetExt};
+    extern "C" {
+        fn gdk_wayland_display_set_startup_notification_id(display: *mut gtk::gdk::ffi::GdkDisplay, startup_id: *const std::os::raw::c_char);
+    }
+    let Some(w) = app.get_webview_window("main") else { return };
+    let Ok(gw) = w.gtk_window() else { return };
+    let display = gw.display();
+    if display.type_().name() == "GdkWaylandDisplay" {
+        let Ok(id) = std::ffi::CString::new(token) else { return };
+        // SAFETY: a live GdkWaylandDisplay and a NUL-terminated string that GDK copies.
+        unsafe { gdk_wayland_display_set_startup_notification_id(display.to_glib_none().0, id.as_ptr()) };
+    } else {
+        gw.set_startup_id(token);
+    }
+}
+
 // If the page's web process dies, WebKit leaves an empty (black) window. The first time, Hourglass starts
 // again with WebKit's DMA-BUF renderer off: on NVIDIA, once the driver can no longer hand out GPU channels
 // (kernel log "KernelChannelGroupApi alloc RPC ... failed"), every new web process crashes in
@@ -153,7 +176,19 @@ pub fn run() {
         // Another start (the Start menu, the service) shows this window; the service's
         // --hidden warm-up start leaves it in the tray.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if !args.iter().any(|a| a == "--hidden") { show(app); }
+            if args.iter().any(|a| a == "--hidden") { return; }
+            #[cfg(target_os = "linux")]
+            {
+                let token = args.iter().position(|a| a == "--activation-token").and_then(|i| args.get(i + 1)).filter(|t| !t.is_empty()).cloned();
+                let handle = app.clone();
+                // GTK work belongs on the main thread; the hand-over arrives on the plugin's own.
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(t) = token { take_activation_token(&handle, &t); }
+                    show(&handle);
+                });
+            }
+            #[cfg(not(target_os = "linux"))]
+            show(app);
         }))
         // Size and place come back; whether it was showing does not (the page shows it once drawn).
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(StateFlags::all() & !StateFlags::VISIBLE).build())
